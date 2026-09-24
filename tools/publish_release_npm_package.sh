@@ -201,13 +201,23 @@ validate_npm_release_context() {
   acceptance_only=false
   case "$RELEASE_OPERATION" in
     release)
+      [ "${RELEASE_NPM_MODE:-publish}" = publish ] || fail 'retained mode requires retained operation'
+      [ -z "${RELEASE_WORKFLOW_DRY_RUN+x}" ] || fail 'workflow dry-run context requires retained operation'
       [[ "$GITHUB_REF" != refs/tags/v0.2.7-recover.* ]] \
         && [[ "$RELEASE_TAG" != v0.2.7-recover.* ]] \
         && [ -z "${RELEASE_RECOVERY_DIRECTORY+x}" ] \
         || fail "normal release cannot accept maintenance refs or recovery context"
       [ -n "${RELEASE_GITHUB_TOKEN:-}" ] || fail "RELEASE_GITHUB_TOKEN is required"
       ;;
-    recover-0.2.7)
+    recover-0.2.7|recover-0.2.7-retained)
+      if [ "$RELEASE_OPERATION" = recover-0.2.7-retained ]; then
+        [ "${RELEASE_NPM_MODE:-}" = retained-accept ] || fail 'explicit retained-accept mode required'
+        [[ "${RELEASE_WORKFLOW_DRY_RUN:-}" = true || "${RELEASE_WORKFLOW_DRY_RUN:-}" = false ]] \
+          || fail 'explicit workflow dry-run boolean required'
+      else
+        [ "${RELEASE_NPM_MODE:-publish}" = publish ] || fail 'retained mode requires retained operation'
+        [ -z "${RELEASE_WORKFLOW_DRY_RUN+x}" ] || fail 'workflow dry-run context requires retained operation'
+      fi
       [ "$RELEASE_VERSION" = 0.2.7 ] || fail "recovery is restricted to version 0.2.7"
       [[ "$RELEASE_TAG" =~ ^v0\.2\.7-recover\.[1-9][0-9]*$ ]] \
         && [ "$GITHUB_REF" = "refs/tags/$RELEASE_TAG" ] \
@@ -219,13 +229,13 @@ validate_npm_release_context() {
       for name in RUNNER_TEMP RELEASE_RECOVERY_DIRECTORY GNUPGHOME EXOCHAIN_RELEASE_SIGNING_FINGERPRINT GITHUB_OUTPUT; do
         [ -n "${!name:-}" ] || fail "$name is required for recovery"
       done
-      if [ "$profile" = wasm ]; then
+      if [ "$profile" = wasm ] || [ "$RELEASE_OPERATION" = recover-0.2.7-retained ]; then
         acceptance_only=true
         provenance_commit=666c578f719d1e54fce95d6831a3af92ea80df93
         provenance_ref=refs/tags/v0.2.7
         for name in NODE_AUTH_TOKEN NPM_TOKEN CARGO_REGISTRY_TOKEN TWINE_PASSWORD \
           PYPI_TOKEN PYPI_API_TOKEN ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL; do
-          [ -z "${!name:-}" ] || fail "acceptance-only WASM cannot receive publishing credentials or OIDC"
+          [ -z "${!name:-}" ] || fail "acceptance-only WASM or retained profile cannot receive publishing credentials or OIDC"
         done
       fi
       ;;
@@ -263,7 +273,7 @@ run_public_npm() {
 }
 
 capture_npm_recovery_context() {
-  [ "$RELEASE_OPERATION" = recover-0.2.7 ] || return 0
+  [[ "$RELEASE_OPERATION" = recover-0.2.7 || "$RELEASE_OPERATION" = recover-0.2.7-retained ]] || return 0
   local source_path target
   for source_path in tools/verify_release_recovery_027.py tools/verify_release_recovery_027.sh \
     governance/releases/v0.2.7/RECOVERY-MANIFEST.json \
@@ -284,7 +294,7 @@ capture_npm_recovery_context() {
 }
 
 resolve_npm_publication_identity() {
-  if [ "$RELEASE_OPERATION" = recover-0.2.7 ]; then
+  if [[ "$RELEASE_OPERATION" = recover-0.2.7 || "$RELEASE_OPERATION" = recover-0.2.7-retained ]]; then
     local record identity
     record="$(/usr/bin/env -i "$python_path" -I -B "$recovery_verifier" publication \
       --manifest "$recovery_manifest" --identities "$recovery_publications" --publication "$profile")" \
@@ -303,7 +313,7 @@ print(r["source"]["commit"], r["source"]["ref"], sep=chr(9))
 }
 
 verify_recovery_npm_files() {
-  [ "$RELEASE_OPERATION" = recover-0.2.7 ] || return 0
+  [[ "$RELEASE_OPERATION" = recover-0.2.7 || "$RELEASE_OPERATION" = recover-0.2.7-retained ]] || return 0
   /usr/bin/env -i "$python_path" -I -B "$recovery_verifier" manifest \
     --manifest "$recovery_manifest" >/dev/null \
     || fail "recovery manifest is not the fixed reviewed manifest"
@@ -340,7 +350,7 @@ initialize_npm_recovery_receipts() {
   mutation_attempted=false
   mutation_exit_code=''
   acceptance_verified=false
-  [ "$RELEASE_OPERATION" = recover-0.2.7 ] || return 0
+  [[ "$RELEASE_OPERATION" = recover-0.2.7 || "$RELEASE_OPERATION" = recover-0.2.7-retained ]] || return 0
   /usr/bin/env -i "$python_path" -I -B - "$RUNNER_TEMP" "$profile" "$GITHUB_OUTPUT" <<'PY' \
     || fail "recovery receipt directory cannot be initialized exclusively"
 import os
@@ -382,24 +392,26 @@ PY
 }
 
 write_npm_recovery_receipt() {
-  [ "$RELEASE_OPERATION" = recover-0.2.7 ] || return 0
+  [[ "$RELEASE_OPERATION" = recover-0.2.7 || "$RELEASE_OPERATION" = recover-0.2.7-retained ]] || return 0
   /usr/bin/env -i "$python_path" -I -B - "$recovery_receipt_root" "$1" "${2:-}" \
     "$GITHUB_SHA" "$GITHUB_REF" "$package_name" "$RELEASE_VERSION" \
     "$RELEASE_EXPECTED_TARBALL_SHA256" "$provenance_commit" "$provenance_ref" \
-    "$mutation_attempted" "$mutation_exit_code" "$acceptance_verified" <<'PY'
+    "$mutation_attempted" "$mutation_exit_code" "$acceptance_verified" "$RELEASE_OPERATION" <<'PY'
 import json
 import os
 import sys
 
 (root, phase, status, commit, ref, package, version, digest, provenance_commit,
- provenance_ref, attempted, upload_exit, accepted) = sys.argv[1:]
+ provenance_ref, attempted, upload_exit, accepted, operation) = sys.argv[1:]
 assert phase in ("intent", "outcome", "result")
 assert attempted in ("true", "false") and accepted in ("true", "false")
 exit_code = int(status) if status else None
 upload_code = int(upload_exit) if upload_exit else None
 assert exit_code is None or 0 <= exit_code <= 255
 assert upload_code is None or 0 <= upload_code <= 255
-value = {"schema":"exochain-npm-recovery-receipt/v1", "operation":"recover-0.2.7",
+assert operation in ("recover-0.2.7", "recover-0.2.7-retained")
+assert operation != "recover-0.2.7-retained" or (phase == "result" and attempted == "false" and upload_code is None)
+value = {"schema":"exochain-npm-recovery-receipt/v1", "operation":operation,
          "controller_commit":commit, "controller_ref":ref, "package":package,
          "version":version, "tarball_sha256":digest,
          "provenance_commit":provenance_commit, "provenance_ref":provenance_ref,
@@ -490,15 +502,15 @@ PY
 publish_npm_receipt_readiness() {
   /usr/bin/env -i "$python_path" -I -B - "$recovery_receipt_root" "$GITHUB_OUTPUT" \
     "$RUNNER_TEMP" "$GITHUB_SHA" "$GITHUB_REF" "$package_name" "$RELEASE_VERSION" \
-    "$RELEASE_EXPECTED_TARBALL_SHA256" "$provenance_commit" "$provenance_ref" <<'PY'
+    "$RELEASE_EXPECTED_TARBALL_SHA256" "$provenance_commit" "$provenance_ref" "$RELEASE_OPERATION" <<'PY'
 import json
 import os
 from pathlib import Path
 import stat
 import sys
 
-root, output, scratch, commit, ref, package, version, digest, provenance_commit, provenance_ref = sys.argv[1:]
-expected = {"schema":"exochain-npm-recovery-receipt/v1", "operation":"recover-0.2.7",
+root, output, scratch, commit, ref, package, version, digest, provenance_commit, provenance_ref, operation = sys.argv[1:]
+expected = {"schema":"exochain-npm-recovery-receipt/v1", "operation":operation,
             "controller_commit":commit, "controller_ref":ref, "package":package,
             "version":version, "tarball_sha256":digest,
             "provenance_commit":provenance_commit, "provenance_ref":provenance_ref}
@@ -571,14 +583,14 @@ PY
 finish_npm_publication() {
   local status="$1"
   trap - EXIT
-  if [ "$RELEASE_OPERATION" = recover-0.2.7 ] && [ -n "${recovery_receipt_root:-}" ]; then
+  if [[ "$RELEASE_OPERATION" = recover-0.2.7 || "$RELEASE_OPERATION" = recover-0.2.7-retained ]] && [ -n "${recovery_receipt_root:-}" ]; then
     if ! retain_npm_public_readbacks; then
       printf 'npm recovery public readbacks could not be retained\n' >&2
       status=1
     fi
   fi
   /bin/rm -rf -- "$publish_root" || status=1
-  if [ "$RELEASE_OPERATION" = recover-0.2.7 ] && [ -n "${recovery_receipt_root:-}" ]; then
+  if [[ "$RELEASE_OPERATION" = recover-0.2.7 || "$RELEASE_OPERATION" = recover-0.2.7-retained ]] && [ -n "${recovery_receipt_root:-}" ]; then
     if ! write_npm_recovery_receipt result "$status"; then
       printf 'npm recovery outcome receipt could not be persisted\n' >&2
       status=1
@@ -655,6 +667,10 @@ for required_name in \
   [ -n "${!required_name:-}" ] || fail "$required_name is required"
 done
 
+# An environment variable alone cannot select retained acceptance.
+RELEASE_NPM_MODE="${2:-publish}"
+[[ "$#" = 1 || ( "$#" = 2 && "$2" = retained-accept ) ]] || fail 'invalid npm operation arguments'
+readonly RELEASE_NPM_MODE
 profile="${1:-}"
 case "$profile" in
   wasm) package_name='@exochain/exochain-wasm' ;;
@@ -792,6 +808,8 @@ printf '%s\n' \
   || fail "publisher user and global npm config paths must differ"
 
 run_authenticated_npm() {
+  [ "$acceptance_only" = false ] && [ "$RELEASE_OPERATION" != recover-0.2.7-retained ] \
+    || fail 'authenticated npm is forbidden in acceptance-only mode'
   /usr/bin/env -i \
     ACTIONS_ID_TOKEN_REQUEST_TOKEN="${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" \
     ACTIONS_ID_TOKEN_REQUEST_URL="${ACTIONS_ID_TOKEN_REQUEST_URL:-}" \
@@ -819,7 +837,7 @@ run_authenticated_npm() {
 }
 
 verify_release_binding() {
-  if [ "$RELEASE_OPERATION" = recover-0.2.7 ]; then
+  if [[ "$RELEASE_OPERATION" = recover-0.2.7 || "$RELEASE_OPERATION" = recover-0.2.7-retained ]]; then
     /bin/cat "$recovery_binding_verifier"
   else
     /usr/bin/git --no-replace-objects -c core.fsmonitor=false -c core.untrackedCache=false -c core.ignoreStat=false \
@@ -843,6 +861,7 @@ verify_release_binding() {
       GNUPGHOME="${GNUPGHOME:-}" \
       EXOCHAIN_RELEASE_SIGNING_FINGERPRINT="${EXOCHAIN_RELEASE_SIGNING_FINGERPRINT:-}" \
       RELEASE_GITHUB_TOKEN="${RELEASE_GITHUB_TOKEN:-}" \
+      RELEASE_OPERATION="$RELEASE_OPERATION" \
       RELEASE_PYTHON="$python_path" \
       RELEASE_TRUSTED_PYTHON_ROOT="$python_root" \
       RELEASE_TRUSTED_PYTHON_VERSION="$RELEASE_TRUSTED_PYTHON_VERSION" \
@@ -911,7 +930,53 @@ registry_has_exact_tarball() {
     || fail "published npm registry record failed exact release verification"
 }
 
-verify_registry_signature_and_provenance() {
+fetch_public_npm_tarball() {
+  /usr/bin/env -i /usr/bin/curl -q --silent --show-error --request GET \
+    --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 60 \
+    --max-filesize "$3" --output "$2" --write-out '%{http_code}' "$1"
+}
+
+verify_public_npm_tarball_bytes() {
+  local url public_tarball size status
+  case "$package_name" in
+    @exochain/exochain-wasm|@exochain/llm-proxy|@exochain/sdk) ;;
+    *) fail 'unexpected public npm package' ;;
+  esac
+  [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail 'invalid public npm version'
+  url="https://registry.npmjs.org/$package_name/-/${package_name#*/}-$RELEASE_VERSION.tgz"
+  public_tarball="$publish_root/public-tarball.tgz"
+  [ ! -e "$public_tarball" ] && [ ! -L "$public_tarball" ] || fail 'public tarball destination already exists'
+  size="$(/usr/bin/env -i "$node_path" -e '
+const fs=require("node:fs"); const s=fs.lstatSync(process.argv[1]);
+if (!s.isFile() || s.nlink!==1 || s.size<=0 || s.size>96*1024*1024) process.exit(1);
+process.stdout.write(String(s.size));' "$RELEASE_NPM_TARBALL")" || fail 'invalid original public tarball size'
+  status="$(fetch_public_npm_tarball "$url" "$public_tarball" "$size")" || fail 'public npm tarball transport failed'
+  [ "$status" = 200 ] || fail 'public npm tarball is absent'
+  /usr/bin/cmp "$RELEASE_NPM_TARBALL" "$public_tarball" >/dev/null || fail 'public npm tarball bytes differ'
+  /usr/bin/env -i "$node_path" - "$public_tarball" "$size" "$RELEASE_EXPECTED_TARBALL_SHA256" "$expected_integrity" <<'NODE' \
+    || fail 'public npm tarball size, SHA256 or SRI differs'
+const fs=require('node:fs'); const crypto=require('node:crypto');
+const [path,size,digest,sri]=process.argv.slice(2);
+const fd=fs.openSync(path,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);
+try {
+  const before=fs.fstatSync(fd,{bigint:true});
+  if (!before.isFile() || before.nlink!==1n || before.size!==BigInt(size)) process.exit(1);
+  const bytes=Buffer.alloc(Number(size)); let read=0;
+  while (read<bytes.length) {
+    const count=fs.readSync(fd,bytes,read,bytes.length-read,null);
+    if (count===0) process.exit(1);
+    read+=count;
+  }
+  if (fs.readSync(fd,Buffer.alloc(1),0,1,null)!==0) process.exit(1);
+  const after=fs.fstatSync(fd,{bigint:true});
+  if (['dev','ino','mode','nlink','size','mtimeNs','ctimeNs'].some(k=>before[k]!==after[k])) process.exit(1);
+  if (crypto.createHash('sha256').update(bytes).digest('hex')!==digest ||
+      'sha512-'+crypto.createHash('sha512').update(bytes).digest('base64')!==sri) process.exit(1);
+} finally {fs.closeSync(fd);}
+NODE
+}
+
+install_public_npm_for_acceptance() {
   /bin/rm -rf -- "$audit_root"
   /bin/mkdir -m 700 "$audit_root"
   /usr/bin/env -i "$node_path" - "$audit_root/package.json" "$package_name" "$RELEASE_VERSION" <<'NODE'
@@ -928,6 +993,13 @@ NODE
     cd "$audit_root"
     run_public_npm install --ignore-scripts --no-audit --no-fund --save-exact \
       --registry=https://registry.npmjs.org >/dev/null || exit 1
+  ) || return 1
+}
+
+verify_registry_signature_and_provenance() {
+  install_public_npm_for_acceptance || return 1
+  (
+    cd "$audit_root"
     run_public_npm audit signatures --json --include-attestations > "$audit_response" \
       || exit 1
   ) || return 1
@@ -944,6 +1016,7 @@ NODE
 verify_registry_acceptance() {
   registry_has_exact_tarball \
     || fail "the exact npm version disappeared during acceptance verification"
+  verify_public_npm_tarball_bytes
   verify_exact_npm_owners
   local provenance_verified=false
   for provenance_attempt in 1 2 3 4 5 6; do

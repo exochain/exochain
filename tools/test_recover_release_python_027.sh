@@ -47,7 +47,8 @@ for name in names:
     data=('fixture bytes '+name).encode(); (dist/name).write_bytes(data)
     digest=hashlib.sha256(data).hexdigest()
     rows.append(f'{name}\t{digest}\t{len(data)}\n')
-    records.append({'filename':name,'size':len(data),'digests':{'sha256':digest},'yanked':False})
+    records.append({'filename':name,'size':len(data),'digests':{'sha256':digest},'yanked':False,
+                    'url':'https://files.pythonhosted.org/packages/aa/bb/'+'c'*60+'/'+name})
     key=ec.generate_private_key(ec.SECP256R1()); now=datetime.datetime.now(datetime.timezone.utc)
     cert=(x509.CertificateBuilder().subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME,'fixture')]))
       .issuer_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME,'fixture')])).public_key(key.public_key())
@@ -88,6 +89,10 @@ fetch_public() {
       if [[ "$scenario" = provenance404 ]]; then printf 404; return; fi
       if [[ "$scenario" = provenance500 ]]; then printf 500; return; fi
       cp "$test_root/$(basename "$(dirname "$1")").json" "$2"; printf 200 ;;
+    https://files.pythonhosted.org/packages/*)
+      cp "$dist_dir/$(basename "$1")" "$2"
+      if [[ "${substitute_bytes:-false}" = true ]]; then printf wrong >> "$2"; fi
+      printf 200 ;;
     *) return 1 ;;
   esac
 }
@@ -175,6 +180,25 @@ scenario=404; reset_case exhausted; expect_failure accept_readback
 [[ "$(grep -c '/json' "$calls")" = 25 ]]
 reset_case isolation
 public_command "$tool_python" -I -B -c 'import os; assert not any(k in os.environ for k in ("GITHUB_TOKEN","ACTIONS_ID_TOKEN_REQUEST_TOKEN","PYTHONPATH","CURL_HOME"))'
+mode=accept
+for dry in true false; do
+  RELEASE_WORKFLOW_DRY_RUN="$dry"
+  scenario=both; reset_case "retained-$dry"; accept_without_stage
+  [[ ! -e "$stage" && ! -e "$stage_state" ]]
+  [[ "$(grep -c files.pythonhosted.org "$calls")" = 2 && "$(grep -c crypto "$calls")" = 2 ]]
+  [[ -f "$receipts/exochain-0.2.7-py3-none-any.whl.result.json" && -f "$receipts/exochain-0.2.7.tar.gz.result.json" ]]
+done
+scenario=both; reset_case retained-wrong-public-bytes; substitute_bytes=true
+expect_failure accept_without_stage
+[[ ! -e "$stage" && ! -e "$stage_state" && ! -e "$receipts/exochain-0.2.7-py3-none-any.whl.result.json" ]]
+substitute_bytes=false
+for scenario in wheel sdist none conflict provenance500; do
+  reset_case "retained-reject-$scenario"; expect_failure accept_without_stage
+  [[ ! -e "$stage" && ! -e "$stage_state" ]]
+done
+scenario=both; reset_case retained-bad-crypto; bad_crypto=true; expect_failure accept_without_stage
+[[ ! -e "$receipts/exochain-0.2.7-py3-none-any.whl.result.json" && ! -e "$stage" ]]
+unset mode
 reset_case bootstrap-rejects-oidc
 expect_failure /bin/bash "$helper" preflight
 grep -q 'publication credentials must be absent' "$receipts/stderr"

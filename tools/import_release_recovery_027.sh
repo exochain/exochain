@@ -6,15 +6,22 @@
 set -euo pipefail
 umask 077
 fail() { printf 'release recovery import failed: %s\n' "$1" >&2; exit 1; }
-[ "$#" -eq 0 ] || fail "this fixed import takes no arguments"
+if [ "$#" -eq 1 ] && [ "$1" = retained-acceptance ]; then
+  [ "${RELEASE_OPERATION:-}" = recover-0.2.7-retained ] || fail 'operation and release mode differ'
+  [[ "${RELEASE_WORKFLOW_DRY_RUN:-}" = true || "${RELEASE_WORKFLOW_DRY_RUN:-}" = false ]] \
+    || fail 'explicit workflow dry-run boolean required'
+else
+  [ "$#" -eq 0 ] && [ "${RELEASE_OPERATION:-recover-0.2.7}" = recover-0.2.7 ] \
+    || fail 'operation and release mode differ'
+fi
 if /usr/bin/env | /usr/bin/grep -Eq '^BASH_FUNC_.*%%='; then
   fail "inherited shell functions are forbidden"
 fi
 for credential_name in CARGO_REGISTRY_TOKEN NPM_TOKEN NODE_AUTH_TOKEN \
-    TWINE_PASSWORD PYPI_TOKEN ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL; do
+    TWINE_PASSWORD PYPI_TOKEN PYPI_API_TOKEN ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL; do
   [ -z "${!credential_name:-}" ] || fail "publication credentials and OIDC must be absent"
 done
-[ "${RELEASE_OPERATION:-}" = recover-0.2.7 ] && [ "${RELEASE_VERSION:-}" = 0.2.7 ] \
+[ "${RELEASE_VERSION:-}" = 0.2.7 ] \
   && [ "${DRY_RUN:-false}" = false ] || fail "only the fixed recovery import is supported"
 [ -z "${RELEASE_RECOVERY_PYTHON_PHASE:-}" ] || fail "import must use a fresh clean workspace"
 [[ "${GITHUB_SHA:-}" =~ ^[0-9a-f]{40}$ ]] || fail "real controller GITHUB_SHA is required"
@@ -49,6 +56,20 @@ for helper in verify_release_recovery_027.sh verify_release_recovery_027.py \
 done
 trusted_git show "$GITHUB_SHA:governance/releases/v0.2.7/RECOVERY-MANIFEST.json" > "$capture/RECOVERY-MANIFEST.json"
 /bin/chmod 400 "$capture/RECOVERY-MANIFEST.json"
+if [ "$RELEASE_OPERATION" = recover-0.2.7-retained ]; then
+  for helper in import_release_recovery_027.sh publish_release_npm_package.sh recover_release_python_027.sh; do
+    trusted_git show "$GITHUB_SHA:tools/$helper" > "$capture/$helper"
+    /bin/chmod 400 "$capture/$helper"
+  done
+  /usr/bin/cmp "${BASH_SOURCE[0]}" "$capture/import_release_recovery_027.sh" \
+    || fail 'running retained orchestration differs from actual controller source'
+  for record in RETAINED-CUSTODY PUBLICATION-IDENTITIES; do
+    trusted_git show "$GITHUB_SHA:governance/releases/v0.2.7/$record.json" > "$capture/$record.json"
+    /bin/chmod 400 "$capture/$record.json"
+  done
+  trusted_git show '2198e4ef610e9ef6d04adf726f7f4b3e156a3bc1:.github/workflows/release.yml' > "$capture/retaining-workflow.yml"
+  /bin/chmod 400 "$capture/retaining-workflow.yml"
+fi
 # The wrapper verifies the pinned Python root/version, both signed tags and
 # authoritative remote identities, keeping GITHUB_SHA bound to the controller.
 /bin/bash --noprofile --norc -p "$capture/verify_release_recovery_027.sh" > "$capture/identity-before.json"
@@ -59,6 +80,8 @@ trusted_git show "$GITHUB_SHA:governance/releases/v0.2.7/RECOVERY-MANIFEST.json"
 """Fixed import orchestration. Network and subprocess boundaries are testable;
 there are no runtime endpoint, command, manifest, or proof overrides."""
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+import hashlib
 import importlib.util
 import io
 import json
@@ -115,7 +138,7 @@ class Transport:
     A validated storage Location is fetched in a separate credential-free
     process. Signed storage URLs and authorization values are never receipts.
     """
-    def __init__(self, scratch, token, manifest):
+    def __init__(self, scratch, token, manifest, retained=None):
         # Opaque Bearer transport syntax (RFC 6750 section 2.1), not a
         # GitHub token-prefix/length assumption. This alphabet cannot break
         # the quoted curl config below: no quotes, backslashes or whitespace.
@@ -123,13 +146,27 @@ class Transport:
                 "malformed read-only GitHub credential")
         self.scratch, self.token = Path(scratch), token
         self.endpoints = fixed_endpoints(manifest)
+        self.retained = retained
+        self.retained_storage = set()
+        if retained is not None:
+            metadata = [retained[kind]["metadata"] for kind in ("payload", "custody")]
+            self.endpoints["archives"] = [(m["id"], m["archive_download_url"]) for m in metadata]
+            self.endpoints["metadata"] += [(m["id"], m["url"]) for m in metadata]
+            retaining_run = API + f"/runs/{retained['retaining']['run_id']}/attempts/1"
+            self.endpoints["retaining_run"] = retaining_run
+            self.endpoints["retaining_jobs"] = [retaining_run + f"/jobs?per_page=100&page={page}" for page in range(1, 11)]
         self.authenticated = {self.endpoints["run"], *self.endpoints["jobs"],
                               *(url for _, url in self.endpoints["metadata"]),
                               *(url for _, url in self.endpoints["archives"])}
         self.public = {url for _, url in self.endpoints["rust"]}
+        if retained is not None:
+            self.authenticated.update([self.endpoints["retaining_run"], *self.endpoints["retaining_jobs"]])
 
     def _get(self, url, destination, limit, authenticated):
-        require(type(limit) is int and 0 < limit <= 96 * 1024 * 1024, "invalid response bound")
+        retained_payload = (self.retained is not None and limit == self.retained["payload"]["metadata"]["size_in_bytes"]
+                            and (url == self.retained["payload"]["metadata"]["archive_download_url"]
+                                 or (not authenticated and url in self.retained_storage)))
+        require(type(limit) is int and 0 < limit and (limit <= 96 * 1024 * 1024 or retained_payload), "invalid response bound")
         destination = Path(destination)
         require(not os.path.lexists(destination), "download destination must be absent")
         descriptor, header_name = tempfile.mkstemp(prefix="headers-", dir=self.scratch)
@@ -168,12 +205,20 @@ class Transport:
         require(artifact["id"] in fixed, "archive is outside fixed artifact inventory")
         # GitHub normally returns 302, but a direct 200 is also checked later
         # against the exact original ZIP digest and size by the custody helper.
-        status, locations = self._get(fixed[artifact["id"]], destination, artifact["zip_size"], True)
+        limit = artifact["zip_size"] if self.retained is None else artifact["size_in_bytes"]
+        if self.retained is not None:
+            require(artifact in [self.retained[k]["metadata"] for k in ("payload", "custody")], "retained artifact is not exactly pinned")
+        status, locations = self._get(fixed[artifact["id"]], destination, limit, True)
         if status == 302:
             require(len(locations) == 1, "artifact download lacks one storage redirect")
             url = validate_storage_url(locations[0])
             Path(destination).unlink()
-            status, locations = self._get(url, destination, artifact["zip_size"], False)
+            if self.retained is not None and artifact["id"] == self.retained["payload"]["metadata"]["id"]:
+                self.retained_storage.add(url)
+            try:
+                status, locations = self._get(url, destination, limit, False)
+            finally:
+                self.retained_storage.discard(url)
         require(status == 200 and not locations, "artifact storage must return bytes without another redirect")
 
 
@@ -191,8 +236,8 @@ def load_module(capture, name):
     return module
 
 
-def fetch_origin(manifest, custody, transport, evidence):
-    endpoints = fixed_endpoints(manifest)
+def fetch_run_jobs(custody, transport, evidence, endpoints, expected_total):
+    evidence.mkdir(mode=0o700, exist_ok=True)
     transport.get(endpoints["run"], evidence / "run.json", JSON_LIMIT)
     run = custody.load_json(evidence / "run.json", "original run")
     jobs = []
@@ -201,11 +246,14 @@ def fetch_origin(manifest, custody, transport, evidence):
         transport.get(url, path, JSON_LIMIT)
         response = custody.load_json(path, "original attempt job page")
         require(type(response) is dict and type(response.get("jobs")) is list, "malformed job page")
-        require(type(response.get("total_count")) is int and response["total_count"] == manifest["origin"]["jobs_total"],
+        if expected_total is None:
+            expected_total = response.get("total_count")
+            require(type(expected_total) is int and 0 < expected_total <= 250, "current job inventory is unbounded")
+        require(type(response.get("total_count")) is int and response["total_count"] == expected_total,
                 "attempt job count differs from the fixed original inventory")
         require(len(response["jobs"]) <= 100, "job page exceeds fixed pagination size")
         jobs.extend(response["jobs"])
-        require(len(jobs) <= manifest["origin"]["jobs_total"], "attempt pagination exceeds fixed inventory")
+        require(len(jobs) <= expected_total, "attempt pagination exceeds fixed inventory")
         if len(response["jobs"]) < 100:
             require(len(jobs) == response["total_count"], "attempt job pagination is incomplete")
             break
@@ -213,6 +261,12 @@ def fetch_origin(manifest, custody, transport, evidence):
         raise ImportFailure("attempt job pagination did not terminate")
     combined = {"total_count": len(jobs), "jobs": jobs}
     dump(evidence / "jobs.json", combined)
+    return run, combined
+
+
+def fetch_origin_records(manifest, custody, transport, evidence):
+    endpoints = fixed_endpoints(manifest)
+    run, combined = fetch_run_jobs(custody, transport, evidence, endpoints, manifest["origin"]["jobs_total"])
     metadata_directory = evidence / "artifact-metadata"
     metadata_directory.mkdir(mode=0o700)
     records = []
@@ -220,7 +274,55 @@ def fetch_origin(manifest, custody, transport, evidence):
         path = metadata_directory / f"{artifact_id}.json"
         transport.get(url, path, JSON_LIMIT)
         records.append(custody.load_json(path, "original artifact metadata"))
-    return custody.verify_origin(manifest, run, combined, records)
+    return run, combined, records
+
+
+def fetch_origin(manifest, custody, transport, evidence):
+    return custody.verify_origin(manifest, *fetch_origin_records(manifest, custody, transport, evidence))
+
+
+def utc_now():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def acquire_retained(manifest, record, custody, transport, evidence, archives, candidate, workflow):
+    """Canonical custody acquisition; no local archive fallback or caller endpoints.
+
+    Callers still perform the shared package/native structure and genuine native
+    cryptography before claiming acceptance. Neither output alone asserts crypto.
+    """
+    before, after = [], []
+    for kind in ("payload", "custody"):
+        pinned = record[kind]["metadata"]
+        path = evidence / f"retained-{kind}-before.json"
+        transport.get(pinned["url"], path, JSON_LIMIT)
+        current = custody.load_json(path, "current retained metadata")
+        require(type(current) is dict and current == pinned and current.get("expired") is False,
+                "retained metadata differs before download")
+        before.append(current)
+        transport.archive(pinned, archives / f"{pinned['id']}.zip")
+    for kind in ("payload", "custody"):
+        pinned = record[kind]["metadata"]
+        path = evidence / f"retained-{kind}-after.json"
+        transport.get(pinned["url"], path, JSON_LIMIT)
+        after.append(custody.load_json(path, "rechecked retained metadata"))
+    original_run, original_jobs, metadata = fetch_origin_records(manifest, custody, transport, evidence / "current-original")
+    retaining_run, retaining_jobs = fetch_run_jobs(custody, transport, evidence / "retaining",
+        {"run":transport.endpoints["retaining_run"], "jobs":transport.endpoints["retaining_jobs"]},
+        record["retaining"]["jobs_total"])
+    retaining = record["retaining"]
+    origin_input = {"schema":"exochain-retained-origin-input-027/v1", "observed_at":utc_now(),
+        "retaining_run":retaining_run, "retaining_jobs":retaining_jobs,
+        "retaining_tag":{"object":retaining["tag_object"],"commit":retaining["controller_sha"],"ref":retaining["controller_ref"]},
+        "original_run":original_run,"original_jobs":original_jobs,"original_metadata":metadata,
+        "retained_before":before,"retained_after":after}
+    historical = archives / f"{record['custody']['metadata']['id']}.zip"
+    origin = custody.verify_retained_origin(manifest, record, origin_input, historical, workflow)
+    dump(evidence / "retained-origin-input.json", origin_input)
+    dump(evidence / "retained-origin-result.json", origin)
+    verified = custody.verify_retained_transport(manifest, record, archives, candidate)
+    dump(evidence / "retained-transport-result.json", verified)
+    return origin, verified
 
 
 def fetch_rust(manifest, custody, transport, evidence):
@@ -336,11 +438,26 @@ def validate_sboms(manifest, directory, capture):
     return {"canonical_sboms":len(artifact["files"])}
 
 
-def command(argv, receipt, extra_env=None):
+def command(argv, receipt, extra_env=None, timeout=240, bounded=False):
     environment = dict(BASE_ENV)
     environment.update(extra_env or {})
     with receipt.open("xb") as stream:
-        result = subprocess.run(argv, env=environment, stdout=stream, stderr=subprocess.PIPE, timeout=240, check=False)
+        if bounded:
+            # Keep failure diagnostics without accumulating stderr in memory.
+            # These children run only reviewed tools with sanitized public I/O.
+            with Path(str(receipt)+".stderr").open("xb") as errors:
+                overflow = False
+                try:
+                    result = subprocess.run(argv, env=environment, stdout=stream, stderr=errors, timeout=timeout, check=False)
+                finally:
+                    for output in (stream,errors):
+                        output.flush()
+                        if os.fstat(output.fileno()).st_size > 1024 * 1024:
+                            output.truncate(1024 * 1024)
+                            overflow = True
+                require(not overflow, "public checker diagnostics exceeded their bound")
+        else:
+            result = subprocess.run(argv, env=environment, stdout=stream, stderr=subprocess.PIPE, timeout=timeout, check=False)
     require(result.returncode == 0, "captured canonical artifact validator rejected input: " + Path(argv[0]).name)
 
 
@@ -375,6 +492,153 @@ def check_destinations(runner_temp, destination):
     return evidence
 
 
+def current_receipt_context(custody, transport, capture, evidence, python, node):
+    run_text, attempt_text = os.environ.get("GITHUB_RUN_ID", ""), os.environ.get("GITHUB_RUN_ATTEMPT", "")
+    require(re.fullmatch(r"[1-9][0-9]*", run_text) is not None
+            and re.fullmatch(r"[1-9][0-9]*", attempt_text) is not None, "current numeric run and attempt required")
+    run_id, attempt = int(run_text), int(attempt_text)
+    sha, ref = os.environ["GITHUB_SHA"], os.environ["GITHUB_REF"]
+    run_url = API + f"/runs/{run_id}/attempts/{attempt}"
+    endpoints = {"run":run_url,"jobs":[run_url + f"/jobs?per_page=100&page={p}" for p in range(1,11)]}
+    transport.authenticated.update([run_url, *endpoints["jobs"]])
+    run, jobs_response = fetch_run_jobs(custody, transport, evidence / "current-producer", endpoints, None)
+    custody.validate_run_identity(run, run_id, attempt, sha, ref.removeprefix("refs/tags/"), completed=False)
+    jobs = custody.complete_jobs(jobs_response, run_id, attempt, sha, ref.removeprefix("refs/tags/"))
+    producers = [job for job in jobs.values() if job.get("name") == custody.RECEIPT_JOB]
+    require(len(producers) == 1 and producers[0].get("status") == "in_progress", "current acceptance producer is not uniquely running")
+    require(os.environ.get("GITHUB_JOB") == "retained-acceptance", "actual job key is not retained acceptance")
+    def version(argv, pattern):
+        result = subprocess.run(argv, env=BASE_ENV, capture_output=True, timeout=30, check=False)
+        require(result.returncode == 0 and len(result.stdout) < 4096, "runtime identity command failed")
+        match = re.search(pattern, result.stdout.decode("ascii"))
+        require(match is not None, "runtime identity is not exact")
+        return match.group(1)
+    tool_view = Path(os.environ["TRUSTED_RELEASE_PATH"].split(":")[0])
+    context = {"controller_sha":sha,"controller_ref":ref,"controller_tag_object":os.environ["EXPECTED_TAG_OBJECT_SHA"],
+        "run_id":run_id,"run_attempt":attempt,"producer_job_id":producers[0]["id"],"checked_at":utc_now(),
+        "checker_sha256":hashlib.sha256(custody.read_regular(capture / "verify_release_recovery_027.py", JSON_LIMIT, "captured checker")).hexdigest(),
+        "runtime_versions":{
+            "python":version([python,"-I","-B","-c","import sys; print('.'.join(map(str,sys.version_info[:3])))"],r"^([0-9]+\.[0-9]+\.[0-9]+)\n$"),
+            "node":version([node,"--version"],r"^v([0-9]+\.[0-9]+\.[0-9]+)\n$"),
+            "npm":version([node,str(tool_view / "npm"),"--version"],r"^([0-9]+\.[0-9]+\.[0-9]+)\n$"),
+            "gh":version(["/usr/bin/gh","--version"],r"^gh version ([0-9]+\.[0-9]+\.[0-9]+) ")},
+        "dry_run":os.environ["RELEASE_WORKFLOW_DRY_RUN"] == "true"}
+    return context
+
+
+def accept_publications(custody, publications, candidate, capture, evidence, runner_temp):
+    """Execute the complete existing validators; only process exit zero permits results."""
+    root = runner_temp / "exochain-recovery-receipts"
+    require(not os.path.lexists(root), "current package receipt directory must be absent")
+    environment = dict(os.environ, RELEASE_RECOVERY_DIRECTORY=str(candidate))
+    # Child identity wrappers require GitHub read access. All public registry,
+    # install and cryptographic checker subprocesses have env -i boundaries.
+    outcomes = []
+    for profile in ("wasm", "llm", "sdk"):
+        publication, = [p for p in publications["publications"] if p["id"] == profile]
+        child_output = evidence / f"npm-{profile}-diagnostic-output.txt"
+        child_output.touch(mode=0o600, exist_ok=False)
+        child_env = dict(environment, RELEASE_NPM_TARBALL=str(candidate / publication["lane"] / publication["file"]["path"]),
+                         RELEASE_EXPECTED_TARBALL_SHA256=publication["file"]["sha256"], GITHUB_OUTPUT=str(child_output))
+        command(["/bin/bash","--noprofile","--norc","-p",str(capture / "publish_release_npm_package.sh"),profile,"retained-accept"],
+                evidence / f"npm-{profile}-acceptance.txt", child_env, timeout=1200, bounded=True)
+        result = custody.load_json(root / f"npm-{profile}/result.json", "current npm acceptance result")
+        expected = {"operation":"recover-0.2.7-retained","controller_commit":os.environ["GITHUB_SHA"],
+            "controller_ref":os.environ["GITHUB_REF"],"package":publication["package"],"version":"0.2.7",
+            "tarball_sha256":publication["file"]["sha256"],"provenance_commit":publication["source"]["commit"],
+            "provenance_ref":publication["source"]["ref"],"exit_code":0,"acceptance_verified":True,
+            "mutation_attempted":False,"upload_exit_code":None,"mutation_outcome":"verified","phase":"finished"}
+        for key, value in expected.items():
+            custody.exact(result.get(key), value, "current npm acceptance " + key)
+        require(not (root / f"npm-{profile}/intent.json").exists()
+                and not (root / f"npm-{profile}/outcome.json").exists(), "retained npm attempted an upload")
+        for name in ("registry.json","audit.json"):
+            custody.load_json(root / f"npm-{profile}" / name, "current complete npm readback")
+        outcomes.append(publication_result(publication))
+    command(["/bin/bash","--noprofile","--norc","-p",str(capture / "recover_release_python_027.sh"),"accept"],
+            evidence / "python-acceptance.txt", environment, timeout=1200, bounded=True)
+    result = custody.load_json(root / "python/result.json", "current Python acceptance")
+    for key,value in {"schema":"exochain-python-retained-acceptance/v1","operation":"recover-0.2.7-retained",
+        "controller_commit":os.environ["GITHUB_SHA"],"controller_ref":os.environ["GITHUB_REF"],
+        "exit_code":0,"acceptance_verified":True,"mutation_attempted":False}.items():
+        custody.exact(result.get(key),value,"current Python " + key)
+    require(type(result.get("files")) is list and len(result["files"]) == 2, "current Python inventory incomplete")
+    for publication, checked in zip(publications["publications"][3:], result["files"]):
+        for key,value in {"filename":Path(publication["file"]["path"]).name,"sha256":publication["file"]["sha256"],
+            "source":publication["source"],"public_bytes_verified":True,"crypto_verified":True,
+            "exit_code":0,"mutation_attempted":False}.items():
+            custody.exact(checked.get(key),value,"current Python file " + key)
+        outcomes.append(publication_result(publication))
+    require(len(outcomes) == 5, "current mapped publication acceptance incomplete")
+    return outcomes
+
+
+def publication_result(publication):
+    return {**{key:publication[key] for key in ("id","package","version","file","source")},
+            "public_bytes_verified":True,"crypto_verified":True}
+
+
+def create_retained_receipts(custody, manifest, record, context, summary, checked_publications, evidence):
+    bindings = custody.retained_receipt_bindings(manifest, record, context, summary["origin"])
+    require(summary["rust"] == {"version":"0.2.7","crates_verified":32}, "current Rust acceptance incomplete")
+    transport = summary["retained_transport"]
+    for key,value in {"retained_archives_verified":2,"payload_files_verified":40,"original_zip_envelopes_verified":0}.items():
+        custody.exact(transport.get(key),value,"current retained transport " + key)
+    custody.exact(summary["files"]["files_verified"],transport["payload_files_verified"],"final fixed file count")
+    native = []
+    for artifact in manifest["artifacts"]:
+        if not artifact["lane"].startswith("native-"):
+            continue
+        checked, = [entry for entry in summary["native_attestations"] if entry["lane"] == artifact["lane"]]
+        require(checked["verified_attestations"] > 0 and checked["original_invocation"] == manifest["origin"]["native_attestation_invocation"],
+                "current native verification incomplete")
+        require(summary["packages"][artifact["lane"]] == {"libraries":29,"executables":0}, "current native structure incomplete")
+        native.append({"lane":artifact["lane"],"file":artifact["files"][0],"repository":"exochain/exochain",
+            "source":{"commit":PRODUCT_SHA,"ref":"refs/tags/v0.2.7"},
+            "signer_workflow":"exochain/exochain/.github/workflows/release.yml","signer_digest":PRODUCT_SHA,
+            "invocation":checked["original_invocation"],"crypto_verified":True})
+    identity = custody.load_json(evidence / "identity-after.json", "final signatures")
+    for key in ("controller_signature_verified","product_signature_verified","retaining_signature_verified"):
+        require(identity.get(key) is True, "current signatures incomplete")
+    custody_result = {"payload_files_verified":summary["files"]["files_verified"],
+        "retained_archives_verified":transport["retained_archives_verified"],
+        "original_zip_envelopes_verified":transport["original_zip_envelopes_verified"],
+        "native_attestations_verified":len(native),
+        "native_libraries_per_archive":summary["packages"][native[0]["lane"]]["libraries"],"native_attestations":native,
+        **{key:identity[key] for key in ("controller_signature_verified","product_signature_verified","retaining_signature_verified")}}
+    acceptance_result = {"rust":{"crates_verified":summary["rust"]["crates_verified"],"checksum_verified":True,
+        "version_verified":True,"unyanked_verified":True},"publications":checked_publications}
+    receipt_directory = evidence / "current-receipts"
+    receipt_directory.mkdir(mode=0o700)
+    members = []
+    for name, result in (("custody",custody_result),("acceptance",acceptance_result)):
+        path = receipt_directory / (name + "-receipt.json")
+        dump(path, {"schema":"exochain-retained-"+name+"-receipt-027/v1",**bindings,"results":result})
+        path.chmod(0o600)
+        data = custody.read_regular(path, 512 * 1024, "current receipt")
+        members.append({"path":path.name,"size":len(data),"sha256":hashlib.sha256(data).hexdigest()})
+    dump(evidence / "current-receipt-context.json", context)
+    dump(evidence / "current-receipt-members.json", members)
+    return members
+
+
+def assert_captured_inputs(capture, custody):
+    paths = {"tools/"+name:name for name in (
+        "verify_release_recovery_027.sh", "verify_release_recovery_027.py", "verify_npm_release_tarball.py",
+        "verify_npm_release_package.mjs", "verify_python_release_package.py", "verify_release_sbom.py",
+        "transport_release_build_output.py", "import_release_recovery_027.sh", "publish_release_npm_package.sh", "recover_release_python_027.sh")}
+    paths.update({"governance/releases/v0.2.7/"+name:name for name in (
+        "RECOVERY-MANIFEST.json", "PUBLICATION-IDENTITIES.json", "RETAINED-CUSTODY.json")})
+    environment = dict(BASE_ENV,GIT_CONFIG_GLOBAL="/dev/null",GIT_CONFIG_NOSYSTEM="1",GIT_NO_REPLACE_OBJECTS="1")
+    for source, name in paths.items():
+        result = subprocess.run(["/usr/bin/git","--no-replace-objects","-c","core.fsmonitor=false",
+            "-c","core.untrackedCache=false","-C",os.environ["GITHUB_WORKSPACE"],"show",os.environ["GITHUB_SHA"]+":"+source],
+            env=environment,capture_output=True,timeout=30,check=False)
+        require(result.returncode == 0 and len(result.stdout) <= JSON_LIMIT
+                and result.stdout == custody.read_regular(capture / name, JSON_LIMIT, "captured input"),
+                "captured controller helper or governance input changed")
+
+
 def main():
     capture = Path(sys.argv[1])
     custody = load_module(capture, "verify_release_recovery_027")
@@ -386,19 +650,28 @@ def main():
     candidate = capture / "artifacts"
     archives = capture / "archives"; archives.mkdir(mode=0o700)
     token = os.environ["RELEASE_GITHUB_TOKEN"]
-    transport = Transport(capture, token, manifest)
+    retained = os.environ.get("RELEASE_OPERATION") == "recover-0.2.7-retained"
+    record = custody.load_retained_record(manifest, capture / "RETAINED-CUSTODY.json") if retained else None
+    transport = Transport(capture, token, manifest, record) if retained else Transport(capture, token, manifest)
     python, node = os.environ["RELEASE_PYTHON"], os.environ["RELEASE_NODE"]
     require(Path(node).is_absolute() and Path(node).resolve().is_file(), "invalid pinned Node executable")
     require(shutil.disk_usage(runner_temp).free >= 4 * 1024**3, "import requires at least four GiB free")
     before = custody.load_json(capture / "identity-before.json", "initial identity")
+    if retained:
+        assert_captured_inputs(capture, custody)
     summary = {"controller_sha":before["controller_sha"],"controller_ref":before["controller_ref"],
-               "product":manifest["product"],"origin":fetch_origin(manifest, custody, transport, evidence)}
+               "product":manifest["product"]}
     helper = [python, "-I", "-B", str(capture / "verify_release_recovery_027.py")]
-    command(helper + ["origin", "--manifest", str(manifest_path), "--run", str(evidence / "run.json"),
+    if retained:
+        summary["origin"], summary["retained_transport"] = acquire_retained(manifest, record, custody, transport, evidence, archives,
+                                              candidate, capture / "retaining-workflow.yml")
+    else:
+        summary["origin"] = fetch_origin(manifest, custody, transport, evidence)
+        command(helper + ["origin", "--manifest", str(manifest_path), "--run", str(evidence / "run.json"),
                       "--jobs", str(evidence / "jobs.json"), "--artifact-metadata", str(evidence / "artifact-metadata")], evidence / "origin-check.json")
-    for artifact in manifest["artifacts"]:
-        transport.archive(artifact, archives / f"{artifact['id']}.zip")
-    command(helper + ["artifacts", "--manifest", str(manifest_path), "--archives", str(archives),
+        for artifact in manifest["artifacts"]:
+            transport.archive(artifact, archives / f"{artifact['id']}.zip")
+        command(helper + ["artifacts", "--manifest", str(manifest_path), "--archives", str(archives),
                       "--destination", str(candidate)], evidence / "artifact-custody-check.json")
     summary["rust"] = fetch_rust(manifest, custody, transport, evidence)
     command(helper + ["rust-registry", "--manifest", str(manifest_path), "--responses", str(evidence / "rust-responses")],
@@ -409,6 +682,9 @@ def main():
         if artifact["lane"].startswith("native-"):
             summary["native_attestations"].append(verify_attestation(manifest, artifact,
                 candidate / artifact["lane"] / artifact["files"][0]["path"], evidence, token, custody))
+    if retained:
+        publications = custody.load_publications(manifest, capture / "PUBLICATION-IDENTITIES.json")
+        checked_publications = accept_publications(custody, publications, candidate, capture, evidence, runner_temp)
     command(helper + ["files", "--manifest", str(manifest_path), "--directory", str(candidate)], evidence / "final-file-check.json")
     # No package was executed. Recheck source, signatures and authoritative
     # remote tags immediately before exposing accepted data to later jobs.
@@ -419,19 +695,41 @@ def main():
     after = custody.load_json(evidence / "identity-after.json", "final identity")
     require(all(before.get(key) == after.get(key) for key in ("controller_sha", "controller_ref", "product_commit", "product_tag_object")),
             "identity changed during read-only import")
+    if retained:
+        # Verify fixed files after the last identity checker, not just before it.
+        summary["files"] = custody.verify_files(manifest, candidate)
+        assert_captured_inputs(capture, custody)
+        context = current_receipt_context(custody, transport, capture, evidence, python, node)
+        members = create_retained_receipts(custody, manifest, record, context, summary, checked_publications, evidence)
     shutil.copyfile(capture / "identity-before.json", evidence / "identity-before.json")
     dump(evidence / "import-receipt.json", summary)
     check_destinations(runner_temp, destination)
     # Everything executed before this point is a read or local private write.
     # Fresh-runner ownership and absent destinations are mandatory. No reuse or
     # merge of an earlier import tree is supported.
-    evidence.rename(final_evidence)
-    candidate.rename(destination)
     descriptor = os.open(os.environ["GITHUB_OUTPUT"], os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW | os.O_CLOEXEC)
+    exposed = []
     try:
         metadata = os.fstat(descriptor)
         require(stat.S_ISREG(metadata.st_mode) and metadata.st_nlink == 1, "GITHUB_OUTPUT must be one regular file")
-        os.write(descriptor, f"artifact_directory={destination}\nevidence_directory={final_evidence}\n".encode())
+        outputs = f"artifact_directory={destination}\nevidence_directory={final_evidence}\n"
+        if retained:
+            outputs += (f"receipt_directory={final_evidence / 'current-receipts'}\n"
+                        f"producer_job_id={context['producer_job_id']}\n"
+                        f"receipt_members={json.dumps(members,separators=(',',':'))}\n"
+                        f"receipt_context={json.dumps(context,separators=(',',':'))}\n")
+        evidence.rename(final_evidence)
+        exposed.append((final_evidence, evidence))
+        candidate.rename(destination)
+        exposed.append((destination, candidate))
+        encoded = outputs.encode()
+        require(os.write(descriptor, encoded) == len(encoded), "controller output write was incomplete")
+        os.fsync(descriptor)
+    except BaseException:
+        # No accepted tree or receipt directory survives a failed exposure.
+        for public, private in reversed(exposed):
+            public.rename(private)
+        raise
     finally:
         os.close(descriptor)
     print(json.dumps({"artifact_directory":str(destination), "evidence_directory":str(final_evidence)}, sort_keys=True))
