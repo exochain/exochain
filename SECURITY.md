@@ -18,6 +18,24 @@ SPDX-License-Identifier: Apache-2.0
 
 # Security Policy
 
+## Beta security accountability and review
+
+Bob Stewart (`@bob-stewart`) is accountable for security. Technical audits use
+Daybreak and other security review systems appropriate to the changed surface;
+no single system is an exclusive or mandatory audit provider. Audit evidence
+identifies the source revision, scope, findings, remediation/disposition, and
+verification. Relevant existing evidence may be reused when its applicability
+is demonstrated. Bob is accountable for finding disposition, and independent
+human maintainers review it. Audit-system output is not a human approval, and
+Bob's disposition of his own change cannot supply an independent review.
+
+Review requests route to the actual beta maintainers: `@bob-stewart`,
+`@mstewartbz`, and `@robst3w`. The [Review Process](CONTRIBUTING.md#review-process)
+retains two independent non-author human approvals and the applicable security
+audit requirements. This repository operating arrangement grants no runtime or
+publisher permissions and changes no vulnerability-reporting, signing, or
+release-verification safeguard below.
+
 ## Supported Versions
 
 | Version | Status |

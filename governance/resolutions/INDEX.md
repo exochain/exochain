@@ -29,6 +29,7 @@ SPDX-License-Identifier: Apache-2.0
 | [[CR-002-AUTONOMOUS-RECURSIVE-IMPROVEMENT-INFRASTRUCTURE\|CR-002]] | Autonomous Recursive Self-Improvement Governance and Deployment | DRAFT | 2026-04-25 | - |
 | [[CR-003-root-genesis-frost-dkg\|CR-003]] | Root Genesis FROST DKG Authority | RATIFIED | 2026-06-21 | - |
 | [[CR-004-AVC-TIMESTAMP-FINALITY-AUTHORITY\|CR-004]] | AVC Timestamp and Finality Authority | RATIFIED | 2026-06-21 | - |
+| [BETA-MAINTAINER-OWNERSHIP](BETA-MAINTAINER-OWNERSHIP.md) | Beta repository maintainer ownership correction | DRAFT | 2026-09-24 | - |
 
 ## Resolution Lifecycle
 

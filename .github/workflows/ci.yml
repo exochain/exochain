@@ -352,6 +352,8 @@ jobs:
         run: bash tools/test_github_issue_workflow_boundaries.sh
       - name: CI tool installer supply-chain hardening
         run: bash tools/test_ci_supply_chain_hardening.sh
+      - name: Beta code-owner routing contract
+        run: bash tools/test_beta_codeowners.sh
       - name: Cross-platform target cache boundary
         run: bash tools/test_cross_platform_target_cache_boundary.sh
       - name: Core npm package supply-chain hardening

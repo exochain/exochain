@@ -194,7 +194,55 @@ Use the following template:
 ### Review Process
 1. **Automated Bailiff**: CI checks formatting, linting, tests, coverage, `cargo deny`, and audit.
 2. **Peer Review**: Two maintainers must approve.
-3. **Security Review**: Changes to `exo-core`, `exo-gatekeeper`, or `exo-consent` require specific Security Team sign-off.
+3. **Security Review**: Security-sensitive changes, including changes to `exo-core`, `exo-gatekeeper`, or `exo-consent`, require technical security audit evidence and human maintainer review of its findings before merge, under the accountability described below.
+
+#### Beta repository maintainers
+
+For repository review during beta, **Bob Stewart (`@bob-stewart`), Max Stewart
+(`@mstewartbz`), and Robert (`@robst3w`)** are the responsible maintainers for
+each of **Architecture, Governance, and Operations**. These are repository
+maintenance responsibilities, not appointments to constitutional council seats.
+The same roster covers all three areas; it is not three independent electorates.
+Bob Stewart is accountable for security and legal/compliance matters. EXOCHAIN
+has no separate Legal department or Legal reviewer role during beta. These paths
+route to the same real maintainers for independent review; that routing neither
+makes them legal professionals nor transfers Bob's accountability.
+See the [beta ownership correction](governance/resolutions/BETA-MAINTAINER-OWNERSHIP.md)
+for scope, adoption conditions, and the recorded release-review chronology.
+
+- Two distinct, independent human maintainers must approve the final candidate
+  commit before merge. The PR author cannot approve their own change. One human
+  counts once, even when covering several areas. Agent reviews are supporting
+  evidence and do not count as human approvals.
+- A named maintainer's review may cover all affected Architecture, Governance,
+  and Operations paths; that area coverage does not require additional votes
+  beyond the two independent maintainer approvals. Partial or qualified reviews
+  must identify their scope and unresolved conditions.
+- Security audits use **Daybreak and other security review systems**, selected
+  for the changed surface. No single tool is the exclusive or mandatory source
+  of audit evidence. Record the audited source revision, scope, actual findings,
+  remediation/disposition, and verification evidence. Existing relevant audits
+  may be reused when their source/scope applicability is demonstrated; do not
+  rerun an audit solely because ownership wording changed. Tool output does not
+  approve a PR or discharge human accountability. Bob is accountable for finding
+  disposition; the independent maintainer reviewers verify that disposition.
+  His disposition of findings in his own PR is not an independent approval.
+- License, dependency, consent, privacy, and other applicable compliance checks
+  remain required. Maintainers review the evidence under Bob's accountability;
+  no approval is required from a nonexistent Legal department. This does not
+  change legal obligations, represent a legal opinion, or alter runtime consent
+  or authority rules.
+- Multiple owners on one CODEOWNERS line are alternatives in GitHub, not an
+  enforced quorum; later matching rules replace earlier ones. Written review
+  and audit requirements still apply in addition to automatic review routing.
+- This roster does not grant repository, organization, runtime, or publisher
+  permissions. Required CI, branch protections, signing, protected release
+  environment approvals, custody, provenance, expiry checks, dry/live separation,
+  and independent publication acceptance remain unchanged. Beta or ad hoc release
+  scheduling is not an exception to these safeguards.
+- Adoption is prospective through reviewed integration of this correction.
+  Post-merge reviews retain their actual timestamps and do not retroactively
+  satisfy a pre-merge requirement or authorize a release-policy waiver.
 
 ---
 
