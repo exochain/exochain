@@ -265,6 +265,11 @@ def main() -> int:
             index_url = f"http://127.0.0.1:{server.server_port}/index/"
             write_fixture(root, index_url)
             environment = {
+                "CARGO_BUILD_JOBS": "2",
+                "CARGO_INCREMENTAL": "0",
+                "CARGO_PROFILE_DEV_DEBUG": "0",
+                "CARGO_PROFILE_TEST_DEBUG": "0",
+                "CARGO_PROFILE_RELEASE_DEBUG": "0",
                 "CARGO_HOME": str(root / "cargo-home"),
                 "CARGO_REGISTRIES_ORACLE_TOKEN": "loopback-oracle-token",
                 "HOME": str(root),

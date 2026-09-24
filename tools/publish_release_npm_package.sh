@@ -211,7 +211,8 @@ validate_npm_release_context() {
       ;;
     recover-0.2.7|recover-0.2.7-retained)
       if [ "$RELEASE_OPERATION" = recover-0.2.7-retained ]; then
-        [ "${RELEASE_NPM_MODE:-}" = retained-accept ] || fail 'explicit retained-accept mode required'
+        [[ "${RELEASE_NPM_MODE:-}" = retained-accept || "${RELEASE_NPM_MODE:-}" = retained-readback ]] \
+          || fail 'explicit retained-accept mode or retained-readback required'
         [[ "${RELEASE_WORKFLOW_DRY_RUN:-}" = true || "${RELEASE_WORKFLOW_DRY_RUN:-}" = false ]] \
           || fail 'explicit workflow dry-run boolean required'
       else
@@ -350,6 +351,8 @@ initialize_npm_recovery_receipts() {
   mutation_attempted=false
   mutation_exit_code=''
   acceptance_verified=false
+  # Final public readback cannot mint a substitute producer receipt.
+  [ "${RELEASE_NPM_MODE:-}" != retained-readback ] || return 0
   [[ "$RELEASE_OPERATION" = recover-0.2.7 || "$RELEASE_OPERATION" = recover-0.2.7-retained ]] || return 0
   /usr/bin/env -i "$python_path" -I -B - "$RUNNER_TEMP" "$profile" "$GITHUB_OUTPUT" <<'PY' \
     || fail "recovery receipt directory cannot be initialized exclusively"
@@ -637,7 +640,9 @@ publish_or_accept_npm() {
   verify_registry_acceptance
   verify_recovery_npm_files
   verify_release_binding
-  acceptance_verified=true
+  if [ "${RELEASE_NPM_MODE:-}" != retained-readback ]; then
+    acceptance_verified=true
+  fi
 }
 
 for required_name in \
@@ -669,7 +674,7 @@ done
 
 # An environment variable alone cannot select retained acceptance.
 RELEASE_NPM_MODE="${2:-publish}"
-[[ "$#" = 1 || ( "$#" = 2 && "$2" = retained-accept ) ]] || fail 'invalid npm operation arguments'
+[[ "$#" = 1 || ( "$#" = 2 && ( "$2" = retained-accept || "$2" = retained-readback ) ) ]] || fail 'invalid npm operation arguments'
 readonly RELEASE_NPM_MODE
 profile="${1:-}"
 case "$profile" in

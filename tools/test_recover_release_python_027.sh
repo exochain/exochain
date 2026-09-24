@@ -180,6 +180,12 @@ scenario=404; reset_case exhausted; expect_failure accept_readback
 [[ "$(grep -c '/json' "$calls")" = 25 ]]
 reset_case isolation
 public_command "$tool_python" -I -B -c 'import os; assert not any(k in os.environ for k in ("GITHUB_TOKEN","ACTIONS_ID_TOKEN_REQUEST_TOKEN","PYTHONPATH","CURL_HOME"))'
+scenario=both; reset_case retained-readback-no-receipts
+mode=retained-readback
+declare -F readback_without_stage >/dev/null || { echo 'readback-only API absent' >&2; exit 1; }
+readback_without_stage
+[[ ! -e "$stage" && ! -e "$receipts/exochain-0.2.7-py3-none-any.whl.result.json" ]]
+[[ "$(grep -c '^crypto$' "$calls")" = 2 ]]
 mode=accept
 for dry in true false; do
   RELEASE_WORKFLOW_DRY_RUN="$dry"

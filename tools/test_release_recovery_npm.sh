@@ -95,6 +95,14 @@ printf '%s\\n' "$acceptance_only" "$provenance_commit" "$provenance_ref"
         self.env["RELEASE_OPERATION"] = "recover-0.2.7-retained"
         self.rejected("profile=wasm; validate_npm_release_context", "explicit retained-accept mode")
 
+    def test_retained_readback_has_no_producer_receipts(self):
+        self.env.update(RELEASE_OPERATION='recover-0.2.7-retained', RELEASE_NPM_MODE='retained-readback', RELEASE_WORKFLOW_DRY_RUN='false')
+        for profile in ('wasm','llm','sdk'):
+            self.succeeds(f'profile={profile}; validate_npm_release_context; initialize_npm_recovery_receipts; [ -z "$recovery_receipt_root" ]')
+        self.assertFalse((self.path/'exochain-recovery-receipts').exists())
+        self.env['RELEASE_OPERATION']='recover-0.2.7'
+        self.rejected('profile=sdk; validate_npm_release_context','retained mode requires retained operation')
+
     def test_normal_operation_rejects_retained_cli_pairing(self):
         self.env.update(RELEASE_OPERATION="release",RELEASE_NPM_MODE="retained-accept",
             RELEASE_TAG="v0.2.7",GITHUB_REF="refs/tags/v0.2.7",NODE_AUTH_TOKEN="fixture",

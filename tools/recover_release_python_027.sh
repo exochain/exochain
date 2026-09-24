@@ -144,6 +144,13 @@ accept_without_stage() {
   verify_existing "$receipts/existing.txt" accept false
 }
 
+readback_without_stage() {
+  # Reuse genuine public bytes/identity verification, but the distinct mode
+  # suppresses per-file and aggregate producer results in verify_existing/main.
+  [[ "$mode" = retained-readback ]] || fail 'explicit retained readback mode required'
+  accept_without_stage
+}
+
 inventory_lists() {
   python_verify recovery-preflight "$1" exochain 0.2.7 "$manifest" > "$receipts/inventory.json"
   # This is canonical-validator output, never raw provider text or shell code.
@@ -287,9 +294,9 @@ PY
 }
 
 main() {
-  [[ "$#" = 1 && ( "$1" = preflight || "$1" = readback || "$1" = accept ) ]] || fail 'expected preflight, readback or accept'
+  [[ "$#" = 1 && ( "$1" = preflight || "$1" = readback || "$1" = accept || "$1" = retained-readback ) ]] || fail 'expected preflight, readback, accept or retained-readback'
   local mode="$1" credential path
-  if [[ "$mode" = accept ]]; then
+  if [[ "$mode" = accept || "$mode" = retained-readback ]]; then
     [[ "${RELEASE_OPERATION:-}" = recover-0.2.7-retained ]] || fail 'operation and release mode differ'
     [[ "${RELEASE_WORKFLOW_DRY_RUN:-}" = true || "${RELEASE_WORKFLOW_DRY_RUN:-}" = false ]] \
       || fail 'explicit workflow dry-run boolean required'
@@ -322,7 +329,7 @@ main() {
   case "$recovery_dir/" in "$scratch/"*) ;; *) fail 'recovery artifacts are outside RUNNER_TEMP' ;; esac
   stage="$workspace/.release-recovery-python-stage"
   stage_state="$scratch/exochain-recovery-python-state.json"
-  if [[ "$mode" = accept ]]; then
+  if [[ "$mode" = accept || "$mode" = retained-readback ]]; then
     [[ ! -e "$stage" && ! -L "$stage" && ! -e "$stage_state" && ! -L "$stage_state" ]] \
       || fail 'retained acceptance cannot use Python stage state'
   fi
@@ -377,6 +384,8 @@ main() {
     python_phase=staged
   elif [[ "$mode" = readback ]]; then
     accept_readback
+  elif [[ "$mode" = retained-readback ]]; then
+    readback_without_stage
   else
     accept_without_stage
   fi

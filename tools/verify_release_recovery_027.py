@@ -445,15 +445,15 @@ def retained_receipt_bindings(manifest, record, context, origin):
             "mutation_attempted": False}
 
 
-def verify_retained_receipts(manifest, record, publications, input_record, evidence_path, workflow_path, receipt_path):
-    """Final offline transport/binding check, not a cryptographic verifier.
+def retained_receipt_profile(manifest, record, publications, input_record, evidence_path, workflow_path):
+    """Validate authoritative provenance before downloading; no receipt acceptance.
 
     Authoritative metadata/jobs and direct upload outputs are supplied by the
     captured controller via fixed APIs. Embedded JSON cannot establish producer
     ownership, and the checks below never perform network requests.
     """
     validate_publications(manifest, publications)
-    keys(input_record, ("schema", "origin", "context", "current_run", "current_jobs", "upload_outputs", "metadata_before", "metadata_after", "members"), "receipt verification input")
+    keys(input_record, ("schema", "origin", "context", "current_run", "current_jobs", "upload_outputs", "metadata_before", "members"), "receipt pre-download input")
     exact(input_record["schema"], "exochain-retained-receipts-input-027/v1", "receipt input schema")
     origin = verify_retained_origin(manifest, record, input_record["origin"], evidence_path, workflow_path)
     context = input_record["context"]
@@ -484,8 +484,6 @@ def verify_retained_receipts(manifest, record, publications, input_record, evide
     require(type(outputs["artifact_digest"]) is str and re.fullmatch(r"[0-9a-f]{64}", outputs["artifact_digest"]) is not None, "direct artifact digest must be bare SHA256 output")
     metadata = input_record["metadata_before"]
     keys(metadata, record["custody"]["metadata"].keys(), "current receipt metadata")
-    exact(metadata, input_record["metadata_after"], "current receipt metadata changed during download")
-    exact(semantic_digest(metadata), semantic_digest(input_record["metadata_after"]), "strict receipt metadata types")
     for field, value in {"id": outputs["artifact_id"], "digest": "sha256:" + outputs["artifact_digest"], "name": RECEIPT_ARTIFACT, "expired": False}.items():
         exact(metadata.get(field), value, "current receipt metadata " + field)
     positive_integer(metadata.get("size_in_bytes"), "current receipt ZIP size", RECEIPT_MAX_BYTES)
@@ -506,6 +504,19 @@ def verify_retained_receipts(manifest, record, publications, input_record, evide
         require(type(member["sha256"]) is str and re.fullmatch(r"[0-9a-f]{64}", member["sha256"]) is not None, "invalid receipt member hash")
     profile = {"zip_size": metadata["size_in_bytes"], "zip_sha256": outputs["artifact_digest"], "compression": 8,
                "mode": 0o100600, "dos_attributes": 32, "expanded_bytes": sum(m["size"] for m in members), "files": members}
+    return bindings, profile
+
+
+def verify_retained_receipts(manifest, record, publications, input_record, evidence_path, workflow_path, receipt_path):
+    """Final strict ZIP/results acceptance requires real before and after observations."""
+    keys(input_record, ("schema", "origin", "context", "current_run", "current_jobs", "upload_outputs", "metadata_before", "metadata_after", "members"), "receipt verification input")
+    bindings, profile = retained_receipt_profile(manifest, record, publications,
+        {key:value for key,value in input_record.items() if key != 'metadata_after'}, evidence_path, workflow_path)
+    metadata = input_record['metadata_before']
+    exact(metadata, input_record['metadata_after'], 'current receipt metadata changed during download')
+    exact(semantic_digest(metadata), semantic_digest(input_record['metadata_after']), 'strict receipt metadata types')
+    context, outputs = input_record['context'], input_record['upload_outputs']
+    run_id, attempt = context['run_id'], context['run_attempt']
     fd = regular_fd(receipt_path, RECEIPT_MAX_BYTES, "current receipt ZIP")
     with os.fdopen(fd, "rb") as stream:
         payloads = strict_zip_stream(stream, profile, collect=True)

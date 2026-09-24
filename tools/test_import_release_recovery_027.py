@@ -132,6 +132,22 @@ class ImportTests(unittest.TestCase):
         for key in ("GITHUB_SHA","GITHUB_REF","GITHUB_RUN_ID","GITHUB_RUN_ATTEMPT","GITHUB_JOB","RELEASE_WORKFLOW_DRY_RUN","RELEASE_GITHUB_TOKEN"):
             self.assertEqual(child[key],env[key])
         self.assertEqual(child["DRY_RUN"],"false")
+        (fixtures/'recover_github_release_027.py').write_text("import json,os,sys\nassert sys.argv[1:] == ['retained-github']\nprint(json.dumps(dict(os.environ)))\n")
+        env.update(GITHUB_JOB='retained-github',RELEASE_WORKFLOW_DRY_RUN='false')
+        for name in ('ARTIFACT_ID','ARTIFACT_DIGEST','PRODUCER_JOB_ID','RECEIPT_MEMBERS','RECEIPT_CONTEXT'):
+            env['RELEASE_RECEIPT_'+name] = 'direct-fixture-'+name
+        result = subprocess.run(['/bin/bash','--noprofile','--norc','-p',str(dispatcher),'retained-github'],
+                                env=env,capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stderr)
+        child=json.loads(result.stdout)
+        self.assertEqual(child['GITHUB_JOB'],'retained-github')
+        self.assertNotIn('EVIL',child)
+        for name in ('ARTIFACT_ID','ARTIFACT_DIGEST','PRODUCER_JOB_ID','RECEIPT_MEMBERS','RECEIPT_CONTEXT'):
+            self.assertEqual(child['RELEASE_RECEIPT_'+name],env['RELEASE_RECEIPT_'+name])
+        env['RELEASE_WORKFLOW_DRY_RUN']='true'
+        result = subprocess.run(['/bin/bash',str(dispatcher),'retained-github'],env=env,capture_output=True,text=True)
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn('live current receipt handoff',result.stderr)
 
     def test_retained_transport_has_only_two_archives_and_separate_bound(self):
         record = self.custody.load_retained_record(self.manifest,
@@ -161,6 +177,42 @@ class ImportTests(unittest.TestCase):
         fixture.record_path = ROOT / "governance/releases/v0.2.7/RETAINED-CUSTODY.json"
         self.addCleanup(fixture.doCleanups)
         return fixture
+
+    def test_current_receipt_transport_uses_only_exact_id_and_small_bound(self):
+        record = self.custody.load_retained_record(self.manifest, ROOT / 'governance/releases/v0.2.7/RETAINED-CUSTODY.json')
+        transport = self.i.Transport(self.root,'fixture',self.manifest,record)
+        self.assertTrue(callable(getattr(transport,'receipt_archive',None)), 'receipt download API absent')
+        metadata = {'id':444,'size_in_bytes':100,'url':self.i.API+'/artifacts/444',
+            'archive_download_url':self.i.API+'/artifacts/444/zip'}
+        calls=[]
+        def get(url,path,limit,auth):
+            calls.append((url,limit,auth)); path.write_bytes(b'x'*100); return 200,[]
+        with patch.object(transport,'_get',side_effect=get):
+            transport.receipt_archive(metadata,self.root/'receipt.zip')
+            self.assertEqual(calls,[(self.i.API+'/artifacts/444/zip',100,True)])
+            for key,value in [('id',True),('size_in_bytes',1048577),('archive_download_url','https://attacker.invalid/zip')]:
+                with self.subTest(key=key):
+                    self.reject(transport.receipt_archive,dict(metadata,**{key:value}),self.root/'bad.zip')
+            self.assertEqual(len(calls),1)
+
+    def test_retained_producer_github_preflight_cannot_mutate(self):
+        self.assertTrue(callable(getattr(self.i,'retained_github_preflight',None)), 'producer GitHub preflight absent')
+        helper=module_file('producer_github_preflight',ROOT/'tools/recover_github_release_027.py')
+        record=self.custody.load_retained_record(self.manifest,ROOT/'governance/releases/v0.2.7/RETAINED-CUSTODY.json')
+        publications=self.custody.load_publications(self.manifest,ROOT/'governance/releases/v0.2.7/PUBLICATION-IDENTITIES.json')
+        events=[]
+        class Provider:
+            def lookup(self): events.append('lookup'); return None
+            def create(self,*args): raise AssertionError('preflight create')
+            def upload(self,*args): raise AssertionError('preflight upload')
+            def publish(self,*args): raise AssertionError('preflight publish')
+        with patch.object(self.i,'load_module',return_value=helper),patch.object(helper,'GitHub',return_value=Provider()), \
+             patch.object(helper,'release_assets',return_value={'fixture':b'x'}), \
+             patch.object(self.custody,'verify_files',side_effect=lambda *args:events.append('files')), \
+             patch.dict(self.i.os.environ,{'GITHUB_SHA':'a'*40,'GITHUB_REF':'refs/tags/v0.2.7-recover.3','RELEASE_GITHUB_TOKEN':'fixture'},clear=True):
+            self.i.retained_github_preflight(self.root,self.custody,self.manifest,publications,record,self.root,self.root)
+        self.assertEqual(events,['files','lookup','files'])
+        self.assertIs(json.loads((self.root/'github-preflight.json').read_text())['mutation_attempted'],False)
 
     def test_retained_acquisition_rechecks_metadata_and_never_exposes_bad_bytes(self):
         record, origin = self.retained_fixture().origin_fixture()
@@ -228,7 +280,7 @@ class ImportTests(unittest.TestCase):
 
     def test_aggregate_requires_each_fresh_child_exit_and_complete_success_result(self):
         publications = self.custody.load_publications(self.manifest,ROOT / "governance/releases/v0.2.7/PUBLICATION-IDENTITIES.json")
-        for fault in (None,"wasm-exit","llm-result","sdk-history","python-crypto","python-missing"):
+        for fault in (None,"wasm-exit","llm-result","sdk-history","sdk-readback","python-crypto","python-missing"):
             runner = self.root / str(fault); runner.mkdir()
             capture = runner / "capture"; capture.mkdir()
             evidence = capture / "evidence"; evidence.mkdir()
@@ -260,6 +312,9 @@ class ImportTests(unittest.TestCase):
                         upload_exit_code=None,mutation_outcome="verified",phase="finished")
                     if fault == name+"-result": result["acceptance_verified"] = False
                     if fault == name+"-history": result["controller_commit"] = self.i.PRODUCT_SHA
+                    if fault == name+'-readback':
+                        result.pop('acceptance_verified')
+                        result['readback_verified']=True
                     for file in ("registry.json","audit.json"):
                         (destination / file).write_text('{}')
                 (destination / "result.json").write_text(json.dumps(result))

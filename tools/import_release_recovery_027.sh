@@ -57,7 +57,7 @@ done
 trusted_git show "$GITHUB_SHA:governance/releases/v0.2.7/RECOVERY-MANIFEST.json" > "$capture/RECOVERY-MANIFEST.json"
 /bin/chmod 400 "$capture/RECOVERY-MANIFEST.json"
 if [ "$RELEASE_OPERATION" = recover-0.2.7-retained ]; then
-  for helper in import_release_recovery_027.sh publish_release_npm_package.sh recover_release_python_027.sh; do
+  for helper in import_release_recovery_027.sh publish_release_npm_package.sh recover_release_python_027.sh recover_github_release_027.py; do
     trusted_git show "$GITHUB_SHA:tools/$helper" > "$capture/$helper"
     /bin/chmod 400 "$capture/$helper"
   done
@@ -211,12 +211,25 @@ class Transport:
         limit = artifact["zip_size"] if self.retained is None else artifact["size_in_bytes"]
         if self.retained is not None:
             require(artifact in [self.retained[k]["metadata"] for k in ("payload", "custody")], "retained artifact is not exactly pinned")
-        status, locations = self._get(fixed[artifact["id"]], destination, limit, True)
+        payload = self.retained is not None and artifact['id'] == self.retained['payload']['metadata']['id']
+        self._archive_bytes(fixed[artifact['id']], destination, limit, payload)
+
+    def receipt_archive(self, metadata, destination):
+        identifier, limit = metadata.get('id'), metadata.get('size_in_bytes')
+        require(type(identifier) is int and 0 < identifier < 10**15, 'invalid receipt artifact ID')
+        require(type(limit) is int and 0 < limit <= 1024*1024, 'invalid receipt archive bound')
+        url = API + f'/artifacts/{identifier}'
+        require(metadata.get('url') == url and metadata.get('archive_download_url') == url+'/zip',
+                'receipt endpoint differs from exact ID')
+        self._archive_bytes(url+'/zip', destination, limit)
+
+    def _archive_bytes(self, url, destination, limit, retained_payload=False):
+        status, locations = self._get(url, destination, limit, True)
         if status == 302:
             require(len(locations) == 1, "artifact download lacks one storage redirect")
             url = validate_storage_url(locations[0])
             Path(destination).unlink()
-            if self.retained is not None and artifact["id"] == self.retained["payload"]["metadata"]["id"]:
+            if retained_payload:
                 self.retained_storage.add(url)
             try:
                 status, locations = self._get(url, destination, limit, False)
@@ -601,6 +614,16 @@ def accept_publications(custody, publications, candidate, capture, evidence, run
     return outcomes
 
 
+def retained_github_preflight(capture, custody, manifest, publications, record, candidate, evidence):
+    github = load_module(capture, 'recover_github_release_027')
+    receipt, expected = github.retained_release_metadata(manifest,publications,record,
+        os.environ['GITHUB_SHA'],os.environ['GITHUB_REF'])
+    assets = github.release_assets(custody,manifest,candidate,receipt)
+    provider = github.GitHub(os.environ['RELEASE_GITHUB_TOKEN'],custody.parse_json)
+    result = github.preflight(provider,expected,assets,lambda:custody.verify_files(manifest,candidate))
+    dump(evidence/'github-preflight.json',result)
+
+
 def publication_result(publication):
     return {**{key:publication[key] for key in ("id","package","version","file","source")},
             "public_bytes_verified":True,"crypto_verified":True}
@@ -654,7 +677,7 @@ def assert_captured_inputs(capture, custody):
     paths = {"tools/"+name:name for name in (
         "verify_release_recovery_027.sh", "verify_release_recovery_027.py", "verify_npm_release_tarball.py",
         "verify_npm_release_package.mjs", "verify_python_release_package.py", "verify_release_sbom.py",
-        "transport_release_build_output.py", "import_release_recovery_027.sh", "publish_release_npm_package.sh", "recover_release_python_027.sh")}
+        "transport_release_build_output.py", "import_release_recovery_027.sh", "publish_release_npm_package.sh", "recover_release_python_027.sh", "recover_github_release_027.py")}
     paths.update({"governance/releases/v0.2.7/"+name:name for name in (
         "RECOVERY-MANIFEST.json", "PUBLICATION-IDENTITIES.json", "RETAINED-CUSTODY.json")})
     environment = dict(BASE_ENV,GIT_CONFIG_GLOBAL="/dev/null",GIT_CONFIG_NOSYSTEM="1",GIT_NO_REPLACE_OBJECTS="1")
@@ -713,6 +736,7 @@ def main():
     if retained:
         publications = custody.load_publications(manifest, capture / "PUBLICATION-IDENTITIES.json")
         checked_publications = accept_publications(custody, publications, candidate, capture, evidence, runner_temp)
+        retained_github_preflight(capture,custody,manifest,publications,record,candidate,evidence)
     command(helper + ["files", "--manifest", str(manifest_path), "--directory", str(candidate)], evidence / "final-file-check.json")
     # No package was executed. Recheck source, signatures and authoritative
     # remote tags immediately before exposing accepted data to later jobs.

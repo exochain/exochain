@@ -595,6 +595,19 @@ class RetainedTests(unittest.TestCase):
             with self.subTest(runtime=runtime):
                 self.reject(self.v.retained_receipt_bindings, self.manifest, record, context, origin)
 
+    def test_receipt_predownload_profile_does_not_invent_after_observation(self):
+        self.assertTrue(callable(getattr(self.v,'retained_receipt_profile',None)), 'pre-download provenance API absent')
+        record, publications, envelope, receipts = self.receipt_fixture()
+        path = self.write_receipt_fixture(envelope, receipts)
+        before = copy.deepcopy(envelope); before.pop('metadata_after')
+        bindings, profile = self.v.retained_receipt_profile(self.manifest,record,publications,before,'fixture','fixture')
+        self.assertEqual(profile['zip_size'],path.stat().st_size)
+        self.assertNotIn('receipts_verified',bindings)
+        self.reject(self.v.verify_retained_receipts,self.manifest,record,publications,before,'fixture','fixture',path)
+        for key,value in [('size_in_bytes',1048577),('id',1),('archive_download_url','https://attacker.invalid/receipt'),('digest','sha256:'+'e'*64)]:
+            changed=copy.deepcopy(before); changed['metadata_before'][key]=value
+            self.reject(self.v.retained_receipt_profile,self.manifest,record,publications,changed,'fixture','fixture')
+
     def write_receipt_fixture(self, envelope, receipts):
         class NonSeekable(io.BytesIO):
             def seek(self, *args):

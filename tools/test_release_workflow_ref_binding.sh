@@ -240,7 +240,9 @@ expected_permissions = {
   "recovery-llm" => { "contents" => "read", "id-token" => "write" },
   "recovery-sdk" => { "contents" => "read", "id-token" => "write" },
   "recovery-python" => { "contents" => "read", "id-token" => "write" },
-  "recovery-github" => { "contents" => "write" }
+  "recovery-github" => { "contents" => "write" },
+  "retained-acceptance" => { "contents" => "read", "actions" => "read", "attestations" => "read" },
+  "retained-github" => { "contents" => "write", "actions" => "read" }
 }
 
 job_names = Set.new
@@ -793,7 +795,9 @@ printf '%s\n' \
   > "$cargo_boundary_crate/.cargo/config.toml"
 (
   cd "$cargo_boundary_crate"
-  cargo generate-lockfile >/dev/null
+  CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 \
+    CARGO_PROFILE_TEST_DEBUG=0 CARGO_PROFILE_RELEASE_DEBUG=0 \
+    cargo generate-lockfile >/dev/null
   git init -q
   git config user.name EXOCHAIN
   git config user.email release-test@example.invalid
@@ -802,6 +806,8 @@ printf '%s\n' \
   # A warm target may cache compiler information and skip this wrapper entirely.
   # Force the control's compiler probe, not a rebuild or a production behavior.
   CARGO_CACHE_RUSTC_INFO=0 \
+    CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 \
+    CARGO_PROFILE_TEST_DEBUG=0 CARGO_PROFILE_RELEASE_DEBUG=0 \
     CARGO_REGISTRY_TOKEN=do-not-disclose \
     CARGO_WRAPPER_MARKER="$cargo_wrapper_marker" \
     cargo publish --dry-run --no-verify --locked >/dev/null
@@ -816,6 +822,8 @@ real_rustdoc="$(rustup which rustdoc)"
   cd /
   /usr/bin/env -i \
     PATH="$(/usr/bin/dirname "$real_cargo"):/usr/bin:/bin" \
+    CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 \
+    CARGO_PROFILE_TEST_DEBUG=0 CARGO_PROFILE_RELEASE_DEBUG=0 \
     HOME="$cargo_boundary_home" \
     CARGO_HOME="$cargo_boundary_home" \
     CARGO_TARGET_DIR="$cargo_boundary_target" \
@@ -1338,7 +1346,9 @@ expected_needs = {
   "recovery-llm" => %w[recovery-import recovery-wasm verify-signed-tag validate-release-inputs],
   "recovery-sdk" => %w[recovery-import recovery-llm verify-signed-tag validate-release-inputs],
   "recovery-python" => %w[recovery-import recovery-sdk verify-signed-tag validate-release-inputs],
-  "recovery-github" => %w[recovery-import recovery-wasm recovery-llm recovery-sdk recovery-python verify-signed-tag validate-release-inputs]
+  "recovery-github" => %w[recovery-import recovery-wasm recovery-llm recovery-sdk recovery-python verify-signed-tag validate-release-inputs],
+  "retained-acceptance" => %w[ci approve approve-second verify-signed-tag validate-release-inputs],
+  "retained-github" => %w[ci approve approve-second verify-signed-tag validate-release-inputs retained-acceptance]
 }
 
 expected_job_names = ["ci", *expected_needs.keys]
@@ -1550,8 +1560,8 @@ node_pin_count=$(grep -cF 'node-version: 22.14.0' "$workflow" || true)
 [ "$node_pin_count" -eq 7 ] \
   || fail "all seven build/preparation jobs must retain Node.js 22.14.0, got $node_pin_count"
 publisher_node_pin_count=$(grep -cF 'node-version: 24.15.0' "$workflow" || true)
-[ "$publisher_node_pin_count" -eq 7 ] \
-  || fail "three normal publishers and four recovery validators/publishers must pin Node.js 24.15.0, got $publisher_node_pin_count"
+[ "$publisher_node_pin_count" -eq 9 ] \
+  || fail "three normal publishers, four original recovery jobs and two retained validators must pin Node.js 24.15.0, got $publisher_node_pin_count"
 for node_build_job in preflight-crates publish build-wasm-npm prepare-wasm-npm test-llm-proxy-npm prepare-llm-proxy-npm prepare-sdk-npm; do
   node_build_block=$(job_block "$node_build_job")
   grep -F 'node-version: 22.14.0' <<<"$node_build_block" >/dev/null \
@@ -1575,16 +1585,16 @@ rust_pin_count=$(grep -cF 'toolchain: 1.97.1' "$workflow" || true)
 [ "$rust_pin_count" -eq 8 ] \
   || fail "all eight Rust-consuming release jobs must pin exact Rust 1.97.1, got $rust_pin_count"
 python_pin_count=$(grep -cF 'python-version: 3.13.7' "$workflow" || true)
-[ "$python_pin_count" -eq 26 ] \
-  || fail "twenty normal and six recovery jobs must pin exact Python 3.13.7, got $python_pin_count"
-for recovery_job in recovery-import recovery-wasm recovery-llm recovery-sdk recovery-python recovery-github; do
+[ "$python_pin_count" -eq 28 ] \
+  || fail "twenty normal, six original recovery and two retained jobs must pin exact Python 3.13.7, got $python_pin_count"
+for recovery_job in recovery-import recovery-wasm recovery-llm recovery-sdk recovery-python recovery-github retained-acceptance retained-github; do
   recovery_block=$(job_block "$recovery_job")
   grep -F 'python-version: 3.13.7' <<<"$recovery_block" >/dev/null \
     || fail "job $recovery_job must use exact Python 3.13.7"
   grep -F 'show "${GITHUB_SHA}:tools/run_release_recovery_027.sh"' <<<"$recovery_block" >/dev/null \
     || fail "job $recovery_job must capture its dispatcher from actual GITHUB_SHA"
 done
-for recovery_node_job in recovery-import recovery-wasm recovery-llm recovery-sdk; do
+for recovery_node_job in recovery-import recovery-wasm recovery-llm recovery-sdk retained-acceptance retained-github; do
   recovery_block=$(job_block "$recovery_node_job")
   grep -F 'node-version: 24.15.0' <<<"$recovery_block" >/dev/null \
     || fail "job $recovery_node_job must use exact Node.js 24.15.0"
