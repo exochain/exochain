@@ -14,10 +14,12 @@ import os
 from pathlib import Path
 import shutil
 import shlex
+import signal
 import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import types
 import unittest
 from unittest.mock import patch
@@ -280,6 +282,70 @@ class ImportTests(unittest.TestCase):
                     "import sys; sys."+stream+".write('x'*(1024*1024+1))"],output,bounded=True)
             self.assertLessEqual(output.stat().st_size,1024*1024)
             self.assertLessEqual(Path(str(output)+".stderr").stat().st_size,1024*1024)
+
+    def test_public_diagnostic_overflow_stops_before_long_running_child_finishes(self):
+        for stream in ("stdout", "stderr"):
+            output = self.root / (stream+"-overflow.txt")
+            finished = self.root / (stream+"-finished")
+            code = ("import pathlib,sys,time; sys."+stream+".write('x'*(1024*1024+1)); "
+                    "sys."+stream+".flush(); time.sleep(3); pathlib.Path(sys.argv[1]).touch()")
+            started = time.monotonic()
+            with self.assertRaises(self.i.ImportFailure):
+                self.i.command([sys.executable,"-I","-B","-c",code,str(finished)],output,
+                               timeout=10,bounded=True)
+            self.assertLess(time.monotonic()-started,2.5)
+            self.assertFalse(finished.exists(), "overflow waited for the long-running child to finish")
+            self.assertLessEqual(output.stat().st_size,1024*1024)
+            self.assertLessEqual(Path(str(output)+".stderr").stat().st_size,1024*1024)
+
+    def test_public_timeout_stops_descendant_writes_after_return(self):
+        output = self.root / "descendant.txt"
+        error_output = Path(str(output)+".stderr")
+        heartbeat = self.root / "descendant-heartbeat"
+        pid_path = self.root / "descendant-pid"
+        child_code = ("import os,pathlib,sys,time\n"
+                      "for n in range(250):\n"
+                      " os.write(1,b'out\\n'); os.write(2,b'err\\n')\n"
+                      " pathlib.Path(sys.argv[1]).write_text(str(n))\n"
+                      " time.sleep(0.02)\n")
+        parent_code = ("import pathlib,subprocess,sys,time; "
+                       "child=subprocess.Popen([sys.executable,'-I','-B','-c',sys.argv[1],sys.argv[2]]); "
+                       "pathlib.Path(sys.argv[3]).write_text(str(child.pid)); time.sleep(10)")
+        try:
+            with self.assertRaises(subprocess.TimeoutExpired):
+                self.i.command([sys.executable,"-I","-B","-c",parent_code,child_code,
+                    str(heartbeat),str(pid_path)],output,timeout=0.75,bounded=True)
+            self.assertTrue(heartbeat.exists(), "descendant did not actually execute")
+            before = (output.stat().st_size,error_output.stat().st_size,heartbeat.read_text())
+            time.sleep(0.25)
+            after = (output.stat().st_size,error_output.stat().st_size,heartbeat.read_text())
+            self.assertEqual(after,before, "a timed-out descendant kept writing after command returned")
+            self.assertLessEqual(after[0],1024*1024)
+            self.assertLessEqual(after[1],1024*1024)
+        finally:
+            # RED must not leave the deliberately orphaned fixture running.
+            if pid_path.exists():
+                try:
+                    os.kill(int(pid_path.read_text()),signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+    def test_public_collector_drains_both_pipes_without_deadlock(self):
+        output = self.root / "both-pipes.txt"
+        code = "import os\nfor _ in range(8):\n os.write(1,b'o'*65536); os.write(2,b'e'*65536)\n"
+        self.i.command([sys.executable,"-I","-B","-c",code],output,timeout=5,bounded=True)
+        self.assertEqual(output.read_bytes(),b'o'*(512*1024))
+        self.assertEqual(Path(str(output)+".stderr").read_bytes(),b'e'*(512*1024))
+
+    def test_public_timeout_applies_after_both_pipes_close(self):
+        output = self.root / "closed-pipes.txt"
+        started = time.monotonic()
+        with self.assertRaises(subprocess.TimeoutExpired):
+            self.i.command([sys.executable,"-I","-B","-c",
+                "import os,time; os.close(1); os.close(2); time.sleep(10)"],output,timeout=0.2,bounded=True)
+        self.assertLess(time.monotonic()-started,2)
+        self.assertEqual(output.read_bytes(),b'')
+        self.assertEqual(Path(str(output)+".stderr").read_bytes(),b'')
 
     def test_current_context_uses_authoritative_numeric_job_and_pinned_runtimes(self):
         _, _, envelope, _ = self.retained_fixture().receipt_fixture()

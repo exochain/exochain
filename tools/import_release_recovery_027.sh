@@ -88,12 +88,15 @@ import json
 import os
 from pathlib import Path
 import re
+import selectors
 import shutil
+import signal
 import stat
 import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 from urllib.parse import urlsplit
 
 API = "https://api.github.com/repos/exochain/exochain/actions"
@@ -443,19 +446,44 @@ def command(argv, receipt, extra_env=None, timeout=240, bounded=False):
     environment.update(extra_env or {})
     with receipt.open("xb") as stream:
         if bounded:
-            # Keep failure diagnostics without accumulating stderr in memory.
-            # These children run only reviewed tools with sanitized public I/O.
+            # Only this collector owns diagnostic file descriptors. Children
+            # get pipes in a private process group, so neither buffering nor a
+            # surviving descendant can grow retained diagnostics after return.
             with Path(str(receipt)+".stderr").open("xb") as errors:
-                overflow = False
-                try:
-                    result = subprocess.run(argv, env=environment, stdout=stream, stderr=errors, timeout=timeout, check=False)
-                finally:
-                    for output in (stream,errors):
-                        output.flush()
-                        if os.fstat(output.fileno()).st_size > 1024 * 1024:
-                            output.truncate(1024 * 1024)
-                            overflow = True
-                require(not overflow, "public checker diagnostics exceeded their bound")
+                with subprocess.Popen(argv, env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                      start_new_session=True) as process:
+                    deadline = time.monotonic() + timeout
+                    try:
+                        with selectors.DefaultSelector() as pending:
+                            for pipe, output in ((process.stdout,stream),(process.stderr,errors)):
+                                pending.register(pipe,selectors.EVENT_READ,[output,0])
+                            while pending.get_map():
+                                remaining = deadline - time.monotonic()
+                                if remaining <= 0:
+                                    raise subprocess.TimeoutExpired(argv,timeout)
+                                for key, _ in pending.select(remaining):
+                                    chunk = os.read(key.fd,65536)
+                                    if not chunk:
+                                        pending.unregister(key.fileobj)
+                                        continue
+                                    output, written = key.data
+                                    available = 1024 * 1024 - written
+                                    output.write(chunk[:available])
+                                    key.data[1] += min(len(chunk),available)
+                                    require(len(chunk) <= available, "public checker diagnostics exceeded their bound")
+                            process.wait(timeout=max(0,deadline-time.monotonic()))
+                        result = process
+                    finally:
+                        # On rejection, kill the complete group before reaping
+                        # the direct child. Also remove background descendants
+                        # when the direct shell returned or closed its pipes.
+                        try:
+                            os.killpg(process.pid,signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                        process.wait()
+                        stream.flush()
+                        errors.flush()
         else:
             result = subprocess.run(argv, env=environment, stdout=stream, stderr=subprocess.PIPE, timeout=timeout, check=False)
     require(result.returncode == 0, "captured canonical artifact validator rejected input: " + Path(argv[0]).name)
