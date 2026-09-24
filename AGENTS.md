@@ -460,7 +460,7 @@ requirements. Assessments are stored in `governance/`.
    cargo build --workspace --release
    cargo test --workspace
    cargo clippy --workspace --all-targets -- -D warnings
-   cargo +nightly fmt --all -- --check
+   cargo +nightly-2026-09-21 fmt --all -- --check
    cargo doc --workspace --no-deps
    ```
 
@@ -541,7 +541,7 @@ Section 8.8 quality gates. All must pass:
 3. **Coverage** — cargo-tarpaulin, scoped minimum 90% line coverage under the
    exclusions configured in `tarpaulin.toml`
 4. **Lint** — `cargo clippy --workspace -- -D warnings`
-5. **Format** — `cargo +nightly fmt --all -- --check`
+5. **Format** — `cargo +nightly-2026-09-21 fmt --all -- --check`
 6. **Audit** — `cargo audit` (no known vulnerabilities)
 7. **Deny** — `cargo deny check` (license and advisory compliance)
 8. **Doc** — `cargo doc --workspace --no-deps` (no warnings)
@@ -552,7 +552,7 @@ Run all gates locally before pushing:
 cargo build --workspace --release && \
 cargo test --workspace && \
 cargo clippy --workspace --all-targets -- -D warnings && \
-cargo +nightly fmt --all -- --check && \
+cargo +nightly-2026-09-21 fmt --all -- --check && \
 cargo doc --workspace --no-deps
 ```
 
@@ -663,7 +663,10 @@ those, do not duplicate them here.
   image may pin an older stable (e.g. 1.83) as the default toolchain, so the
   update script runs `rustup default stable` after updating — without that,
   `cargo build` fails with an edition2024 error. Nightly + `rustfmt` are
-  installed only for the `cargo +nightly fmt` gate.
+  installed only for the formatting gate. Install the same dated formatter as CI
+  with `rustup toolchain install nightly-2026-09-21 --profile minimal --component rustfmt`;
+  run `cargo +nightly-2026-09-21 fmt --all -- --check`. Do not replace the stable
+  build/test compiler or substitute a floating nightly formatter.
 - The full `cargo test --workspace` gate is slow. Derive the current package
   inventory with
   `cargo metadata --no-deps --format-version 1 | jq '.packages | length'` and

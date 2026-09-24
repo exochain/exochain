@@ -51,7 +51,7 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 - **Workspace test inventories are platform-specific**: the macOS count above was measured locally; the Linux count is expected from the previous Linux CI inventory plus five portable identity regressions and is not a current-head Linux measurement. `tools/test_repo_truth.sh` checks the native platform's actual listed count against its README row and fails CI on a mismatch. macOS includes additional ACL-specific tests; debug and release inventories can differ.
 - **Build succeeds** for all library crates, binaries, tests, and benchmarks
 - **Clippy clean** under `-D warnings` for all workspace targets
-- **Format clean** under `cargo +nightly fmt --all -- --check`
+- **Format clean** under `cargo +nightly-2026-09-21 fmt --all -- --check`
 - **23 numbered CI quality gates** plus the required "All Constitutional Gates" aggregator are defined; workflow runs report their status, while merge enforcement depends on current GitHub ruleset or branch-protection settings
 - **Traceability matrix** maps 119 requirements — see `governance/traceability_matrix.md`
 - **Threat model** covers 17 threats tracked: 17 implemented, 0 partial, 0 planned — see `governance/threat_matrix.md`
@@ -330,7 +330,8 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 
 # Format check
-cargo +nightly fmt --all -- --check
+rustup toolchain install nightly-2026-09-21 --profile minimal --component rustfmt
+cargo +nightly-2026-09-21 fmt --all -- --check
 
 # Dependency audit (requires cargo-deny)
 cargo deny check

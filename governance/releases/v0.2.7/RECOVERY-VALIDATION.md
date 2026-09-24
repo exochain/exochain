@@ -237,6 +237,47 @@ artifact manifest did not change. Local results do not replace exact-head
 hosted CI, two real maintainer reviews, signed integration, protected dry/live
 gates or all-provider final acceptance.
 
+## September 24 hosted formatter drift and dated-pin validation
+
+The preceding local batch and its no-CI-change scope describe the original
+Python repair, not the following formatter correction. PR841 head
+`b2b2985b2bba5ed46ada4257ba2abfdd964c2eb9` failed Gate 5 in push run
+`36031983959` (job `107742719716`) and PR run `36032003551` (job
+`107742785558`). Their raw logs are preserved under the external Python evidence
+root. The floating nightly resolved to rustc 1.100.0-nightly, commit
+`6eeff9a52c3e35c4c4cbf5651f342dcd2191866f`, dated 2026-09-23. It changed wrapping
+in existing macros in `crates/exo-economy/src/store.rs` and
+`crates/exochain-sdk/src/dagdb.rs`; neither file differs from integrated 2198e4ef.
+
+The actual successful PR840 format log from run `35644304317`, job
+`106480904275`, records distribution nightly-2026-09-21 and compiler commit
+`bba531001d4de6d7f49693e0836a2668ca063282`. That dated distribution was installed
+locally without changing default toolchains. Its rustfmt 1.10.0-nightly passes
+`cargo +nightly-2026-09-21 fmt --all -- --check` on the unchanged Rust source.
+The existing action-pinning guard gained a parsed-YAML formatter contract plus
+15 failing mutations. It first rejected the floating workflow/local caller,
+then passed after both selected the same dated formatter.
+
+The complete candidate batch ran 17:20:23–17:34:53 UTC: all 80 commands passed
+with exit 0 (nine core commands, seven recovery/retirement Python suites and
+64 CI-derived shell guards), using the dated formatter and unchanged two-worker,
+incremental-off, zero-debug Cargo constraints. Fresh logs/status are under
+`/private/tmp/exochain-formatter-pin.ccqog6`. Generated DAG DB and comparator
+reports were preserved intact outside the checkout before the unchanged SBOM
+source-hygiene check. No validator or source exclusion was relaxed. The initial
+Python batch's historical failure remains untouched at its separate evidence root.
+Comparison scope remains one Rust/Node vector plus two normalized Rust runs;
+external TypeScript conformance is not claimed. Existing dependency warnings
+remain recorded. Independent code review found no findings; a documentation
+review corrected ambiguous historical-versus-current validation wording in the PR.
+
+At 17:27:47 UTC, an independent metadata-only check confirmed all nine original
+artifact records, successful attempt-1 producer jobs, non-expiry, and unchanged
+product/recover.2 tag objects/peels. Evidence is under
+`/tmp/exochain-original-artifacts-20260924.NJAdkF`. This does not substitute for
+fresh import checks during execution. Neither local validation nor the pin
+substitutes for exact-head hosted CI, maintainer/panel review or protected gates.
+
 ## Review and required live acceptance
 
 Independent reviews covered the import/custody boundary, npm recovery receipts,

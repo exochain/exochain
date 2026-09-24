@@ -228,6 +228,25 @@ not use an arbitrary or either-identity provenance override. Dry-run jobs never
 receive publisher secrets or job-level OIDC. New same-run transport ZIPs are
 verified against original inner-file digests, not the original transport ZIP hash.
 
+## Task 6: Reproducible full-workspace formatter after hosted nightly drift
+
+Classification: EXOCHAIN core CI, local validation tooling and owned developer
+documentation. No Rust product source, build/test compiler, dependency lock,
+payload, release workflow, protection or provenance policy changes.
+
+- [x] Preserve both PR841 format failures and compare their actual compiler
+  identity with the last successful exact-source hosted PR840 format job.
+- [x] Add a parsed-YAML formatter contract and negative mutation regressions;
+  observe rejection of the existing floating configuration before changing it.
+- [x] Pin only formatter installation and invocation to nightly-2026-09-21,
+  update repo_truth and its failure mock, and align README/AGENTS commands.
+  Retain full --all -- --check and the required constitutional gate dependency.
+- [x] Run all core, recovery/retirement and CI-derived source gates against the
+  final candidate; retain actual logs and independently review the complete diff.
+- [ ] Sign and push the repair normally to PR841; obtain fresh exact-head CI
+  and both real maintainer reviews, including applicable Operations, Governance
+  and Architecture CODEOWNERS approval, before integration or maintenance tag.
+
 ## Exact npm emission compatibility
 
 The real audit of the original WASM proves consumption of its v0.2 bundle, not

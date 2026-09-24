@@ -162,6 +162,18 @@ by these records. An expiry failure stops further writes. Normal exact-head
 review, full CI, signed successor tag, two independent protected environments,
 dry run and separate live execution remain prerequisites.
 
+### Formatter reproducibility during successor review
+
+PR841's initial exact-head CI selected a newer floating nightly formatter and
+rejected macro wrapping in unchanged Rust source. Gate 5 now uses the exact
+nightly-2026-09-21 distribution that passed hosted PR840 on the same product
+tree. Both installation and invocation are pinned; repo_truth and documented
+local commands use that same formatter. The build/test compiler remains stable.
+The full workspace check and constitutional dependency are unchanged. Parsed
+YAML and behavioral mutation regressions reject floating/mismatched toolchains,
+removed coverage/check flags, conditional skips and suppressed failures. This
+repairs reproducibility without modifying product Rust files or weakening gates.
+
 ## Acceptance
 
 Tests must execute the actual selected npm CLI, not only manufactured JSON.
