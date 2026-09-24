@@ -1,6 +1,12 @@
 # Preserved original 0.2.7 payload recovery — approved design and implementation plan
 
-> **Status: design approved by Bob on September 24, 2026; implementation underway.**
+> **Status at September 24, 2026:** Bob approved the bounded design. The
+> retained record, importer, read-only package acceptance, workflow, receipts
+> and GitHub completion source through signed commit
+> `e2c138a6c5d9d947240ecd363aa1ab87adcb5e41` has passed its three
+> task-specific independent reviews. Complete final-candidate validation and
+> whole-branch review are separate; neither local source review nor this plan
+> constitutes hosted release acceptance.
 > Bob's explicit "plan approved" authorizes implementing this bounded extension
 > and preparing its reviewed PR. It does not approve an unreviewed implementation,
 > new transport upload, protection bypass, tag/dispatch or live release mutation.
@@ -9,8 +15,8 @@
 >
 > **For agentic workers:** After explicit implementation approval, use
 > `superpowers:subagent-driven-development` or `superpowers:executing-plans`
-> task by task. Unchecked items below are implementation acceptance steps, not
-> claims that those steps have run.
+> task by task. Checklists below preserve the approved acceptance contract;
+> dated execution outcomes belong in exact-candidate evidence records.
 
 **Goal:** Complete acceptance of the already published 0.2.7 packages and the
 original GitHub Release using preserved original payload bytes, without
@@ -71,9 +77,10 @@ acceptance. It cannot claim a fresh verification of nine original ZIPs.
 | Publication identities semantic SHA256 | `4596c339d2af34ce3aeff5f2dd4a6be95fbb044250e934a27221170b97902ca7` |
 
 Semantic pins are the existing strict-parser digests, not raw file SHA256s.
-Both owned manifests and both semantic pins remain unchanged. Source inspection
-is against `63aafee921edf91048484f5e33f2fb344164f181`; the implementation must
-reconcile any newer integrated source without discarding reviewed changes.
+Both owned original records and both semantic pins remain unchanged. The initial
+design inspection was against `63aafee921edf91048484f5e33f2fb344164f181`;
+the retained implementation through `e2c138a6c5d9d947240ecd363aa1ab87adcb5e41`
+was reviewed separately. Neither source point is a live release controller.
 
 The planning audit downloaded those two exact retained ZIPs read-only, with
 metadata unchanged before/after. All **40/40 original payload members** match
@@ -337,7 +344,17 @@ substitution, current receipt replay, credential reachability, dry/live DAGs and
 GitHub partial-write/resume behavior. Preserve full independent maintainer review
 and protection gates without reopening resolved ownership assignments.
 
-## 7. Implementation tasks — only after design approval
+## 7. Implementation tasks and remaining acceptance
+
+The approved source extension now uses `RETAINED-CUSTODY.json`, strict
+`retained-record`, `retained-origin`, `retained-transport` and
+`retained-receipts` interfaces, a fixed `recover-0.2.7-retained` operation, and
+separate `retained-acceptance` and live-only `retained-github` jobs. Task 1
+through Task 3 implementation diffs received independent task reviews with no
+remaining Critical or Important finding. Those reviews cover source and focused
+tests only. Final-candidate results must be read from its dated immutable-head
+validation status and logs, then the implementation PR and release ledger;
+this document does not assign a pass to commands still in progress.
 
 ### Task 1 — Freeze the observed retained evidence contract
 
@@ -405,7 +422,7 @@ Files: `.github/workflows/release.yml`, `.github/workflows/ci.yml`,
 Files: this plan, `RECOVERY-DESIGN.md`, `RECOVERY-PLAN.md`,
 `RECOVERY-VALIDATION.md`, `TEST-PLAN.md` under this release directory.
 
-- [ ] Record the approved bounded extension in existing governance docs without
+- [x] Record the approved bounded extension in existing governance docs without
   rewriting historical failure/approval chronology or asserting implementation
   acceptance early. Original-mode restrictions remain explicit.
 - [ ] Run every focused suite listed below, all CI-derived shell guards and full
@@ -438,7 +455,8 @@ Files: this plan, `RECOVERY-DESIGN.md`, `RECOVERY-PLAN.md`,
 | Receipts/replay | Bind direct upload outputs, same current run/attempt, controller/ref, producer/upload success and chronology, pins and transport; previous-run/attempt, forged success, missing crypto or altered receipt fails before any write. Include an older artifact whose JSON falsely asserts the current attempt. |
 | GitHub | Exact 35-asset completion and same-controller identical-asset resume pass; extra/conflicting asset, partial public release, pagination ambiguity, concurrent change and unknown write stop. Final new downloads prove every asset. |
 
-Focused commands for implementation (not a claim these have run for new code):
+Focused commands for final-candidate validation (execution results are recorded
+with the exact candidate, not inferred from this command list):
 
 ```sh
 python3 -B tools/test_release_recovery_027.py
@@ -487,5 +505,10 @@ not judge human risk acceptance, unimplemented code, fresh provider/crypto state
 unrelated runtime behavior or retirement execution. Those are deliberately
 separate acceptance boundaries, not silently omitted implementation checks.
 
-No implementation tests or new release acceptance are claimed by this planning
-document. No package payload has been rebuilt or republished.
+Subsequent task-specific fixture and actual-byte checks are documented in the
+implementer reports; independent task reviews approved the three bounded source
+packages. Read-only local public evidence separately records 32 exact Rust
+versions, two native crypto checks, three genuine npm audits and two genuine
+Python Sigstore checks. These observations do not establish a successful
+current protected producer, exact-head hosted CI, current-run receipts or
+GitHub Release completion. No package payload has been rebuilt or republished.

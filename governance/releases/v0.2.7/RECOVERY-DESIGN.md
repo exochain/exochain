@@ -193,3 +193,49 @@ remain distinct from local validation.
 Issue #822's separately reviewed retirement controller is unchanged. Complete
 its actual approvals/execution/readbacks separately. No deployment/runtime
 claim is made without an identified target and independent runtime evidence.
+
+## September 24 retained-custody extension
+
+Bob approved the bounded design in `RETAINED-RECOVERY-PLAN.md` after original
+WASM artifact `10518086890` became `expired:true`. The original
+`recover-0.2.7` importer still requires all nine original metadata records to
+be fresh and nonexpired. Its failure on expiry is correct; the new
+`recover-0.2.7-retained` operation is separate, never an automatic fallback.
+
+The retained operation pins `RETAINED-CUSTODY.json` to the existing
+`RECOVERY-MANIFEST.json` and `PUBLICATION-IDENTITIES.json`. It authenticates
+the original product and retaining controller, proves the successful original
+attempt-1 import preceded original expiry using the pinned historical evidence
+and current matching metadata, then freshly downloads both nonexpired retained
+artifacts from fixed GitHub endpoints. The 147126946-byte payload transport
+contains 40 extracted original files, not the seven original ZIP envelopes or
+two Rust preparation archives. Its separate custody archive has 60 historical
+evidence members. Strict ZIP headers, signed data descriptors, file types,
+boundaries, sizes, CRCs and SHA256s are checked before exposing files; the
+unchanged original 96 MiB ZIP bound is not widened. Missing or changed evidence,
+expired retained artifacts or ambiguous ZIPs stop the operation.
+
+`retained-acceptance` has read-only contents/actions/attestations permissions,
+no publisher secret or job OIDC, and runs in both dry and live requests after
+full CI, both approval jobs and signed-tag verification. It reuses canonical
+checks for all 32 public Rust versions and five mapped npm/Python files, including
+genuine public-byte and cryptographic identity checks, without upload, staging
+or package publication. Its direct upload outputs bind the current run/attempt,
+producer and receipt artifact ID/digest. Only live `retained-github` receives
+contents write with the release environment. It verifies current receipts and
+fresh public state before using the existing journaled, no-overwrite 35-asset
+GitHub Release writer. An earlier attempt's artifact is rejected even if its
+JSON claims the current attempt; unknown writes stop until authoritative state
+is read independently. The public custody asset distinguishes original
+production, retaining transport, prior package publishers and current
+acceptance controller.
+
+The retained source through signed `e2c138a6c5d9d947240ecd363aa1ab87adcb5e41`
+has three approved task-specific independent reviews. Final-candidate
+validation, whole-branch review, exact-head CI, two actual non-author maintainer
+approvals, signed unused maintenance tag, protected dry acceptance, separately
+approved live completion and provider/35-asset readback remain distinct gates.
+PR841's approvals occurred after merge; PR842's two approvals and 74 checks
+preceded its normal integration at 21:03:20 UTC. No retrospective approval is
+implied by this extension. No release, retirement or runtime deployment is
+claimed here.
