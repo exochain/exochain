@@ -73,11 +73,82 @@ def walk(node, &block)
   node.children&.each { |child| walk(child, &block) }
 end
 
+# Read the formatter contract from parsed YAML, not comment-satisfiable text.
+def plain_node(node)
+  case node
+  when Psych::Nodes::Scalar
+    node.value
+  when Psych::Nodes::Sequence
+    node.children.map { |child| plain_node(child) }
+  when Psych::Nodes::Mapping
+    mapping_pairs(node).each_with_object({}) do |(key, value), result|
+      name = scalar_value(key)
+      raise "duplicate or non-scalar YAML key" if name.nil? || result.key?(name)
+
+      result[name] = plain_node(value)
+    end
+  else
+    raise "unsupported YAML node in formatter contract"
+  end
+end
+
+def formatter_contract?(job, gate, caller, expected_job, expected_caller)
+  job == expected_job && gate.is_a?(Hash) &&
+    gate["needs"].is_a?(Array) && gate["needs"].count("format") == 1 &&
+    !gate.key?("if") && !gate.key?("continue-on-error") &&
+    caller == [expected_caller]
+end
+
 expected_action_sha = ARGV.shift
 expected_action = "dtolnay/rust-toolchain@#{expected_action_sha}"
+formatter = "nightly-2026-09-21"
+formatter_command = "cargo +#{formatter} fmt --all -- --check"
+expected_formatter = {
+  "name" => "Gate 5 — Format Check", "runs-on" => "ubuntu-latest",
+  "steps" => [
+    {"uses" => "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5"},
+    {"uses" => expected_action, "with" => {"toolchain" => formatter, "components" => "rustfmt"}},
+    {"name" => "Check formatting", "run" => formatter_command}
+  ]
+}
+expected_caller = 'FMT_OK=$(' + formatter_command + ' >/dev/null 2>&1 && echo "true" || echo "false")'
+
+# Behavioral mutations protect the guard itself against weakened checks.
+baseline = [expected_formatter, {"needs" => ["format"]}, [expected_caller]]
+validate = lambda { |job, gate, caller| formatter_contract?(job, gate, caller, expected_formatter, expected_caller) }
+raise "valid formatter contract rejected" unless validate.call(*baseline)
+mutations = [
+  ->(job, _gate, _caller) { job["steps"][1]["with"]["toolchain"] = "nightly" },
+  ->(job, _gate, _caller) { job["steps"][1]["with"]["toolchain"] = "nightly-2026-09-22" },
+  ->(job, _gate, _caller) { job["steps"][1]["with"]["toolchain"] = '${{ inputs.toolchain }}' },
+  ->(job, _gate, _caller) { job["steps"][1]["with"]["components"] = "clippy" },
+  ->(job, _gate, _caller) { job["steps"][2]["run"] = "cargo +nightly fmt --all -- --check" },
+  ->(job, _gate, _caller) { job["steps"][2]["run"] = formatter_command.sub(" --all", "") },
+  ->(job, _gate, _caller) { job["steps"][2]["run"] = formatter_command.sub(" --check", "") },
+  ->(job, _gate, _caller) { job["steps"][2]["run"] += " || true" },
+  ->(job, _gate, _caller) { job["steps"][2]["if"] = "false" },
+  ->(job, _gate, _caller) { job["continue-on-error"] = "true" },
+  ->(job, _gate, _caller) { job["if"] = "false" },
+  ->(_job, gate, _caller) { gate["needs"] = [] },
+  ->(_job, gate, _caller) { gate["if"] = "always()" },
+  ->(_job, _gate, caller) { caller[0] = caller[0].sub(formatter, "nightly") },
+  ->(_job, _gate, caller) { caller << caller.first }
+]
+mutations.each_with_index do |mutate, index|
+  fixture = Marshal.load(Marshal.dump(baseline))
+  mutate.call(*fixture)
+  raise "formatter mutation #{index} accepted" if validate.call(*fixture)
+end
 
 ARGV.each do |workflow|
   document = Psych.parse_file(workflow)
+  if workflow == ".github/workflows/ci.yml"
+    jobs = plain_node(document.root).fetch("jobs")
+    caller = File.readlines("tools/repo_truth.sh", chomp: true).select { |line| line.start_with?("FMT_OK=") }
+    unless validate.call(jobs["format"], jobs["all-gates"], caller)
+      puts "#{workflow}: full-workspace formatter and repo_truth must use #{formatter}, without skips or suppressed failures"
+    end
+  end
   walk(document) do |node|
     if node.is_a?(Psych::Nodes::Alias)
       puts "#{workflow}:#{node.start_line + 1}: YAML aliases cannot carry auditable action identity"
@@ -117,8 +188,8 @@ ARGV.each do |workflow|
     end
 
     toolchain = scalar_value(toolchain_pairs.first.last)
-    unless toolchain&.match?(/\A(?:stable|nightly|1\.[0-9]+\.[0-9]+)\z/)
-      puts "#{workflow}:#{line_no}: dtolnay/rust-toolchain requires a literal with.toolchain value of stable, nightly, or an exact 1.x.y release"
+    unless toolchain == formatter || toolchain&.match?(/\A(?:stable|nightly|1\.[0-9]+\.[0-9]+)\z/)
+      puts "#{workflow}:#{line_no}: dtolnay/rust-toolchain requires a literal stable, nightly, #{formatter}, or exact 1.x.y toolchain"
     end
   end
 rescue Psych::SyntaxError => error

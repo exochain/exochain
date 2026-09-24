@@ -31,6 +31,8 @@ WORKFLOW_ID = 248228578
 # Pinning it prevents a caller from substituting otherwise well-formed hashes,
 # producer mappings, package names or endpoints while retaining the fixed tag.
 MANIFEST_SHA256 = "17c77eafa0ea34fa7437cbc0d6988f561d686e330bee8c17cfe0e6a354e1bec4"
+PUBLICATIONS_SHA256 = "4596c339d2af34ce3aeff5f2dd4a6be95fbb044250e934a27221170b97902ca7"
+PUBLICATION_IDS = ("wasm", "llm", "sdk", "python-wheel", "python-sdist")
 MAX_JSON_BYTES = 4 * 1024 * 1024
 MAX_ZIP_BYTES = 96 * 1024 * 1024
 MAX_TOTAL_BYTES = 192 * 1024 * 1024
@@ -170,6 +172,38 @@ def validate_manifest(manifest):
 
 def load_manifest(path):
     return validate_manifest(load_json(path, "recovery manifest"))
+
+
+def validate_publications(manifest, value):
+    """Bind one reviewed prior identity per exact artifact; never a fallback."""
+    validate_manifest(manifest)
+    keys(value, ("schema", "artifact_manifest_sha256", "publications"), "publication identities")
+    exact(value["schema"], "exochain-release-publication-identities-027/v1", "publication schema")
+    exact(value["artifact_manifest_sha256"], MANIFEST_SHA256, "publication artifact manifest")
+    records = value["publications"]
+    require(type(records) is list and len(records) == 5, "publication inventory differs")
+    require([r.get("id") for r in records if type(r) is dict] == list(PUBLICATION_IDS), "publication IDs differ")
+    lanes = {lane["lane"]: lane for lane in manifest["artifacts"]}
+    for record in records:
+        keys(record, ("id", "package", "version", "lane", "file", "source", "observed_publication"), "publication")
+        exact(record["version"], "0.2.7", "publication version")
+        require(type(record["lane"]) is str and record["lane"] in lanes, "publication lane is unknown")
+        keys(record["file"], ("path", "size", "sha256"), "publication file")
+        require(record["file"] in lanes[record["lane"]]["files"], "publication file differs from original custody")
+        positive_integer(record["file"]["size"], "publication file size", MAX_ZIP_BYTES)
+        keys(record["source"], ("commit", "ref"), "publication source")
+        require(type(record["source"]["commit"]) is str and re.fullmatch(r"[0-9a-f]{40}", record["source"]["commit"]) is not None, "invalid publication commit")
+        require(type(record["source"]["ref"]) is str and re.fullmatch(r"refs/tags/v0\.2\.7(?:-recover\.[1-9][0-9]*)?", record["source"]["ref"]) is not None, "invalid publication ref")
+        keys(record["observed_publication"], ("run_id", "attempt"), "observed publication")
+        for field in ("run_id", "attempt"):
+            positive_integer(record["observed_publication"][field], "observed publication " + field)
+    canonical = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False).encode("ascii")
+    exact(hashlib.sha256(canonical).hexdigest(), PUBLICATIONS_SHA256, "reviewed publication identities digest")
+    return value
+
+
+def load_publications(manifest, path):
+    return validate_publications(manifest, load_json(path, "publication identities"))
 
 
 def verify_origin(manifest, run, jobs_response, metadata):
@@ -418,10 +452,13 @@ def json_directory(path, names):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="mode",required=True)
-    for mode in ("manifest","origin","artifacts","files","product-tag","rust-registry"):
+    for mode in ("manifest","publication","origin","artifacts","files","product-tag","rust-registry"):
         child = commands.add_parser(mode)
         child.add_argument("--manifest",type=Path,required=True)
-        if mode == "origin":
+        if mode == "publication":
+            child.add_argument("--identities", type=Path, required=True)
+            child.add_argument("--publication", choices=PUBLICATION_IDS)
+        elif mode == "origin":
             for name in ("run","jobs","artifact-metadata"):
                 child.add_argument("--"+name,type=Path,required=True)
         elif mode == "artifacts":
@@ -440,6 +477,10 @@ def main():
     manifest = load_manifest(args.manifest)
     if args.mode == "manifest":
         result = manifest
+    elif args.mode == "publication":
+        result = load_publications(manifest, args.identities)
+        if args.publication:
+            result = next(record for record in result["publications"] if record["id"] == args.publication)
     elif args.mode == "origin":
         names = [f"{a['id']}.json" for a in manifest["artifacts"]+manifest["rust_preparation"]]
         metadata = json_directory(args.artifact_metadata,names)

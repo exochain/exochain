@@ -21,6 +21,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 HELPER = ROOT / "tools/verify_release_recovery_027.py"
 MANIFEST = ROOT / "governance/releases/v0.2.7/RECOVERY-MANIFEST.json"
+PUBLICATIONS = ROOT / "governance/releases/v0.2.7/PUBLICATION-IDENTITIES.json"
 PRODUCT_SHA = "666c578f719d1e54fce95d6831a3af92ea80df93"
 PRODUCT_TAG = "be47589ec7dbefe821ada35ed0a89dedc9751953"
 ABC_SHA = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
@@ -56,6 +57,55 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(len(value["ci_jobs"]), 35)
         self.assertEqual(len(value["rust_crates"]), 32)
         self.assertEqual(value["rust_crates"][0]["sha256"], "b30534d84bbd92f01e81d720dc54fca0f8a498c97b326094ab21ada847f6d930")
+
+    def test_publication_cli_returns_exact_prior_identity_and_preserves_manifest_pin(self):
+        self.assertEqual(self.v.MANIFEST_SHA256, "17c77eafa0ea34fa7437cbc0d6988f561d686e330bee8c17cfe0e6a354e1bec4")
+        for profile in ("wasm", "llm", "sdk", "python-wheel", "python-sdist"):
+            result = subprocess.run([sys.executable, "-B", str(HELPER), "publication", "--manifest", str(MANIFEST),
+                                     "--identities", str(PUBLICATIONS), "--publication", profile], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            record = json.loads(result.stdout)
+            expected = {"commit": PRODUCT_SHA, "ref": "refs/tags/v0.2.7"} if profile == "wasm" else {
+                "commit": "2198e4ef610e9ef6d04adf726f7f4b3e156a3bc1", "ref": "refs/tags/v0.2.7-recover.2"}
+            self.assertEqual(record["source"], expected)
+            self.assertEqual(record["id"], profile)
+            self.assertEqual(record["observed_publication"]["attempt"], 2 if profile.startswith("python-") else 1)
+
+    def test_publication_records_reject_every_identity_and_inventory_change(self):
+        original = self.v.load_json(PUBLICATIONS, "publication fixture")
+        mutations = [
+            lambda p: p.update(schema="other"),
+            lambda p: p.update(artifact_manifest_sha256="0" * 64),
+            lambda p: p.update(override=True),
+            lambda p: p["publications"].pop(),
+            lambda p: p["publications"].append(p["publications"][0]),
+            lambda p: p["publications"].reverse(),
+        ]
+        for index in range(5):
+            mutations.extend([
+                lambda p, i=index: p["publications"][i].update(id="other"),
+                lambda p, i=index: p["publications"][i].update(package="other"),
+                lambda p, i=index: p["publications"][i].update(version="0.2.8"),
+                lambda p, i=index: p["publications"][i].update(lane="other"),
+                lambda p, i=index: p["publications"][i]["file"].update(sha256="0" * 64),
+                lambda p, i=index: p["publications"][i]["file"].update(size=True),
+                lambda p, i=index: p["publications"][i]["file"].update(path="../other"),
+                lambda p, i=index: p["publications"][i]["source"].update(commit="a" * 40),
+                lambda p, i=index: p["publications"][i]["source"].update(ref="refs/tags/v0.2.7-recover.3"),
+                lambda p, i=index: p["publications"][i]["observed_publication"].update(run_id=1),
+                lambda p, i=index: p["publications"][i]["observed_publication"].update(attempt=3),
+            ])
+        for index, mutate in enumerate(mutations):
+            value = copy.deepcopy(original)
+            mutate(value)
+            with self.subTest(mutation=index):
+                self.reject(self.v.validate_publications, self.manifest, value)
+
+    def test_publication_record_cannot_rebind_an_artifact_manifest(self):
+        records = self.v.load_json(PUBLICATIONS, "publication fixture")
+        manifest = copy.deepcopy(self.manifest)
+        manifest["artifacts"][1]["files"][0]["sha256"] = "0" * 64
+        self.reject(self.v.validate_publications, manifest, records)
 
     def test_json_rejects_duplicate_keys_nonfinite_and_oversize(self):
         for text in ['{"x":1,"x":2}', '{"x":NaN}', '{"x":Infinity}', '{"x":1.0}', '[' * 2000]:

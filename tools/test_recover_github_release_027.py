@@ -46,6 +46,20 @@ class GithubRecoveryTests(unittest.TestCase):
     def run_recovery(self, provider):
         return self.v.recover(provider, self.expected, self.assets, lambda:self.binds.append("bind"))
 
+    def test_successor_receipt_distinguishes_package_publishers_from_controller(self):
+        root = HELPER.parent.parent / "governance/releases/v0.2.7"
+        manifest = json.loads((root / "RECOVERY-MANIFEST.json").read_text())
+        publications = json.loads((root / "PUBLICATION-IDENTITIES.json").read_text())
+        receipt, expected = self.v.release_metadata(manifest, publications, "a" * 40, "refs/tags/v0.2.7-recover.3")
+        self.assertEqual(receipt["controller"], {"sha": "a" * 40, "ref": "refs/tags/v0.2.7-recover.3"})
+        self.assertEqual(receipt["publication_identities"], publications)
+        self.assertEqual(receipt["product"], manifest["product"])
+        self.assertEqual(receipt["artifacts"], manifest["artifacts"])
+        self.assertIn("Acceptance and GitHub Release controller", expected["body"])
+        self.assertIn("prior package publishers", expected["body"])
+        self.assertNotIn("Recovery publisher:", expected["body"])
+        self.assertNotIn("attestations identify this recovery controller", receipt["attestation_scope"])
+
     def test_absent_release_creates_draft_uploads_verifies_then_publishes(self):
         provider = FakeProvider()
         self.run_recovery(provider)

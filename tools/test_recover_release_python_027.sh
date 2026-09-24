@@ -18,12 +18,16 @@ source "$test_root/functions.sh"
 python3 - "$test_root" <<'PY'
 import cryptography,pathlib,sys,venv
 root=pathlib.Path(sys.argv[1])/'test-python'
-venv.EnvBuilder(with_pip=False).create(root)
+# Keep managed CPython's executable-relative shared library reachable on macOS.
+venv.EnvBuilder(with_pip=False, symlinks=True).create(root)
 site=root/'lib'/f'python{sys.version_info.major}.{sys.version_info.minor}'/'site-packages'
 (site/'fixture-dependencies.pth').write_text(str(pathlib.Path(cryptography.__file__).parent.parent)+'\n')
 PY
 tool_python="$test_root/test-python/bin/python"
 verifier="$repo/tools/verify_python_release_package.py"
+publication_verifier="$repo/tools/verify_release_recovery_027.py"
+publication_manifest="$repo/governance/releases/v0.2.7/RECOVERY-MANIFEST.json"
+publication_identities="$repo/governance/releases/v0.2.7/PUBLICATION-IDENTITIES.json"
 tool_home="$test_root/home"
 mkdir "$tool_home"
 GITHUB_SHA=1111111111111111111111111111111111111111
@@ -48,8 +52,8 @@ for name in names:
     cert=(x509.CertificateBuilder().subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME,'fixture')]))
       .issuer_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME,'fixture')])).public_key(key.public_key())
       .serial_number(1).not_valid_before(now-datetime.timedelta(minutes=1)).not_valid_after(now+datetime.timedelta(minutes=1))
-      .add_extension(x509.SubjectAlternativeName([x509.UniformResourceIdentifier('https://github.com/exochain/exochain/.github/workflows/release.yml@refs/tags/v0.2.7-recover.1')]),True))
-    for suffix,value in {'1':'https://token.actions.githubusercontent.com','2':'workflow_dispatch','3':'1'*40,'5':'exochain/exochain','6':'refs/tags/v0.2.7-recover.1','11':'github-hosted'}.items():
+      .add_extension(x509.SubjectAlternativeName([x509.UniformResourceIdentifier('https://github.com/exochain/exochain/.github/workflows/release.yml@refs/tags/v0.2.7-recover.2')]),True))
+    for suffix,value in {'1':'https://token.actions.githubusercontent.com','2':'workflow_dispatch','3':'2198e4ef610e9ef6d04adf726f7f4b3e156a3bc1','5':'exochain/exochain','6':'refs/tags/v0.2.7-recover.2','11':'github-hosted'}.items():
         cert=cert.add_extension(x509.UnrecognizedExtension(ObjectIdentifier('1.3.6.1.4.1.57264.1.'+suffix),value.encode()),False)
     statement={'_type':'https://in-toto.io/Statement/v1','subject':[{'name':name,'digest':{'sha256':digest}}],'predicateType':'https://docs.pypi.org/attestations/publish/v1','predicate':None}
     provenance={'version':1,'attestation_bundles':[{'publisher':{'kind':'GitHub','repository':'exochain/exochain','workflow':'release.yml','environment':'release','claims':None},'attestations':[{'version':1,'envelope':{'statement':base64.b64encode(json.dumps(statement).encode()).decode(),'signature':base64.b64encode(b'not a real signature').decode()},'verification_material':{'certificate':base64.b64encode(cert.sign(key,hashes.SHA256()).public_bytes(serialization.Encoding.DER)).decode(),'transparency_entries':[{'logIndex':'1'}]}}]}]}
@@ -107,7 +111,8 @@ expect_failure() {
   ( "$@" ) > "$receipts/stdout" 2> "$receipts/stderr" || result=$?
   [[ "$result" != 0 ]] || { echo "unexpected success: $*" >&2; exit 1; }
 }
-for scenario in none wheel sdist both 404; do
+# Successor acceptance requires both mapped publications; no new upload stage.
+for scenario in both; do
   reset_case "preflight-$scenario"
   prepare_publication
   # Exercise the real shared stage validator with this fixture inventory;
@@ -136,14 +141,15 @@ PY
   [[ "$(sed -n '1p' "$GITHUB_OUTPUT")" = "publish_needed=$expected_needed" ]]
   [[ "$(sed -n '2p' "$GITHUB_OUTPUT")" = 'packages_dir=.release-recovery-python-stage/' ]]
 done
-for scenario in conflict malformed transport 401 500 provenance404 provenance500; do
+for scenario in none wheel sdist 404 conflict malformed transport 401 500 provenance404 provenance500; do
   reset_case "reject-$scenario"; expect_failure prepare_publication; [[ ! -e "$stage" ]]
 done
 scenario=both; reset_case invalid-crypto; bad_crypto=true
 expect_failure prepare_publication; [[ ! -e "$stage" ]]
-scenario=both; reset_case wrong-controller; GITHUB_SHA=2222222222222222222222222222222222222222
+scenario=both; reset_case wrong-publication-map
+publication_identities="$test_root/malformed.json"
 expect_failure prepare_publication; [[ ! -e "$stage" ]]
-GITHUB_SHA=1111111111111111111111111111111111111111
+publication_identities="$repo/governance/releases/v0.2.7/PUBLICATION-IDENTITIES.json"
 scenario=both; reset_case changed-provenance; mutate_provenance=true
 expect_failure prepare_publication; [[ ! -e "$stage" ]]
 scenario=both; reset_case changed-inventory; mutate_inventory=true

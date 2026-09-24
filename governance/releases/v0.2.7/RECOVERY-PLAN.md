@@ -189,10 +189,63 @@ the actual controller source/ref. Normal publication retains exact equality.
   approvals. Read back all providers and release assets before reporting done.
   Preserve receipts and continue separately approved issue822 retirement.
 
+## Task 5: Exact Python publisher shape and reviewed prior-publication acceptance
+
+Classification: all changed source, tests and governance records are EXOCHAIN
+core release tooling. Original payloads, dependency locks, artifact manifest,
+tag identities, source import and expiry checks remain unchanged. Evidence stays
+outside the checkout. Continue under the standing autonomous-fix authorization;
+normal independent reviews and protected approvals still gate execution.
+
+- [x] Preserve failed Python job107717206104 and receipt10819679079. Independently
+  download both public distributions, verify original hashes/sizes, and run the
+  genuine hashlocked PEP740 verifier using Python3.13.7 against unedited evidence.
+- [x] Reproduce absent-claims rejection with a failing canonical verifier test.
+  Permit exactly absent/null claims; reject nonnull claims, unknown fields,
+  missing/changed identity fields and certificate/attestation mismatches.
+- [x] Add a separate five-record PUBLICATION-IDENTITIES.json. Preserve the
+  artifact manifest and its pin. Reuse the existing strict custody parser with
+  an independent publication-record pin and exact artifact cross-binding.
+- [x] Exercise failing-to-passing npm/Python tests for successor acceptance of
+  only the mapped source/ref; missing mapped publications must fail without
+  upload or staged distributions. Capture all identities from actual controller
+  source, retaining real controller SHA/ref for every source/tag/staging guard.
+- [x] Correct the GitHub receipt/body attribution and test distinct prior
+  publishers versus the current acceptance/GitHub Release controller.
+- [x] Run complete focused release/retirement guards, normal core gates, actual
+  old/new npm CLI contracts and independent whole-change review. Preserve the
+  initial generated-report SBOM guard failure and its successful unchanged-guard
+  rerun after moving test evidence intact outside the checkout.
+- [ ] Submit signed commits and obtain normal exact-head maintainer reviews/CI.
+- [ ] After reviewed integration, create a new signed maintenance tag and run
+  separate protected dry/live executions. Original imports must still satisfy
+  fresh non-expiry checks; no cross-run transport reuse or waiver is included.
+- [ ] Independently accept all providers and 35 GitHub assets, then execute the
+  separately approved issue822 retirement. Local fixes do not complete release.
+
 Ordinary resumption stays on one maintenance ref/commit. A later controller may
 not use an arbitrary or either-identity provenance override. Dry-run jobs never
 receive publisher secrets or job-level OIDC. New same-run transport ZIPs are
 verified against original inner-file digests, not the original transport ZIP hash.
+
+## Task 6: Reproducible full-workspace formatter after hosted nightly drift
+
+Classification: EXOCHAIN core CI, local validation tooling and owned developer
+documentation. No Rust product source, build/test compiler, dependency lock,
+payload, release workflow, protection or provenance policy changes.
+
+- [x] Preserve both PR841 format failures and compare their actual compiler
+  identity with the last successful exact-source hosted PR840 format job.
+- [x] Add a parsed-YAML formatter contract and negative mutation regressions;
+  observe rejection of the existing floating configuration before changing it.
+- [x] Pin only formatter installation and invocation to nightly-2026-09-21,
+  update repo_truth and its failure mock, and align README/AGENTS commands.
+  Retain full --all -- --check and the required constitutional gate dependency.
+- [x] Run all core, recovery/retirement and CI-derived source gates against the
+  final candidate; retain actual logs and independently review the complete diff.
+- [ ] Sign and push the repair normally to PR841; obtain fresh exact-head CI
+  and both real maintainer reviews, including applicable Operations, Governance
+  and Architecture CODEOWNERS approval, before integration or maintenance tag.
 
 ## Exact npm emission compatibility
 

@@ -126,6 +126,54 @@ permission. A conditional publish step in an OIDC-enabled job is not a
 token-free dry run. Same-run transport ZIPs may differ from the original ZIPs;
 fresh publishers must verify the original inner-file manifest again.
 
+### September 24 Python acceptance repair and successor identity records
+
+Run `35754493083`, attempt 2, Python job `107717206104` uploaded both original
+distributions successfully, then rejected PyPI's publisher object because it
+omitted `claims` rather than containing `claims: null`. The four actual identity
+fields match. Independent public downloads match the original manifest, and
+the real pinned `pypi-attestations==0.0.30` CLI cryptographically verifies both
+original attestations. Its `GitHubPublisher` model does not declare `claims`;
+the repository's additional check remains stricter than that model: accept only
+the exact four-field identity or that identity with null claims. Non-null claims,
+unknown fields and mismatched identities still fail. No raw provenance is edited.
+
+A reviewed successor uses `PUBLICATION-IDENTITIES.json`, separately semantically
+pinned by the existing custody verifier and captured from the actual controller
+commit. The original `RECOVERY-MANIFEST.json` and its semantic pin are unchanged.
+The five fixed records bind WASM, LYNK, SDK, wheel and sdist to their original
+manifest file hashes/sizes and one exact publication source/ref each. WASM binds
+the original product; the other four records bind `2198e4ef610e9ef6d04adf726f7f4b3e156a3bc1`
+at `refs/tags/v0.2.7-recover.2`. Observed publishing run/attempt fields are reviewed
+evidence metadata, not an additional invocation check claimed by the certificate
+verifiers. No alternate controller, caller override or either-identity fallback
+is admitted. The real executing SHA/ref still governs source, tags and staging.
+
+All five mapped publications must exist and pass complete public crypto and
+identity verification. Absence fails; npm performs no upload and Python stages
+no distributions. Normal release-mode publishing remains unchanged. The final
+GitHub custody receipt distinguishes original product source, prior package
+publishers and the current acceptance/release controller; it must not attribute
+earlier package signatures to the successor.
+
+The original import and its fresh non-expiry checks remain unchanged. No
+cross-run transport reuse, expiry waiver or retention workaround is authorized
+by these records. An expiry failure stops further writes. Normal exact-head
+review, full CI, signed successor tag, two independent protected environments,
+dry run and separate live execution remain prerequisites.
+
+### Formatter reproducibility during successor review
+
+PR841's initial exact-head CI selected a newer floating nightly formatter and
+rejected macro wrapping in unchanged Rust source. Gate 5 now uses the exact
+nightly-2026-09-21 distribution that passed hosted PR840 on the same product
+tree. Both installation and invocation are pinned; repo_truth and documented
+local commands use that same formatter. The build/test compiler remains stable.
+The full workspace check and constitutional dependency are unchanged. Parsed
+YAML and behavioral mutation regressions reject floating/mismatched toolchains,
+removed coverage/check flags, conditional skips and suppressed failures. This
+repairs reproducibility without modifying product Rust files or weakening gates.
+
 ## Acceptance
 
 Tests must execute the actual selected npm CLI, not only manufactured JSON.

@@ -460,13 +460,14 @@ def verify_provenance(
     bundle = bundles[0]
     publisher = bundle.get("publisher")
     expected_publisher = {
-        "claims": None,
         "environment": environment,
         "kind": "GitHub",
         "repository": repository,
         "workflow": workflow,
     }
-    if publisher != expected_publisher:
+    # PyPI serves this identity with claims omitted as well as claims: null.
+    # Admit only those two exact shapes; never ignore extra or nonnull claims.
+    if publisher not in (expected_publisher, {**expected_publisher, "claims": None}):
         fail("PyPI trusted-publisher identity differs from the exact release policy")
     attestations = bundle.get("attestations")
     if not isinstance(attestations, list) or len(attestations) != 1 or not isinstance(attestations[0], dict):
