@@ -143,7 +143,7 @@ RESOLUTION_COUNT=$(ls governance/resolutions/*.md 2>/dev/null | grep -v INDEX | 
 GOVERNANCE_DOCS=$(ls governance/*.md 2>/dev/null | wc -l | tr -d ' ')
 
 # ── Build checks (quick, no full rebuild) ──
-FMT_OK=$(cargo +nightly fmt --all -- --check >/dev/null 2>&1 && echo "true" || echo "false")
+FMT_OK=$(cargo +nightly-2026-09-21 fmt --all -- --check >/dev/null 2>&1 && echo "true" || echo "false")
 
 # ── Output ──
 TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)

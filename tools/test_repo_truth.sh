@@ -119,7 +119,7 @@ jq -e . "$json_file" >/dev/null
 real_cargo=$(command -v cargo)
 cat >"$fake_bin_dir/cargo" <<EOF
 #!/usr/bin/env bash
-if [ "\${1:-}" = "+nightly" ] && [ "\${2:-}" = "fmt" ]; then
+if [ "\${1:-}" = "+nightly-2026-09-21" ] && [ "\${2:-}" = "fmt" ]; then
   echo "nightly formatter unavailable"
   echo "rustup formatter error" >&2
   exit 1
