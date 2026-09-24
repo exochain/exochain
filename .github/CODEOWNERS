@@ -15,43 +15,48 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # ExoChain CODEOWNERS
-# Maps code areas to council panel reviewers.
-# All changes require at least one approval from the relevant panel.
+# Routes repository review by area. During beta, the three named maintainers
+# cover Architecture, Governance and Operations; Bob is accountable for security
+# and legal/compliance matters. All paths route to real maintainer reviewers.
+# This does not appoint constitutional council seats or grant GitHub permissions.
+# Two independent, non-author maintainer approvals and applicable security audit
+# evidence remain required (CONTRIBUTING.md, Review Process). GitHub treats owners
+# on one line as alternatives; CODEOWNERS alone is not quorum or audit evidence.
 
-# Default: Architecture panel
-* @exochain/architecture
+# Default: Architecture review
+* @bob-stewart @mstewartbz @robst3w
 
-# Rust core — Architecture + Security panels
-/crates/ @exochain/architecture @exochain/security
+# Rust core — Architecture review and applicable security audit evidence
+/crates/ @bob-stewart @mstewartbz @robst3w
 
-# Cryptographic code — Security panel required
-/crates/exo-core/src/crypto.rs @exochain/security
-/crates/exo-identity/ @exochain/security
-/crates/exo-proofs/ @exochain/security
+# Cryptographic code — security-sensitive review
+/crates/exo-core/src/crypto.rs @bob-stewart @mstewartbz @robst3w
+/crates/exo-identity/ @bob-stewart @mstewartbz @robst3w
+/crates/exo-proofs/ @bob-stewart @mstewartbz @robst3w
 
-# Governance and constitutional code — Governance panel required
-/crates/exo-governance/ @exochain/governance
-/crates/decision-forum/ @exochain/governance
-/governance/ @exochain/governance
+# Governance and constitutional code — Governance review
+/crates/exo-governance/ @bob-stewart @mstewartbz @robst3w
+/crates/decision-forum/ @bob-stewart @mstewartbz @robst3w
+/governance/ @bob-stewart @mstewartbz @robst3w
 
-# Legal compliance — Legal panel required
-/crates/exo-legal/ @exochain/legal
-/crates/exo-consent/ @exochain/legal
-/TERMS-CONDITIONS-AND-PRIVACY.md @exochain/legal
+# Legal/compliance paths — Bob accountable; independent maintainer review
+/crates/exo-legal/ @bob-stewart @mstewartbz @robst3w
+/crates/exo-consent/ @bob-stewart @mstewartbz @robst3w
+/TERMS-CONDITIONS-AND-PRIVACY.md @bob-stewart @mstewartbz @robst3w
 
-# Demo platform — Operations panel
-/demo/ @exochain/operations
-/demo/infra/ @exochain/operations
+# Demo platform — Operations review
+/demo/ @bob-stewart @mstewartbz @robst3w
+/demo/infra/ @bob-stewart @mstewartbz @robst3w
 
-# CI/CD and deployment — Operations panel
-/.github/workflows/ @exochain/operations
-/Dockerfile @exochain/operations
-/docker-compose.yml @exochain/operations
+# CI/CD and deployment — Operations review
+/.github/workflows/ @bob-stewart @mstewartbz @robst3w
+/Dockerfile @bob-stewart @mstewartbz @robst3w
+/docker-compose.yml @bob-stewart @mstewartbz @robst3w
 
-# Documentation — all panels for their respective areas
-/docs/ @exochain/architecture
-/docs/council/ @exochain/governance
+# Documentation — review by the relevant maintenance area
+/docs/ @bob-stewart @mstewartbz @robst3w
+/docs/council/ @bob-stewart @mstewartbz @robst3w
 
-# Constitutional documents — require Governance + Legal
-/EXOCHAIN_Specification_v2.2.pdf @exochain/governance @exochain/legal
-/CONTRIBUTING.md @exochain/governance
+# Constitutional documents — Governance and legal/compliance review
+/EXOCHAIN_Specification_v2.2.pdf @bob-stewart @mstewartbz @robst3w
+/CONTRIBUTING.md @bob-stewart @mstewartbz @robst3w
