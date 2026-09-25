@@ -13,10 +13,13 @@ import json
 import os
 from pathlib import Path
 import shutil
+import shlex
+import signal
 import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import types
 import unittest
 from unittest.mock import patch
@@ -65,6 +68,384 @@ class ImportTests(unittest.TestCase):
     def reject(self, function, *args):
         with self.assertRaises((self.i.ImportFailure, self.custody.RecoveryError)):
             function(*args)
+
+    def test_retained_dispatcher_rejects_credentials_before_bootstrap(self):
+        for credential in ("NODE_AUTH_TOKEN", "NPM_TOKEN", "PYPI_API_TOKEN", "PYPI_TOKEN",
+                           "TWINE_PASSWORD", "CARGO_REGISTRY_TOKEN",
+                           "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_URL"):
+            result = subprocess.run(["/bin/bash", str(ROOT / "tools/run_release_recovery_027.sh"),
+                                     "retained-acceptance"], env={"RELEASE_OPERATION":"recover-0.2.7-retained",
+                                     "RELEASE_WORKFLOW_DRY_RUN":"true", credential:"fixture"}, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("retained acceptance forbids publication credentials", result.stderr)
+
+    def test_retained_dispatcher_rejects_mode_switch_in_ordinary_operation(self):
+        result = subprocess.run(["/bin/bash", str(ROOT / "tools/run_release_recovery_027.sh"), "import"],
+                                env={"RELEASE_OPERATION":"recover-0.2.7-retained"}, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("operation and release mode differ", result.stderr)
+
+    def test_full_dispatcher_retained_child_environment_is_allowlisted(self):
+        # Execute the complete dispatcher. Only absolute external Git/GPG
+        # binaries are replaced by fixture transports; no dispatcher function
+        # is extracted, copied around a guard, or short-circuited. This proves
+        # routing/environment behavior, never signature acceptance.
+        fixtures = self.root / "fixtures"; fixtures.mkdir()
+        tool_view = self.root / "view"; tool_view.mkdir()
+        (tool_view / ".release-tool-identity").write_text("fixture-closure\n")
+        (fixtures / "verify_release_recovery_027.sh").write_text("#!/bin/bash\n[ \"$DRY_RUN\" = false ] && [ \"$RELEASE_OPERATION\" = recover-0.2.7-retained ]\n")
+        (fixtures / "resolve_release_tool_path.sh").write_text(
+            "#!/bin/bash\nif [ \"$1\" = --identity ]; then printf fixture-closure; else printf '%s' " + shlex.quote(str(tool_view)) + "; fi\n")
+        (fixtures / "import_release_recovery_027.sh").write_text(
+            "#!/bin/bash\n[ \"$1\" = retained-acceptance ] || exit 9\n" + shlex.quote(sys.executable) +
+            " -I -B -c 'import json,os; print(json.dumps(dict(os.environ)))'\n")
+        git = self.root / "fixture-git"
+        git.write_text(f"#!{sys.executable}\nimport pathlib,sys\nname=sys.argv[-1].split(':tools/')[1]\nsys.stdout.write((pathlib.Path({str(fixtures)!r})/name).read_text())\n")
+        gpg = self.root / "fixture-gpg"
+        gpg.write_text(f"#!{sys.executable}\nimport sys\nsys.stdin.read()\n")
+        git.chmod(0o700); gpg.chmod(0o700)
+        dispatcher = self.root / "dispatcher.sh"
+        dispatcher.write_text((ROOT / "tools/run_release_recovery_027.sh").read_text()
+                              .replace("/usr/bin/git",str(git)).replace("/usr/bin/gpg",str(gpg)))
+        env = {"RELEASE_OPERATION":"recover-0.2.7-retained","RELEASE_WORKFLOW_DRY_RUN":"true",
+            "GITHUB_SHA":"a"*40,"GITHUB_WORKSPACE":str(self.root),"GITHUB_REF":"refs/tags/v0.2.7-recover.3",
+            "GITHUB_REPOSITORY":"exochain/exochain","GITHUB_SERVER_URL":"https://github.com",
+            "RUNNER_TEMP":str(self.root),"RELEASE_PYTHON":sys.executable,"RELEASE_TRUSTED_PYTHON_ROOT":str(self.root),
+            "RELEASE_TRUSTED_NODE_ROOT":str(self.root),"EXPECTED_COMMIT_SHA":"a"*40,"TRUSTED_RELEASE_REF":"a"*40,
+            "EXPECTED_TAG_OBJECT_SHA":"b"*40,"EXPECTED_TAG_COMMIT_SHA":"a"*40,"RELEASE_TAG":"v0.2.7-recover.3",
+            "EXOCHAIN_RELEASE_SIGNING_FINGERPRINT":"A"*40,"EXOCHAIN_RELEASE_SIGNING_PUBLIC_KEY_ASC":"fixture",
+            "GITHUB_ACTIONS":"true","GITHUB_EVENT_NAME":"workflow_dispatch","RUNNER_ENVIRONMENT":"github-hosted",
+            "GITHUB_WORKFLOW_REF":"exochain/exochain/.github/workflows/release.yml@refs/tags/v0.2.7-recover.3",
+            "GITHUB_RUN_ID":"40000000000","GITHUB_RUN_ATTEMPT":"2","GITHUB_JOB":"retained-acceptance",
+            "RELEASE_GITHUB_TOKEN":"fixture-read-only","EVIL":"sentinel","PYTHONPATH":"sentinel",
+            "GIT_CONFIG_COUNT":"1","RELEASE_RETAINED_DIRECTORY":"attacker","BASH_ENV":"/nonexistent"}
+        result = subprocess.run(["/bin/bash","--noprofile","--norc","-p",str(dispatcher)],
+                                env=env,capture_output=True,text=True)
+        # The operation must remain an explicit argument, never an env switch.
+        self.assertNotEqual(result.returncode,0)
+        result = subprocess.run(["/bin/bash","--noprofile","--norc","-p",str(dispatcher),"retained-acceptance"],
+                                env=env,capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stderr)
+        child = json.loads(result.stdout)
+        for key in ("EVIL","PYTHONPATH","GIT_CONFIG_COUNT","RELEASE_RETAINED_DIRECTORY","NODE_AUTH_TOKEN","ACTIONS_ID_TOKEN_REQUEST_TOKEN"):
+            self.assertNotIn(key,child)
+        for key in ("GITHUB_SHA","GITHUB_REF","GITHUB_RUN_ID","GITHUB_RUN_ATTEMPT","GITHUB_JOB","RELEASE_WORKFLOW_DRY_RUN","RELEASE_GITHUB_TOKEN"):
+            self.assertEqual(child[key],env[key])
+        self.assertEqual(child["DRY_RUN"],"false")
+        (fixtures/'recover_github_release_027.py').write_text("import json,os,sys\nassert sys.argv[1:] == ['retained-github']\nprint(json.dumps(dict(os.environ)))\n")
+        env.update(GITHUB_JOB='retained-github',RELEASE_WORKFLOW_DRY_RUN='false')
+        for name in ('ARTIFACT_ID','ARTIFACT_DIGEST','PRODUCER_JOB_ID','RECEIPT_MEMBERS','RECEIPT_CONTEXT'):
+            env['RELEASE_RECEIPT_'+name] = 'direct-fixture-'+name
+        result = subprocess.run(['/bin/bash','--noprofile','--norc','-p',str(dispatcher),'retained-github'],
+                                env=env,capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stderr)
+        child=json.loads(result.stdout)
+        self.assertEqual(child['GITHUB_JOB'],'retained-github')
+        self.assertNotIn('EVIL',child)
+        for name in ('ARTIFACT_ID','ARTIFACT_DIGEST','PRODUCER_JOB_ID','RECEIPT_MEMBERS','RECEIPT_CONTEXT'):
+            self.assertEqual(child['RELEASE_RECEIPT_'+name],env['RELEASE_RECEIPT_'+name])
+        env['RELEASE_WORKFLOW_DRY_RUN']='true'
+        result = subprocess.run(['/bin/bash',str(dispatcher),'retained-github'],env=env,capture_output=True,text=True)
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn('live current receipt handoff',result.stderr)
+
+    def test_retained_transport_has_only_two_archives_and_separate_bound(self):
+        record = self.custody.load_retained_record(self.manifest,
+            ROOT / "governance/releases/v0.2.7/RETAINED-CUSTODY.json")
+        transport = self.i.Transport(self.root, "fixture", self.manifest, record)
+        self.assertEqual([item[0] for item in transport.endpoints["archives"]], [10779404529, 10780480598])
+        self.reject(transport.archive, self.manifest["artifacts"][0], self.root / "original.zip")
+        self.reject(transport._get, self.i.RUN, self.root / "too-large", 147126946, True)
+
+    def test_python_retained_bootstrap_has_explicit_accept_and_no_credentials(self):
+        helper = ROOT / "tools/recover_release_python_027.sh"
+        for dry in ("true", "false"):
+            for credential in ("PYPI_API_TOKEN", "NODE_AUTH_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_URL"):
+                result = subprocess.run(["/bin/bash", str(helper), "accept"], env={
+                    "RELEASE_OPERATION":"recover-0.2.7-retained", "RELEASE_WORKFLOW_DRY_RUN":dry,
+                    credential:"fixture"}, capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("publication credentials must be absent", result.stderr)
+        result = subprocess.run(["/bin/bash", str(helper), "preflight"],
+            env={"RELEASE_OPERATION":"recover-0.2.7-retained"}, capture_output=True, text=True)
+        self.assertIn("operation and release mode differ", result.stderr)
+
+    def retained_fixture(self):
+        fixtures = module_file("retained_import_fixtures", ROOT / "tools/test_release_recovery_027.py")
+        fixture = fixtures.RetainedTests()
+        fixture.v, fixture.manifest = self.custody, self.manifest
+        fixture.record_path = ROOT / "governance/releases/v0.2.7/RETAINED-CUSTODY.json"
+        self.addCleanup(fixture.doCleanups)
+        return fixture
+
+    def test_current_receipt_transport_uses_only_exact_id_and_small_bound(self):
+        record = self.custody.load_retained_record(self.manifest, ROOT / 'governance/releases/v0.2.7/RETAINED-CUSTODY.json')
+        transport = self.i.Transport(self.root,'fixture',self.manifest,record)
+        self.assertTrue(callable(getattr(transport,'receipt_archive',None)), 'receipt download API absent')
+        metadata = {'id':444,'size_in_bytes':100,'url':self.i.API+'/artifacts/444',
+            'archive_download_url':self.i.API+'/artifacts/444/zip'}
+        calls=[]
+        def get(url,path,limit,auth):
+            calls.append((url,limit,auth)); path.write_bytes(b'x'*100); return 200,[]
+        with patch.object(transport,'_get',side_effect=get):
+            transport.receipt_archive(metadata,self.root/'receipt.zip')
+            self.assertEqual(calls,[(self.i.API+'/artifacts/444/zip',100,True)])
+            for key,value in [('id',True),('size_in_bytes',1048577),('archive_download_url','https://attacker.invalid/zip')]:
+                with self.subTest(key=key):
+                    self.reject(transport.receipt_archive,dict(metadata,**{key:value}),self.root/'bad.zip')
+            self.assertEqual(len(calls),1)
+
+    def test_retained_producer_github_preflight_cannot_mutate(self):
+        self.assertTrue(callable(getattr(self.i,'retained_github_preflight',None)), 'producer GitHub preflight absent')
+        helper=module_file('producer_github_preflight',ROOT/'tools/recover_github_release_027.py')
+        record=self.custody.load_retained_record(self.manifest,ROOT/'governance/releases/v0.2.7/RETAINED-CUSTODY.json')
+        publications=self.custody.load_publications(self.manifest,ROOT/'governance/releases/v0.2.7/PUBLICATION-IDENTITIES.json')
+        events=[]
+        class Provider:
+            def lookup(self): events.append('lookup'); return None
+            def create(self,*args): raise AssertionError('preflight create')
+            def upload(self,*args): raise AssertionError('preflight upload')
+            def publish(self,*args): raise AssertionError('preflight publish')
+        with patch.object(self.i,'load_module',return_value=helper),patch.object(helper,'GitHub',return_value=Provider()), \
+             patch.object(helper,'release_assets',return_value={'fixture':b'x'}), \
+             patch.object(self.custody,'verify_files',side_effect=lambda *args:events.append('files')), \
+             patch.dict(self.i.os.environ,{'GITHUB_SHA':'a'*40,'GITHUB_REF':'refs/tags/v0.2.7-recover.3','RELEASE_GITHUB_TOKEN':'fixture'},clear=True):
+            self.i.retained_github_preflight(self.root,self.custody,self.manifest,publications,record,self.root,self.root)
+        self.assertEqual(events,['files','lookup','files'])
+        self.assertIs(json.loads((self.root/'github-preflight.json').read_text())['mutation_attempted'],False)
+
+    def test_retained_acquisition_rechecks_metadata_and_never_exposes_bad_bytes(self):
+        record, origin = self.retained_fixture().origin_fixture()
+        for fault in ("before", "after", "archive"):
+            directory = self.root / fault; directory.mkdir()
+            evidence = directory / "evidence"; evidence.mkdir()
+            archives = directory / "archives"; archives.mkdir()
+            candidate = directory / "candidate"
+            transport = self.i.Transport(directory, "fixture", self.manifest, record)
+            data = {self.i.RUN:origin["original_run"], self.i.RUN+"/jobs?per_page=100&page=1":origin["original_jobs"],
+                transport.endpoints["retaining_run"]:origin["retaining_run"],
+                transport.endpoints["retaining_jobs"][0]:origin["retaining_jobs"]}
+            data.update({f"{self.i.API}/artifacts/{m['id']}":m for m in origin["original_metadata"]})
+            data.update({record[k]["metadata"]["url"]:record[k]["metadata"] for k in ("payload","custody")})
+            calls, downloads = [], []
+            def get(url, path, limit):
+                self.assertEqual(limit, self.i.JSON_LIMIT)
+                calls.append(url)
+                value = copy.deepcopy(data[url])
+                if fault in path.name and path.name.startswith("retained-payload"):
+                    value["digest"] = "sha256:" + "0"*64
+                path.write_text(json.dumps(value))
+            def archive(metadata, path):
+                downloads.append(metadata["id"])
+                path.write_bytes(b"not a retained archive")
+            transport.get, transport.archive = get, archive
+            with patch.object(self.i, "utc_now", return_value=origin["observed_at"]):
+                self.reject(self.i.acquire_retained, self.manifest, record, self.custody, transport,
+                            evidence, archives, candidate, directory / "workflow")
+            self.assertFalse(candidate.exists())
+            self.assertEqual(downloads, [] if fault == "before" else [10779404529,10780480598])
+            self.assertFalse(any("/zip" in url for url in calls))
+
+    def test_current_receipts_match_exact_task_one_schema_and_refuse_failed_native(self):
+        record, publications, envelope, expected = self.retained_fixture().receipt_fixture()
+        origin = self.custody.verify_retained_origin(self.manifest, record, envelope["origin"], "fixture", "fixture")
+        summary = {"origin":origin,"rust":{"version":"0.2.7","crates_verified":32},
+                   "files":{"files_verified":40},"retained_transport":{"retained_archives_verified":2,
+                       "payload_files_verified":40,"original_zip_envelopes_verified":0},
+                   "packages":{},"native_attestations":[]}
+        for artifact in self.manifest["artifacts"]:
+            if artifact["lane"].startswith("native-"):
+                summary["packages"][artifact["lane"]] = {"libraries":29,"executables":0}
+                summary["native_attestations"].append({"lane":artifact["lane"],"verified_attestations":1,
+                    "original_invocation":self.manifest["origin"]["native_attestation_invocation"]})
+        for failed in ("native","files",False):
+            evidence = self.root / str(failed); evidence.mkdir()
+            identity = {key:True for key in ("controller_signature_verified","product_signature_verified","retaining_signature_verified")}
+            (evidence / "identity-after.json").write_text(json.dumps(identity))
+            changed = copy.deepcopy(summary)
+            if failed:
+                if failed == "native": changed["native_attestations"][0]["verified_attestations"] = 0
+                else: changed["files"]["files_verified"] = 39
+                self.reject(self.i.create_retained_receipts,self.custody,self.manifest,record,envelope["context"],changed,
+                    expected["acceptance-receipt.json"]["results"]["publications"],evidence)
+                self.assertFalse((evidence / "current-receipts").exists())
+            else:
+                members = self.i.create_retained_receipts(self.custody,self.manifest,record,envelope["context"],changed,
+                    expected["acceptance-receipt.json"]["results"]["publications"],evidence)
+                self.assertEqual([m["path"] for m in members], ["custody-receipt.json","acceptance-receipt.json"])
+                for name, receipt in expected.items():
+                    path = evidence / "current-receipts" / name
+                    self.assertEqual(self.custody.load_json(path,"receipt"),receipt)
+                    self.assertEqual(path.stat().st_mode & 0o777,0o600)
+
+    def test_aggregate_requires_each_fresh_child_exit_and_complete_success_result(self):
+        publications = self.custody.load_publications(self.manifest,ROOT / "governance/releases/v0.2.7/PUBLICATION-IDENTITIES.json")
+        for fault in (None,"wasm-exit","llm-result","sdk-history","sdk-readback","python-crypto","python-missing"):
+            runner = self.root / str(fault); runner.mkdir()
+            capture = runner / "capture"; capture.mkdir()
+            evidence = capture / "evidence"; evidence.mkdir()
+            events = []
+            def child(argv, output, environment=None, timeout=240, bounded=False):
+                name = argv[-2] if argv[-1] == "retained-accept" else "python"
+                events.append(name)
+                self.assertEqual(environment["RELEASE_OPERATION"],"recover-0.2.7-retained")
+                self.assertNotIn("NODE_AUTH_TOKEN",environment)
+                self.assertNotIn("ACTIONS_ID_TOKEN_REQUEST_TOKEN",environment)
+                if fault == name+"-exit":
+                    raise self.i.ImportFailure("actual fixture child exit nonzero")
+                output.write_text("")
+                destination = runner / "exochain-recovery-receipts" / (name if name == "python" else "npm-"+name)
+                destination.mkdir(parents=True)
+                result = {"operation":"recover-0.2.7-retained","controller_commit":"a"*40,
+                    "controller_ref":"refs/tags/v0.2.7-recover.3","exit_code":0,"acceptance_verified":True,"mutation_attempted":False}
+                if name == "python":
+                    result.update(schema="exochain-python-retained-acceptance/v1",files=[{
+                        "filename":Path(p["file"]["path"]).name,"sha256":p["file"]["sha256"],"source":p["source"],
+                        "public_bytes_verified":True,"crypto_verified":True,"exit_code":0,"mutation_attempted":False}
+                        for p in publications["publications"][3:]])
+                    if fault == "python-crypto": result["files"][1]["crypto_verified"] = False
+                    if fault == "python-missing": result["files"].pop()
+                else:
+                    p, = [p for p in publications["publications"] if p["id"] == name]
+                    result.update(package=p["package"],version="0.2.7",tarball_sha256=p["file"]["sha256"],
+                        provenance_commit=p["source"]["commit"],provenance_ref=p["source"]["ref"],
+                        upload_exit_code=None,mutation_outcome="verified",phase="finished")
+                    if fault == name+"-result": result["acceptance_verified"] = False
+                    if fault == name+"-history": result["controller_commit"] = self.i.PRODUCT_SHA
+                    if fault == name+'-readback':
+                        result.pop('acceptance_verified')
+                        result['readback_verified']=True
+                    for file in ("registry.json","audit.json"):
+                        (destination / file).write_text('{}')
+                (destination / "result.json").write_text(json.dumps(result))
+            with patch.dict(self.i.os.environ,{"GITHUB_SHA":"a"*40,"GITHUB_REF":"refs/tags/v0.2.7-recover.3",
+                 "RELEASE_OPERATION":"recover-0.2.7-retained"},clear=True),patch.object(self.i,"command",side_effect=child):
+                args = (self.custody,publications,runner / "candidate",capture,evidence,runner)
+                if fault:
+                    self.reject(self.i.accept_publications,*args)
+                else:
+                    result = self.i.accept_publications(*args)
+                    self.assertEqual([p["id"] for p in result],["wasm","llm","sdk","python-wheel","python-sdist"])
+                    self.assertEqual(events,["wasm","llm","sdk","python"])
+            self.assertFalse((evidence / "current-receipts").exists())
+
+    def test_public_child_diagnostics_are_bounded_even_when_command_fails(self):
+        for stream in ("stdout","stderr"):
+            output = self.root / (stream+".txt")
+            with self.assertRaises(self.i.ImportFailure):
+                self.i.command([sys.executable,"-I","-B","-c",
+                    "import sys; sys."+stream+".write('x'*(1024*1024+1))"],output,bounded=True)
+            self.assertLessEqual(output.stat().st_size,1024*1024)
+            self.assertLessEqual(Path(str(output)+".stderr").stat().st_size,1024*1024)
+
+    def test_public_diagnostic_overflow_stops_before_long_running_child_finishes(self):
+        for stream in ("stdout", "stderr"):
+            output = self.root / (stream+"-overflow.txt")
+            finished = self.root / (stream+"-finished")
+            code = ("import pathlib,sys,time; sys."+stream+".write('x'*(1024*1024+1)); "
+                    "sys."+stream+".flush(); time.sleep(3); pathlib.Path(sys.argv[1]).touch()")
+            started = time.monotonic()
+            with self.assertRaises(self.i.ImportFailure):
+                self.i.command([sys.executable,"-I","-B","-c",code,str(finished)],output,
+                               timeout=10,bounded=True)
+            self.assertLess(time.monotonic()-started,2.5)
+            self.assertFalse(finished.exists(), "overflow waited for the long-running child to finish")
+            self.assertLessEqual(output.stat().st_size,1024*1024)
+            self.assertLessEqual(Path(str(output)+".stderr").stat().st_size,1024*1024)
+
+    def test_public_timeout_stops_descendant_writes_after_return(self):
+        output = self.root / "descendant.txt"
+        error_output = Path(str(output)+".stderr")
+        heartbeat = self.root / "descendant-heartbeat"
+        pid_path = self.root / "descendant-pid"
+        child_code = ("import os,pathlib,sys,time\n"
+                      "for n in range(250):\n"
+                      " os.write(1,b'out\\n'); os.write(2,b'err\\n')\n"
+                      " pathlib.Path(sys.argv[1]).write_text(str(n))\n"
+                      " time.sleep(0.02)\n")
+        parent_code = ("import pathlib,subprocess,sys,time; "
+                       "child=subprocess.Popen([sys.executable,'-I','-B','-c',sys.argv[1],sys.argv[2]]); "
+                       "pathlib.Path(sys.argv[3]).write_text(str(child.pid)); time.sleep(10)")
+        try:
+            with self.assertRaises(subprocess.TimeoutExpired):
+                self.i.command([sys.executable,"-I","-B","-c",parent_code,child_code,
+                    str(heartbeat),str(pid_path)],output,timeout=0.75,bounded=True)
+            self.assertTrue(heartbeat.exists(), "descendant did not actually execute")
+            before = (output.stat().st_size,error_output.stat().st_size,heartbeat.read_text())
+            time.sleep(0.25)
+            after = (output.stat().st_size,error_output.stat().st_size,heartbeat.read_text())
+            self.assertEqual(after,before, "a timed-out descendant kept writing after command returned")
+            self.assertLessEqual(after[0],1024*1024)
+            self.assertLessEqual(after[1],1024*1024)
+        finally:
+            # RED must not leave the deliberately orphaned fixture running.
+            if pid_path.exists():
+                try:
+                    os.kill(int(pid_path.read_text()),signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+    def test_public_collector_drains_both_pipes_without_deadlock(self):
+        output = self.root / "both-pipes.txt"
+        code = "import os\nfor _ in range(8):\n os.write(1,b'o'*65536); os.write(2,b'e'*65536)\n"
+        self.i.command([sys.executable,"-I","-B","-c",code],output,timeout=5,bounded=True)
+        self.assertEqual(output.read_bytes(),b'o'*(512*1024))
+        self.assertEqual(Path(str(output)+".stderr").read_bytes(),b'e'*(512*1024))
+
+    def test_public_timeout_applies_after_both_pipes_close(self):
+        output = self.root / "closed-pipes.txt"
+        started = time.monotonic()
+        with self.assertRaises(subprocess.TimeoutExpired):
+            self.i.command([sys.executable,"-I","-B","-c",
+                "import os,time; os.close(1); os.close(2); time.sleep(10)"],output,timeout=0.2,bounded=True)
+        self.assertLess(time.monotonic()-started,2)
+        self.assertEqual(output.read_bytes(),b'')
+        self.assertEqual(Path(str(output)+".stderr").read_bytes(),b'')
+
+    def test_current_context_uses_authoritative_numeric_job_and_pinned_runtimes(self):
+        _, _, envelope, _ = self.retained_fixture().receipt_fixture()
+        context = envelope["context"]
+        capture = self.root / "capture"; capture.mkdir()
+        shutil.copyfile(ROOT / "tools/verify_release_recovery_027.py",capture / "verify_release_recovery_027.py")
+        environment = {"GITHUB_SHA":context["controller_sha"],"GITHUB_REF":context["controller_ref"],
+            "EXPECTED_TAG_OBJECT_SHA":context["controller_tag_object"],"GITHUB_RUN_ID":str(context["run_id"]),
+            "GITHUB_RUN_ATTEMPT":str(context["run_attempt"]),"GITHUB_JOB":"retained-acceptance",
+            "RELEASE_WORKFLOW_DRY_RUN":"true","TRUSTED_RELEASE_PATH":str(self.root),
+            "RELEASE_PRODUCER_JOB_ID":"999", "RELEASE_GITHUB_TOKEN":"fixture-secret"}
+        run_url = self.i.API + f"/runs/{context['run_id']}/attempts/{context['run_attempt']}"
+        for fault in (None,"attempt","duplicate","runtime"):
+            evidence = self.root / str(fault); evidence.mkdir()
+            jobs = copy.deepcopy(envelope["current_jobs"])
+            jobs["jobs"][0]["status"] = "in_progress"
+            if fault == "attempt": jobs["jobs"][0]["run_attempt"] = 1
+            if fault == "duplicate":
+                extra = copy.deepcopy(jobs["jobs"][0]); extra["id"] += 1
+                jobs["jobs"].append(extra); jobs["total_count"] += 1
+            def get(url,path,limit):
+                value = envelope["current_run"] if url == run_url else jobs
+                self.assertIn(url,(run_url,run_url+"/jobs?per_page=100&page=1"))
+                path.write_text(json.dumps(value))
+            transport = types.SimpleNamespace(authenticated=set(),get=get)
+            def version(argv,**kwargs):
+                self.assertNotIn("RELEASE_GITHUB_TOKEN",kwargs["env"])
+                if argv[0] == "python": value = b"3.13.7\n"
+                elif argv[0] == "/usr/bin/gh": value = b"gh version 2.80.0 (fixture)\n"
+                elif "npm" in argv[1]: value = b"11.12.1\n"
+                else: value = b"v24.15.1\n" if fault == "runtime" else b"v24.15.0\n"
+                return subprocess.CompletedProcess(argv,0,value,b"")
+            with patch.dict(self.i.os.environ,environment,clear=True),patch.object(self.i.subprocess,"run",side_effect=version):
+                if fault in ("attempt","duplicate"):
+                    self.reject(self.i.current_receipt_context,self.custody,transport,capture,evidence,"python","node")
+                else:
+                    actual = self.i.current_receipt_context(self.custody,transport,capture,evidence,"python","node")
+                    self.assertEqual(actual["producer_job_id"],context["producer_job_id"])
+                    if fault == "runtime":
+                        record, origin = self.retained_fixture().origin_fixture()
+                        verified = self.custody.verify_retained_origin(self.manifest,record,origin,"fixture","fixture")
+                        with self.assertRaises(ValueError):
+                            self.custody.retained_receipt_bindings(self.manifest,record,actual,verified)
+                    else:
+                        self.assertEqual(actual["runtime_versions"],context["runtime_versions"])
 
     def test_endpoint_allowlist_is_fixed_to_attempt_one_and_reviewed_ids(self):
         urls = self.i.fixed_endpoints(self.manifest)

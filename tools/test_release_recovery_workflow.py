@@ -3,6 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Regression firewall for the fixed recovery DAG and dispatch boundary."""
 from pathlib import Path
+import copy
+import ast
+import json
 import re
 import subprocess
 import tempfile
@@ -18,6 +21,102 @@ NORMAL = (
     "publish-python-package github-release"
 ).split()
 RECOVERY = "recovery-import recovery-wasm recovery-llm recovery-sdk recovery-python recovery-github".split()
+RETAINED = ['retained-acceptance', 'retained-github']
+
+
+def parsed_workflow(source):
+    # Audit Psych's lossless tree before constructing objects: never let a
+    # duplicate/alias/tag or YAML 1.1 key reinterpretation hide authority.
+    ruby = r'''
+require 'yaml'; require 'json'
+walk = nil
+walk = lambda do |n|
+  raise 'alias or tag' if n.is_a?(Psych::Nodes::Alias) ||
+    (n.respond_to?(:anchor) && n.anchor) || (n.respond_to?(:tag) && n.tag)
+  if n.is_a?(Psych::Nodes::Mapping)
+    keys = {}
+    n.children.each_slice(2) do |k,v|
+      raise 'key type' unless k.is_a?(Psych::Nodes::Scalar)
+      raise 'duplicate/merge' if keys[k.value] || k.value == '<<'
+      raise 'ambiguous key' if k.plain && !YAML.safe_load(k.value).is_a?(String)
+      keys[k.value] = true
+    end
+  end
+  (n.children || []).each { |c| walk.call(c) } if n.respond_to?(:children)
+end
+source = STDIN.read
+walk.call(Psych.parse_stream(source))
+puts JSON.generate(YAML.safe_load(source))
+'''
+    result = subprocess.run(['ruby', '-e', ruby], input=source, text=True, capture_output=True)
+    if result.returncode:
+        raise ValueError('workflow YAML rejected')
+    return json.loads(result.stdout)
+
+
+def retained_policy(value):
+    def require(condition):
+        if not condition:
+            raise ValueError('retained workflow boundary rejected')
+    jobs = value['jobs']
+    require(value['permissions'] == {'contents':'read'})
+    require(all(term not in json.dumps(value.get('env',{})) for term in
+                ('secrets.','TOKEN','PASSWORD','ACTIONS_ID_TOKEN','GITHUB_')))
+    require(value['on']['workflow_dispatch']['inputs']['operation']['options'] ==
+            ['release', 'recover-0.2.7', 'recover-0.2.7-retained'])
+    for names, operation in ((NORMAL, 'release'), (RECOVERY, 'recover-0.2.7')):
+        for name in names:
+            condition = jobs[name]['if']
+            require(condition in ("${{ needs.validate-release-inputs.outputs.operation == '" + operation + "' }}",
+                                  "${{ needs.validate-release-inputs.outputs.operation == '" + operation + "' && !inputs.dry_run }}"))
+    acceptance, writer = (jobs[name] for name in RETAINED)
+    prerequisites = ['ci', 'approve', 'approve-second', 'verify-signed-tag', 'validate-release-inputs']
+    require(acceptance['needs'] == prerequisites)
+    require(writer['needs'] == prerequisites + ['retained-acceptance'])
+    require(jobs['ci']['uses'] == './.github/workflows/ci.yml')
+    for name, environment in [('approve', 'release'), ('approve-second', 'release-second')]:
+        require(jobs[name]['environment'] == environment and jobs[name]['needs'] == ['ci', 'validate-release-inputs'])
+    require(jobs['verify-signed-tag']['needs'] == ['approve', 'approve-second', 'validate-release-inputs'])
+    require(acceptance['permissions'] == {'contents':'read', 'actions':'read', 'attestations':'read'})
+    require(writer['permissions'] == {'contents':'write', 'actions':'read'})
+    require(writer['environment'] == 'release')
+    require(acceptance['if'] == "${{ needs.validate-release-inputs.outputs.operation == 'recover-0.2.7-retained' }}")
+    require(writer['if'] == "${{ needs.validate-release-inputs.outputs.operation == 'recover-0.2.7-retained' && !inputs.dry_run }}")
+    require(acceptance['name'] == 'Verify Retained 0.2.7 Custody and Publications')
+    for job, operation in [(acceptance, 'retained-acceptance'), (writer, 'retained-github')]:
+        encoded = json.dumps(job)
+        require(all(term not in encoded for term in ('secrets.', 'id-token', 'download-artifact', 'pypa/', 'NODE_AUTH_TOKEN', 'NPM_TOKEN', 'CARGO_REGISTRY_TOKEN')))
+        require(job['runs-on'] == 'ubuntu-24.04')
+        checkout, python, node, execute = job['steps'][:4]
+        require(checkout['uses'] == 'actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5')
+        require(checkout['with'] == {'ref':'${{ needs.validate-release-inputs.outputs.trusted_ref }}', 'fetch-depth':0, 'persist-credentials':False})
+        require(python['uses'] == 'actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548' and python['with'] == {'python-version':'3.13.7', 'cache':''})
+        require(node['uses'] == 'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020' and node['with'] == {'node-version':'24.15.0', 'check-latest':False})
+        require(execute['run'].endswith('/bin/bash --noprofile --norc -p -s -- ' + operation + '\n'))
+        env = execute['env']
+        require(not any(key.startswith('GITHUB_') for key in env))
+        require(env['RELEASE_OPERATION'] == '${{ needs.validate-release-inputs.outputs.operation }}')
+        require(env['RELEASE_WORKFLOW_DRY_RUN'] == '${{ inputs.dry_run }}')
+        require('GITHUB_SHA' not in env and 'GITHUB_REF' not in env and 'DRY_RUN' not in env)
+    upload, = acceptance['steps'][4:]
+    require(upload['name'] == 'Upload Current Retained Acceptance Receipt' and upload['id'] == 'receipt')
+    require(upload.get('if', '${{ success() }}') == '${{ success() }}')
+    require(upload['uses'] == 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02')
+    require(upload['with'] == {'name':'exochain-027-retained-acceptance-receipt',
+        'path':'${{ steps.acceptance.outputs.receipt_directory }}/custody-receipt.json\n${{ steps.acceptance.outputs.receipt_directory }}/acceptance-receipt.json\n',
+        'if-no-files-found':'error', 'retention-days':30, 'compression-level':6, 'overwrite':False, 'include-hidden-files':False})
+    outputs = {'artifact_id':'${{ steps.receipt.outputs.artifact-id }}', 'artifact_digest':'${{ steps.receipt.outputs.artifact-digest }}'}
+    outputs.update({name:'${{ steps.acceptance.outputs.' + name + ' }}' for name in ['producer_job_id','receipt_members','receipt_context']})
+    require(acceptance['outputs'] == outputs)
+    require(len(writer['steps']) == 5)
+    journal = writer['steps'][4]
+    require(journal['if'] == '${{ always() }}')
+    require(journal['uses'] == 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02')
+    require(journal['with'] == {'name':'exochain-027-retained-github-receipts',
+        'path':'${{ runner.temp }}/exochain-retained-github.*/mutation-journal.jsonl\n${{ runner.temp }}/exochain-retained-github.*/evidence/release-result.json\n',
+        'if-no-files-found':'warn','retention-days':30,'compression-level':6,'overwrite':False,'include-hidden-files':False})
+    for name in outputs:
+        require(writer['steps'][3]['env']['RELEASE_RECEIPT_' + name.upper()] == '${{ needs.retained-acceptance.outputs.' + name + ' }}')
 
 
 class RecoveryWorkflowTests(unittest.TestCase):
@@ -35,10 +134,75 @@ class RecoveryWorkflowTests(unittest.TestCase):
                 self.assertTrue(name in self.jobs, name)
                 self.assertTrue(re.search(r"^    if:.*outputs.operation == 'recover-0.2.7'", self.jobs[name], re.M), name)
 
+    def test_retained_parsed_workflow_boundaries(self):
+        retained_policy(parsed_workflow(self.text))
+
+    def test_retained_yaml_ambiguity_is_rejected(self):
+        for text in ('jobs: {}\njobs: {}', 'jobs: &jobs {}\nother: *jobs', 'on: {}', 'jobs: !!map {}'):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                parsed_workflow(text)
+
+    def test_real_cargo_guard_fixtures_preserve_resource_bounds_in_clean_environment(self):
+        source=(ROOT/'tools/test_release_workflow_ref_binding.sh').read_text()
+        generate=source.split('  cd "$cargo_boundary_crate"\n',1)[1].split('  git init -q',1)[0]
+        control=source.split('  CARGO_CACHE_RUSTC_INFO=0 \\\n',1)[1].split('cargo publish --dry-run --no-verify --locked',1)[0]
+        isolated=source.split('    PATH="$(/usr/bin/dirname "$real_cargo"):/usr/bin:/bin"',1)[1].split('    "$real_cargo" publish',1)[0]
+        for name,block in [('generate',generate),('control',control),('env-i',isolated)]:
+            for setting in ['CARGO_BUILD_JOBS=2','CARGO_INCREMENTAL=0','CARGO_PROFILE_DEV_DEBUG=0',
+                            'CARGO_PROFILE_TEST_DEBUG=0','CARGO_PROFILE_RELEASE_DEBUG=0']:
+                with self.subTest(command=name,setting=setting): self.assertIn(setting,block)
+
+    def test_cargo_parity_fixture_constructed_environment_has_resource_bounds(self):
+        tree=ast.parse((ROOT/'tools/test_publish_sealed_crate_cargo_parity.py').read_text())
+        assignments=[n for n in ast.walk(tree) if isinstance(n,ast.Assign)
+                     and any(isinstance(t,ast.Name) and t.id=='environment' for t in n.targets)]
+        self.assertEqual(len(assignments),1)
+        value=assignments[0].value
+        self.assertIsInstance(value,ast.Dict)
+        constants={k.value:v.value for k,v in zip(value.keys,value.values)
+                   if isinstance(k,ast.Constant) and isinstance(v,ast.Constant)}
+        for key,expected in {'CARGO_BUILD_JOBS':'2','CARGO_INCREMENTAL':'0','CARGO_PROFILE_DEV_DEBUG':'0',
+                             'CARGO_PROFILE_TEST_DEBUG':'0','CARGO_PROFILE_RELEASE_DEBUG':'0'}.items():
+            with self.subTest(setting=key): self.assertEqual(constants.get(key),expected)
+
+    def test_retained_policy_rejects_authority_dag_and_receipt_mutations(self):
+        original = parsed_workflow(self.text)
+        retained_policy(original)
+        mutations = []
+        for name in RETAINED:
+            for prerequisite in original['jobs'][name]['needs']:
+                mutations.append(lambda v,n=name,p=prerequisite:v['jobs'][n]['needs'].remove(p))
+            for permission, access in [('id-token','write'),('packages','write'),('contents','write'),('actions','write')]:
+                if original['jobs'][name]['permissions'].get(permission) != access:
+                    mutations.append(lambda v,n=name,p=permission,a=access:v['jobs'][n]['permissions'].__setitem__(p,a))
+            mutations.append(lambda v,n=name:v['jobs'][n].__setitem__('if', '${{ always() }}'))
+            mutations.append(lambda v,n=name:v['jobs'][n]['steps'][3]['env'].__setitem__('RELEASE_WORKFLOW_DRY_RUN','false'))
+            mutations.append(lambda v,n=name:v['jobs'][n]['steps'][3]['env'].__setitem__('NODE_AUTH_TOKEN','${{ secrets.NPM_TOKEN }}'))
+            mutations.append(lambda v,n=name:v['jobs'][n]['steps'][3]['env'].__setitem__('GITHUB_RUN_ATTEMPT','1'))
+        for name in ['artifact_id','artifact_digest','producer_job_id','receipt_members','receipt_context']:
+            mutations.append(lambda v,n=name:v['jobs']['retained-acceptance']['outputs'].__setitem__(n,'previous-attempt'))
+            mutations.append(lambda v,n=name:v['jobs']['retained-github']['steps'][3]['env'].__setitem__('RELEASE_RECEIPT_'+n.upper(),'name-lookup'))
+        mutations += [
+            lambda v:v['jobs']['retained-acceptance']['steps'][4].__setitem__('if','${{ always() }}'),
+            lambda v:v['jobs']['retained-acceptance']['steps'][4]['with'].__setitem__('path','payload/'),
+            lambda v:v['jobs']['retained-acceptance'].__setitem__('name','Other producer'),
+            lambda v:v['jobs']['retained-github'].__setitem__('environment','unprotected'),
+            lambda v:v['env'].__setitem__('NPM_TOKEN','${{ secrets.NPM_TOKEN }}'),
+            lambda v:v['jobs']['recovery-sdk'].__setitem__('if',"${{ inputs.operation != 'release' }}"),
+        ]
+        for index, mutation in enumerate(mutations):
+            with self.subTest(index=index):
+                changed = copy.deepcopy(original); mutation(changed)
+                with self.assertRaises(ValueError): retained_policy(changed)
+
     def test_actual_input_boundary(self):
         code = self.jobs["validate-release-inputs"].split("# BEGIN RELEASE OPERATION VALIDATION\n", 1)[1].split("# END RELEASE OPERATION VALIDATION", 1)[0]
         code = "\n".join(line[10:] if line.startswith(" " * 10) else line for line in code.splitlines())
         cases = [
+            ('recover-0.2.7-retained', '0.2.7', 'refs/tags/v0.2.7-recover.3', True, 'v0.2.7-recover.3'),
+            ('recover-0.2.7-retained', '0.2.8', 'refs/tags/v0.2.7-recover.3', False, ''),
+            ('recover-0.2.7-retained', '0.2.7', 'refs/tags/v0.2.7-recover.0', False, ''),
+            ('recover-0.2.7-retained', '0.2.7', 'refs/heads/main', False, ''),
             ("release", "0.2.7", "refs/heads/main", True, "v0.2.7"),
             ("recover-0.2.7", "0.2.7", "refs/tags/v0.2.7-recover.1", True, "v0.2.7-recover.1"),
             ("recover-0.2.7", "0.2.7", "refs/tags/v0.2.7-recover.25", True, "v0.2.7-recover.25"),
@@ -135,7 +299,7 @@ class RecoveryWorkflowTests(unittest.TestCase):
         self.assertNotIn("--clobber", self.jobs["recovery-github"])
 
     def test_actual_launcher_commands_form_one_safe_pipeline(self):
-        for name in RECOVERY:
+        for name in RECOVERY + RETAINED:
             scripts = re.findall(r"^        run: \|\n((?:^          .*\n|^\n)+)", self.jobs[name], re.M)
             self.assertTrue(scripts, name)
             for script in scripts:

@@ -7,6 +7,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 [[ $# -le 1 ]] || { printf 'usage: %s [original-wasm-tarball]\n' "$0" >&2; exit 2; }
 python3 - "$repo_root" "$@" <<'PY'
 import json
+import base64
+import hashlib
 import os
 from pathlib import Path
 import shutil
@@ -75,6 +77,118 @@ validate_npm_release_context
 printf '%s\\n' "$acceptance_only" "$provenance_commit" "$provenance_ref"
 """)
         self.assertEqual(output.splitlines(), ["true", PRODUCT, "refs/tags/v0.2.7"])
+
+    def test_retained_all_profiles_are_credential_free_before_bootstrap(self):
+        self.env["RELEASE_OPERATION"] = "recover-0.2.7-retained"
+        self.env["RELEASE_NPM_MODE"] = "retained-accept"
+        for dry in ("true", "false"):
+            self.env["RELEASE_WORKFLOW_DRY_RUN"] = dry
+            for profile in ("wasm", "llm", "sdk"):
+                with self.subTest(dry=dry, profile=profile):
+                    self.assertEqual(self.succeeds(f"profile={profile}; validate_npm_release_context; printf '%s' \"$acceptance_only\""), "true")
+                    for credential in ("NODE_AUTH_TOKEN", "NPM_TOKEN", "PYPI_API_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_URL"):
+                        self.env[credential] = "fixture"
+                        self.rejected(f"profile={profile}; validate_npm_release_context", "publishing credentials or OIDC")
+                        del self.env[credential]
+
+    def test_retained_environment_cannot_enable_ordinary_entrypoint(self):
+        self.env["RELEASE_OPERATION"] = "recover-0.2.7-retained"
+        self.rejected("profile=wasm; validate_npm_release_context", "explicit retained-accept mode")
+
+    def test_retained_readback_has_no_producer_receipts(self):
+        self.env.update(RELEASE_OPERATION='recover-0.2.7-retained', RELEASE_NPM_MODE='retained-readback', RELEASE_WORKFLOW_DRY_RUN='false')
+        for profile in ('wasm','llm','sdk'):
+            self.succeeds(f'profile={profile}; validate_npm_release_context; initialize_npm_recovery_receipts; [ -z "$recovery_receipt_root" ]')
+        self.assertFalse((self.path/'exochain-recovery-receipts').exists())
+        self.env['RELEASE_OPERATION']='recover-0.2.7'
+        self.rejected('profile=sdk; validate_npm_release_context','retained mode requires retained operation')
+
+    def test_normal_operation_rejects_retained_cli_pairing(self):
+        self.env.update(RELEASE_OPERATION="release",RELEASE_NPM_MODE="retained-accept",
+            RELEASE_TAG="v0.2.7",GITHUB_REF="refs/tags/v0.2.7",NODE_AUTH_TOKEN="fixture",
+            RELEASE_GITHUB_TOKEN="fixture")
+        self.env.pop("RELEASE_RECOVERY_DIRECTORY")
+        self.rejected("profile=sdk; validate_npm_release_context","retained mode requires retained operation")
+
+    def test_retained_dry_and_live_all_profiles_never_enter_upload(self):
+        self.env.update(RELEASE_OPERATION="recover-0.2.7-retained", RELEASE_NPM_MODE="retained-accept")
+        for dry in ("true","false"):
+            self.env["RELEASE_WORKFLOW_DRY_RUN"] = dry
+            for profile in ("wasm","llm","sdk"):
+                for status in (0,1):
+                    with self.subTest(dry=dry,profile=profile,status=status):
+                        self.events.unlink(missing_ok=True)
+                        body = self.orchestration(profile,status).rsplit("publish_or_accept_npm",1)[0]
+                        body += self.mapping()+"\npublish_or_accept_npm"
+                        if status == 0:
+                            self.succeeds(body)
+                        else:
+                            self.rejected(body,"acceptance-only mapped npm version is absent")
+                        events = self.events.read_text().splitlines()
+                        self.assertFalse(any(e.startswith(("actor","authority","authenticated:","visibility:")) for e in events))
+                        result = json.loads((self.receipt_path / "result.json").read_text())
+                        self.assertEqual(result["operation"],"recover-0.2.7-retained")
+                        self.assertIs(result["mutation_attempted"],False)
+                        self.assertIs(result["acceptance_verified"],status==0)
+                        self.assertFalse((self.receipt_path / "intent.json").exists())
+
+    def test_authenticated_boundary_itself_rejects_retained(self):
+        self.env["RELEASE_OPERATION"] = "recover-0.2.7-retained"
+        result = self.run_shell(function("run_authenticated_npm")+"\nacceptance_only=true; run_authenticated_npm publish")
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn("authenticated npm is forbidden",result.stderr)
+
+    def test_public_install_can_be_reused_without_crypto_or_upload(self):
+        body = function("install_public_npm_for_acceptance") + f"""
+audit_root={json.dumps(str(self.path / 'audit'))}
+node_path={json.dumps(shutil.which('node'))}
+package_name=@exochain/sdk
+RELEASE_VERSION=0.2.7
+run_public_npm() {{ printf '%s\\n' "$*" >> "$TEST_EVENTS"; }}
+install_public_npm_for_acceptance
+"""
+        self.succeeds(body)
+        self.assertEqual(self.events.read_text().splitlines(),["install --ignore-scripts --no-audit --no-fund --save-exact --registry=https://registry.npmjs.org"])
+
+    def test_public_tarball_exact_bytes_reject_substitution(self):
+        original = self.path / "original.tgz"; original.write_bytes(b"exact fixture bytes")
+        for fault in (None,"bytes","digest","sri","redirect"):
+            destination = self.path / str(fault); destination.mkdir()
+            body = function("verify_public_npm_tarball_bytes") + f"""
+publish_root={json.dumps(str(destination))}
+node_path={json.dumps(shutil.which('node'))}
+package_name=@exochain/sdk
+RELEASE_VERSION=0.2.7
+RELEASE_NPM_TARBALL={json.dumps(str(original))}
+RELEASE_EXPECTED_TARBALL_SHA256={'a'*64 if fault=='digest' else hashlib.sha256(original.read_bytes()).hexdigest()}
+expected_integrity=sha512-{'wrong' if fault=='sri' else base64.b64encode(hashlib.sha512(original.read_bytes()).digest()).decode()}
+fetch_public_npm_tarball() {{
+  [ "$1" = https://registry.npmjs.org/@exochain/sdk/-/sdk-0.2.7.tgz ] || return 9
+  [ "$3" = 19 ] || return 8
+  printf '%s' {'substituted' if fault=='bytes' else "'exact fixture bytes'"} > "$2"
+  printf {302 if fault=='redirect' else 200}
+}}
+verify_public_npm_tarball_bytes
+"""
+            result = self.run_shell(body)
+            self.assertEqual(result.returncode==0,fault is None,result.stderr)
+
+    def test_real_npm_bootstrap_requires_cli_mode_and_rejects_tokens(self):
+        required = SOURCE.split("\nfor required_name in ",1)[1].split("; do",1)[0].replace("\\", "").split()
+        environment = {key:"fixture" for key in required}
+        environment.update(self.env, RELEASE_OPERATION="recover-0.2.7-retained", RELEASE_NPM_MODE="retained-accept")
+        for dry in ("true","false"):
+            environment["RELEASE_WORKFLOW_DRY_RUN"] = dry
+            for profile in ("wasm","llm","sdk"):
+                result = subprocess.run(["/bin/bash","--noprofile","--norc","-p",str(PUBLISHER),profile],
+                    env=environment,capture_output=True,text=True)
+                self.assertNotEqual(result.returncode,0)
+                self.assertIn("explicit retained-accept mode",result.stderr)
+                for credential in ("NODE_AUTH_TOKEN","PYPI_API_TOKEN","ACTIONS_ID_TOKEN_REQUEST_URL"):
+                    result = subprocess.run(["/bin/bash","--noprofile","--norc","-p",str(PUBLISHER),profile,"retained-accept"],
+                        env=dict(environment,**{credential:"fixture"}),capture_output=True,text=True)
+                    self.assertNotEqual(result.returncode,0)
+                    self.assertIn("publishing credentials or OIDC",result.stderr)
 
     def test_new_packages_use_controller_identity_and_require_actor_credential(self):
         for profile in ("llm", "sdk"):

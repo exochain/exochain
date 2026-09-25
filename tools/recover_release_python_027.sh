@@ -91,8 +91,64 @@ verify_existing() {
     [[ "$(file_digest "$provenance")" = "$before" \
       && "$(file_digest "$dist_dir/$filename")" = "$artifact_before" ]] \
       || fail 'provenance or artifact changed during verification'
+    if [[ "${mode:-}" = accept ]]; then
+      public_command "$tool_python" -I -B - "$receipts/$filename.result.json" "$filename" \
+        "$artifact_before" "$before" "$publication_commit" "$publication_ref" <<'PY'
+import json,os,sys
+path,filename,digest,provenance,commit,ref=sys.argv[1:]
+fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+with os.fdopen(fd,'w') as stream:
+    json.dump({'filename':filename,'sha256':digest,'provenance_sha256':provenance,
+        'source':{'commit':commit,'ref':ref},'public_bytes_verified':True,
+        'crypto_verified':True,'exit_code':0,'mutation_attempted':False},stream,sort_keys=True)
+PY
+    fi
   done < "$list"
   [[ "$(file_digest "$list")" = "$list_before" ]] || fail 'existing inventory changed'
+}
+
+verify_public_distribution_bytes() {
+  local response="$1" filename url size digest status downloaded
+  while IFS=$'\t' read -r filename digest size; do
+    url="$(public_command "$tool_python" -I -B - "$response" "$filename" <<'PY'
+import json,re,sys
+from urllib.parse import urlsplit
+value=json.load(open(sys.argv[1])); name=sys.argv[2]
+record,=[r for r in value['urls'] if r['filename']==name]
+url=record['url']; p=urlsplit(url)
+assert p.scheme=='https' and p.netloc=='files.pythonhosted.org' and not p.query and not p.fragment
+assert re.fullmatch(r'/packages/[0-9a-f]{2}/[0-9a-f]{2}/[0-9a-f]{60}/'+re.escape(name),p.path)
+print(url)
+PY
+)" || fail 'public distribution URL is not canonical'
+    downloaded="$receipts/public-$filename"
+    [[ ! -e "$downloaded" && ! -L "$downloaded" ]] || fail 'public distribution destination already exists'
+    status="$(fetch_public "$url" "$downloaded" "$size")" || fail 'public distribution transport failed'
+    [[ "$status" = 200 ]] || fail 'public distribution is absent'
+    [[ "$(file_digest "$downloaded")" = "$digest" ]] || fail 'public distribution bytes differ'
+    public_command "$tool_python" -I -B -c 'import os,sys; assert os.stat(sys.argv[1],follow_symlinks=False).st_size==int(sys.argv[2])' \
+      "$downloaded" "$size" || fail 'public distribution size differs'
+  done < "$manifest"
+}
+
+accept_without_stage() {
+  local response="$receipts/accept.json" status
+  status="$(fetch_public https://pypi.org/pypi/exochain/0.2.7/json "$response" 1048576)" \
+    || fail 'registry transport failed'
+  [[ "$status" = 200 ]] || fail 'retained acceptance requires an existing public version'
+  python_verify registry-response "$response" exochain 0.2.7 "$manifest" \
+    || fail 'final registry inventory is incomplete or conflicting'
+  inventory_lists "$response"
+  [[ ! -s "$receipts/missing.txt" ]] || fail 'retained acceptance forbids missing publications'
+  verify_public_distribution_bytes "$response"
+  verify_existing "$receipts/existing.txt" accept false
+}
+
+readback_without_stage() {
+  # Reuse genuine public bytes/identity verification, but the distinct mode
+  # suppresses per-file and aggregate producer results in verify_existing/main.
+  [[ "$mode" = retained-readback ]] || fail 'explicit retained readback mode required'
+  accept_without_stage
 }
 
 inventory_lists() {
@@ -238,13 +294,21 @@ PY
 }
 
 main() {
-  [[ "$#" = 1 && ( "$1" = preflight || "$1" = readback ) ]] || fail 'expected preflight or readback'
+  [[ "$#" = 1 && ( "$1" = preflight || "$1" = readback || "$1" = accept || "$1" = retained-readback ) ]] || fail 'expected preflight, readback, accept or retained-readback'
   local mode="$1" credential path
+  if [[ "$mode" = accept || "$mode" = retained-readback ]]; then
+    [[ "${RELEASE_OPERATION:-}" = recover-0.2.7-retained ]] || fail 'operation and release mode differ'
+    [[ "${RELEASE_WORKFLOW_DRY_RUN:-}" = true || "${RELEASE_WORKFLOW_DRY_RUN:-}" = false ]] \
+      || fail 'explicit workflow dry-run boolean required'
+    [[ -z "${RELEASE_RECOVERY_PYTHON_PHASE:-}" ]] || fail 'retained acceptance forbids stage exemptions'
+  else
+    [[ "${RELEASE_OPERATION:-recover-0.2.7}" = recover-0.2.7 ]] || fail 'operation and release mode differ'
+  fi
   umask 077
   if /usr/bin/env | /usr/bin/grep -Eq '^BASH_FUNC_.*%%='; then
     fail 'inherited shell functions are forbidden'
   fi
-  for credential in CARGO_REGISTRY_TOKEN NPM_TOKEN NODE_AUTH_TOKEN TWINE_PASSWORD PYPI_TOKEN \
+  for credential in CARGO_REGISTRY_TOKEN NPM_TOKEN NODE_AUTH_TOKEN TWINE_PASSWORD PYPI_TOKEN PYPI_API_TOKEN \
       ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL; do
     [[ -z "${!credential:-}" ]] || fail 'publication credentials must be absent'
   done
@@ -265,6 +329,10 @@ main() {
   case "$recovery_dir/" in "$scratch/"*) ;; *) fail 'recovery artifacts are outside RUNNER_TEMP' ;; esac
   stage="$workspace/.release-recovery-python-stage"
   stage_state="$scratch/exochain-recovery-python-state.json"
+  if [[ "$mode" = accept || "$mode" = retained-readback ]]; then
+    [[ ! -e "$stage" && ! -L "$stage" && ! -e "$stage_state" && ! -L "$stage_state" ]] \
+      || fail 'retained acceptance cannot use Python stage state'
+  fi
   [[ "$mode" != preflight || ( ! -e "$stage" && ! -L "$stage" ) ]] || fail 'staging directory already exists'
   [[ "$mode" != preflight || ( ! -e "$stage_state" && ! -L "$stage_state" ) ]] || fail 'staging state already exists'
   python_path="$(/usr/bin/realpath "${RELEASE_PYTHON:?}")"
@@ -289,6 +357,7 @@ main() {
   /usr/bin/cmp "${BASH_SOURCE[0]}" "$capture/recover_release_python_027.sh" \
     || fail 'running orchestration differs from controller source'
   identity_env=("PATH=/usr/bin:/bin" "GITHUB_WORKSPACE=$workspace" "RUNNER_TEMP=$scratch"
+    "RELEASE_OPERATION=${RELEASE_OPERATION:-recover-0.2.7}"
     "GITHUB_SHA=$GITHUB_SHA" "GITHUB_REF=$GITHUB_REF" "EXPECTED_COMMIT_SHA=$GITHUB_SHA"
     "TRUSTED_RELEASE_REF=$GITHUB_SHA" "EXPECTED_TAG_COMMIT_SHA=$GITHUB_SHA"
     "EXPECTED_TAG_OBJECT_SHA=${EXPECTED_TAG_OBJECT_SHA:?}" "RELEASE_TAG=$RELEASE_TAG"
@@ -313,12 +382,33 @@ main() {
   if [[ "$mode" = preflight ]]; then
     prepare_publication
     python_phase=staged
-  else
+  elif [[ "$mode" = readback ]]; then
     accept_readback
+  elif [[ "$mode" = retained-readback ]]; then
+    readback_without_stage
+  else
+    accept_without_stage
   fi
   assert_inputs
   if [[ "$mode" = preflight ]]; then
     write_outputs
+  elif [[ "$mode" = accept ]]; then
+    public_command "$tool_python" -I -B - "$receipts" "$scratch/exochain-recovery-receipts" \
+      "$GITHUB_SHA" "$GITHUB_REF" <<'PY'
+import json,os,pathlib,sys
+receipts,root,sha,ref=sys.argv[1:]; source=pathlib.Path(receipts); parent=pathlib.Path(root)
+assert parent.is_dir() and not parent.is_symlink()
+destination=parent/'python'; destination.mkdir(mode=0o700)
+records=[json.loads((source/(name+'.result.json')).read_text()) for name in
+         ('exochain-0.2.7-py3-none-any.whl','exochain-0.2.7.tar.gz')]
+assert all(r['exit_code']==0 and r['public_bytes_verified'] is True and r['crypto_verified'] is True
+           and r['mutation_attempted'] is False for r in records)
+fd=os.open(destination/'result.json',os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+with os.fdopen(fd,'w') as stream:
+    json.dump({'schema':'exochain-python-retained-acceptance/v1','operation':'recover-0.2.7-retained',
+        'controller_commit':sha,'controller_ref':ref,'exit_code':0,'mutation_attempted':False,
+        'acceptance_verified':True,'files':records},stream,sort_keys=True)
+PY
   fi
   printf 'Python recovery %s validated; receipts: %s\n' "$mode" "$receipts"
 }

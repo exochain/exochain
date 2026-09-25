@@ -369,6 +369,8 @@ jobs:
         run: python3 -I -B tools/test_import_release_recovery_027.py --token-contract
       - name: Fixed recovery custody and workflow boundaries
         run: |
+          # Includes retained-only parsed DAG mutations, direct receipt transport,
+          # read-only preflight and the canonical no-overwrite GitHub writer.
           python3 -B tools/test_release_recovery_027.py
           python3 -B tools/test_release_recovery_workflow.py
           python3 -B tools/test_release_recovery_python_stage.py

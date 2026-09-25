@@ -29,7 +29,7 @@ name: EXOCHAIN Release
         description: "Normal release or fixed original-artifact 0.2.7 recovery"
         required: true
         type: choice
-        options: [release, recover-0.2.7]
+        options: [release, recover-0.2.7, recover-0.2.7-retained]
         default: release
       version:
         description: "Release version (e.g. 0.2.0)"
@@ -129,7 +129,7 @@ jobs:
               [[ "$GITHUB_REF" != refs/tags/v0.2.7-recover.* ]] || exit 1
               printf 'tag=v%s\n' "$version" >> "$GITHUB_OUTPUT"
               ;;
-            recover-0.2.7)
+            recover-0.2.7|recover-0.2.7-retained)
               [ "$version" = 0.2.7 ] || exit 1
               [[ "$GITHUB_REF" =~ ^refs/tags/v0\.2\.7-recover\.[1-9][0-9]*$ ]] || exit 1
               printf 'tag=%s\n' "${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
@@ -5425,6 +5425,294 @@ jobs:
           draft: false
 
   # Fixed original-artifact recovery. Product and publisher identities stay separate.
+  retained-acceptance:
+    if: ${{ needs.validate-release-inputs.outputs.operation == 'recover-0.2.7-retained' }}
+    name: "Verify Retained 0.2.7 Custody and Publications"
+    runs-on: ubuntu-24.04
+    needs: [ci, approve, approve-second, verify-signed-tag, validate-release-inputs]
+    permissions:
+      contents: read
+      actions: read
+      attestations: read
+    outputs:
+      artifact_id: ${{ steps.receipt.outputs.artifact-id }}
+      artifact_digest: ${{ steps.receipt.outputs.artifact-digest }}
+      producer_job_id: ${{ steps.acceptance.outputs.producer_job_id }}
+      receipt_members: ${{ steps.acceptance.outputs.receipt_members }}
+      receipt_context: ${{ steps.acceptance.outputs.receipt_context }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          ref: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548
+        id: setup-python
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          python-version: 3.13.7
+          cache: ""
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          node-version: 24.15.0
+          check-latest: false
+      - name: Verify Retained Custody, Publications and GitHub Inventory
+        id: acceptance
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXOCHAIN_RELEASE_SIGNING_PUBLIC_KEY_ASC: ${{ vars.EXOCHAIN_RELEASE_SIGNING_PUBLIC_KEY_ASC }}
+          EXOCHAIN_RELEASE_SIGNING_FINGERPRINT: ${{ vars.EXOCHAIN_RELEASE_SIGNING_FINGERPRINT }}
+          RELEASE_GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_PYTHON: ${{ steps.setup-python.outputs.python-path }}
+          RELEASE_TRUSTED_PYTHON_ROOT: ${{ runner.tool_cache }}/Python/3.13.7/x64
+          RELEASE_TRUSTED_NODE_ROOT: ${{ runner.tool_cache }}/node
+          RELEASE_OPERATION: ${{ needs.validate-release-inputs.outputs.operation }}
+          RELEASE_WORKFLOW_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          /usr/bin/env -i GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1 \
+            /usr/bin/git --no-replace-objects -C "$GITHUB_WORKSPACE" \
+              show "${GITHUB_SHA}:tools/run_release_recovery_027.sh" | \
+            /bin/bash --noprofile --norc -p -s -- retained-acceptance
+      - name: Upload Current Retained Acceptance Receipt
+        id: receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          name: exochain-027-retained-acceptance-receipt
+          path: |
+            ${{ steps.acceptance.outputs.receipt_directory }}/custody-receipt.json
+            ${{ steps.acceptance.outputs.receipt_directory }}/acceptance-receipt.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
+          overwrite: false
+          include-hidden-files: false
+
+  retained-github:
+    if: ${{ needs.validate-release-inputs.outputs.operation == 'recover-0.2.7-retained' && !inputs.dry_run }}
+    name: "Complete Retained 0.2.7 GitHub Release"
+    runs-on: ubuntu-24.04
+    needs: [ci, approve, approve-second, verify-signed-tag, validate-release-inputs, retained-acceptance]
+    environment: release
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          ref: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548
+        id: setup-python
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          python-version: 3.13.7
+          cache: ""
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          node-version: 24.15.0
+          check-latest: false
+      - name: Recheck Current Acceptance and Complete Exact GitHub Assets
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXOCHAIN_RELEASE_SIGNING_PUBLIC_KEY_ASC: ${{ vars.EXOCHAIN_RELEASE_SIGNING_PUBLIC_KEY_ASC }}
+          EXOCHAIN_RELEASE_SIGNING_FINGERPRINT: ${{ vars.EXOCHAIN_RELEASE_SIGNING_FINGERPRINT }}
+          RELEASE_GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_PYTHON: ${{ steps.setup-python.outputs.python-path }}
+          RELEASE_TRUSTED_PYTHON_ROOT: ${{ runner.tool_cache }}/Python/3.13.7/x64
+          RELEASE_TRUSTED_NODE_ROOT: ${{ runner.tool_cache }}/node
+          RELEASE_OPERATION: ${{ needs.validate-release-inputs.outputs.operation }}
+          RELEASE_WORKFLOW_DRY_RUN: ${{ inputs.dry_run }}
+          RELEASE_RECEIPT_ARTIFACT_ID: ${{ needs.retained-acceptance.outputs.artifact_id }}
+          RELEASE_RECEIPT_ARTIFACT_DIGEST: ${{ needs.retained-acceptance.outputs.artifact_digest }}
+          RELEASE_RECEIPT_PRODUCER_JOB_ID: ${{ needs.retained-acceptance.outputs.producer_job_id }}
+          RELEASE_RECEIPT_RECEIPT_MEMBERS: ${{ needs.retained-acceptance.outputs.receipt_members }}
+          RELEASE_RECEIPT_RECEIPT_CONTEXT: ${{ needs.retained-acceptance.outputs.receipt_context }}
+        run: |
+          set -euo pipefail
+          /usr/bin/env -i GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1 \
+            /usr/bin/git --no-replace-objects -C "$GITHUB_WORKSPACE" \
+              show "${GITHUB_SHA}:tools/run_release_recovery_027.sh" | \
+            /bin/bash --noprofile --norc -p -s -- retained-github
+      - name: Preserve Retained GitHub Mutation Journal
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          name: exochain-027-retained-github-receipts
+          path: |
+            ${{ runner.temp }}/exochain-retained-github.*/mutation-journal.jsonl
+            ${{ runner.temp }}/exochain-retained-github.*/evidence/release-result.json
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 6
+          overwrite: false
+          include-hidden-files: false
+
   recovery-import:
     if: ${{ needs.validate-release-inputs.outputs.operation == 'recover-0.2.7' }}
     name: "Verify Original 0.2.7 Artifact Custody"

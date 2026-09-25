@@ -17,9 +17,12 @@ if /usr/bin/env | /usr/bin/grep -Eq '^BASH_FUNC_.*%%='; then
   fail "inherited shell functions are forbidden"
 fi
 for credential_name in CARGO_REGISTRY_TOKEN NPM_TOKEN NODE_AUTH_TOKEN \
-    TWINE_PASSWORD PYPI_TOKEN ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL; do
+    TWINE_PASSWORD PYPI_TOKEN PYPI_API_TOKEN ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL; do
   [ -z "${!credential_name:-}" ] || fail "publication credentials and OIDC must be absent during helper capture"
 done
+if [ "${RELEASE_OPERATION:-}" = recover-0.2.7-retained ]; then
+  [ -z "${RELEASE_RECOVERY_PYTHON_PHASE:-}" ] || fail 'retained acceptance forbids stage exemptions'
+fi
 
 controller_sha="${GITHUB_SHA:-}"
 controller_tag="${RELEASE_TAG:-}"
@@ -150,13 +153,39 @@ original_commit="$(trusted_git rev-parse --verify 'refs/tags/v0.2.7^{commit}')"
   --local-tag-object "$original_object" --local-peeled-commit "$original_commit" \
   --remote-refs "$capture/original-remote-refs.txt" >/dev/null
 
+retaining_verified=false
+if [ "${RELEASE_OPERATION:-}" = recover-0.2.7-retained ]; then
+  trusted_git show "$controller_sha:governance/releases/v0.2.7/RETAINED-CUSTODY.json" > "$capture/RETAINED-CUSTODY.json"
+  /bin/chmod 400 "$capture/RETAINED-CUSTODY.json"
+  /usr/bin/env -i "$python_path" -I -B "$capture/verify_release_recovery_027.py" retained-record \
+    --manifest "$capture/RECOVERY-MANIFEST.json" --record "$capture/RETAINED-CUSTODY.json" >/dev/null
+  [ "$(trusted_git rev-parse --verify refs/tags/v0.2.7-recover.2)" = cab642330dfc34099cddbe3721b376e26a67c722 ] \
+    && [ "$(trusted_git rev-parse --verify 'refs/tags/v0.2.7-recover.2^{commit}')" = 2198e4ef610e9ef6d04adf726f7f4b3e156a3bc1 ] \
+    || fail 'retaining tag local identity differs'
+  /usr/bin/env -i "${identity_env[@]}" RELEASE_TAG=v0.2.7-recover.2 \
+    /bin/bash --noprofile --norc -p "$capture/verify_release_tag_signer.sh" >&2
+  /usr/bin/env -i PATH=/usr/bin:/bin GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+    GIT_NO_REPLACE_OBJECTS=1 GIT_TERMINAL_PROMPT=0 /usr/bin/git -C "$capture" \
+    ls-remote https://github.com/exochain/exochain.git refs/tags/v0.2.7-recover.2 \
+    'refs/tags/v0.2.7-recover.2^{}' > "$capture/retaining-remote-refs.txt"
+  /usr/bin/env -i "$python_path" -I -B -c '
+import pathlib,sys
+rows=[line.split() for line in pathlib.Path(sys.argv[1]).read_text().splitlines()]
+assert len(rows)==2 and dict((ref,sha) for sha,ref in rows)=={
+"refs/tags/v0.2.7-recover.2":"cab642330dfc34099cddbe3721b376e26a67c722",
+"refs/tags/v0.2.7-recover.2^{}":"2198e4ef610e9ef6d04adf726f7f4b3e156a3bc1"}
+' "$capture/retaining-remote-refs.txt"
+  retaining_verified=true
+fi
+
 /usr/bin/env -i "$python_path" -I -B -c '
 import json,sys
-sha,ref,capture=sys.argv[1:]
+sha,ref,capture,retaining=sys.argv[1:]
 print(json.dumps({"controller_sha":sha,"controller_ref":ref,
     "product_commit":"666c578f719d1e54fce95d6831a3af92ea80df93",
     "product_tag_object":"be47589ec7dbefe821ada35ed0a89dedc9751953",
     "controller_signature_verified":True,"product_signature_verified":True,
+    "retaining_signature_verified":retaining=="true",
     "captured_directory":capture,"helper":capture+"/verify_release_recovery_027.py",
     "manifest":capture+"/RECOVERY-MANIFEST.json"},sort_keys=True,separators=(",",":")))
-' "$controller_sha" "$GITHUB_REF" "$capture"
+' "$controller_sha" "$GITHUB_REF" "$capture" "$retaining_verified"

@@ -7,9 +7,32 @@ fail() { printf 'release recovery runner failed: %s\n' "$1" >&2; exit 1; }
 [ "$#" -eq 1 ] || fail 'exactly one fixed operation is required'
 operation="$1"
 case "$operation" in
+  retained-acceptance|retained-github)
+    [ "${RELEASE_OPERATION:-}" = recover-0.2.7-retained ] || fail 'operation and release mode differ'
+    for credential in NODE_AUTH_TOKEN NPM_TOKEN CARGO_REGISTRY_TOKEN TWINE_PASSWORD PYPI_TOKEN PYPI_API_TOKEN \
+        ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL; do
+      [ -z "${!credential:-}" ] || fail 'retained acceptance forbids publication credentials and OIDC'
+    done
+    [[ "${RELEASE_WORKFLOW_DRY_RUN:-}" = true || "${RELEASE_WORKFLOW_DRY_RUN:-}" = false ]] \
+      || fail 'explicit workflow dry-run boolean required'
+    [ -z "${RELEASE_RECOVERY_PYTHON_PHASE:-}" ] || fail 'retained acceptance forbids stage exemptions'
+    if [ "$operation" = retained-github ]; then
+      [ "$RELEASE_WORKFLOW_DRY_RUN" = false ] && [ "${GITHUB_JOB:-}" = retained-github ] \
+        || fail 'live current receipt handoff required'
+      for output in ARTIFACT_ID ARTIFACT_DIGEST PRODUCER_JOB_ID RECEIPT_MEMBERS RECEIPT_CONTEXT; do
+        name="RELEASE_RECEIPT_$output"
+        [ -n "${!name:-}" ] || fail 'live current receipt handoff required'
+      done
+    fi
+    ;;
   import|npm-wasm|npm-llm|npm-sdk|python-preflight|python-readback|github) ;;
   *) fail 'unknown fixed recovery operation' ;;
 esac
+if [[ "$operation" != retained-acceptance && "$operation" != retained-github ]]; then
+  [ "${RELEASE_OPERATION:-recover-0.2.7}" = recover-0.2.7 ] \
+    && [ -z "${RELEASE_WORKFLOW_DRY_RUN+x}" ] || fail 'operation and release mode differ'
+fi
+release_operation="${RELEASE_OPERATION:-recover-0.2.7}"
 if /usr/bin/env | /usr/bin/grep -Eq '^BASH_FUNC_.*%%='; then
   fail 'inherited shell functions are forbidden'
 fi
@@ -38,7 +61,7 @@ case "$operation" in
   *) [ -z "${NODE_AUTH_TOKEN:-}" ] && [ -z "${NPM_TOKEN:-}" ] \
        || fail 'npm publishing credentials forbidden for this operation' ;;
 esac
-[ -z "${CARGO_REGISTRY_TOKEN:-}" ] && [ -z "${PYPI_TOKEN:-}" ] && [ -z "${TWINE_PASSWORD:-}" ] \
+[ -z "${CARGO_REGISTRY_TOKEN:-}" ] && [ -z "${PYPI_TOKEN:-}" ] && [ -z "${PYPI_API_TOKEN:-}" ] && [ -z "${TWINE_PASSWORD:-}" ] \
   || fail 'unneeded publishing credentials are forbidden'
 
 capture="$(/usr/bin/mktemp -d "$RUNNER_TEMP/exochain-recovery-runner.XXXXXX")"
@@ -69,13 +92,22 @@ common=(
   "RUNNER_ENVIRONMENT=${RUNNER_ENVIRONMENT:-}" "RUNNER_TEMP=$RUNNER_TEMP"
   "EXPECTED_COMMIT_SHA=$EXPECTED_COMMIT_SHA" "TRUSTED_RELEASE_REF=$TRUSTED_RELEASE_REF"
   "EXPECTED_TAG_OBJECT_SHA=$EXPECTED_TAG_OBJECT_SHA" "EXPECTED_TAG_COMMIT_SHA=$EXPECTED_TAG_COMMIT_SHA"
-  "RELEASE_TAG=$RELEASE_TAG" "RELEASE_VERSION=0.2.7" "RELEASE_OPERATION=recover-0.2.7"
+  "RELEASE_TAG=$RELEASE_TAG" "RELEASE_VERSION=0.2.7" "RELEASE_OPERATION=$release_operation"
   "RELEASE_GITHUB_TOKEN=${RELEASE_GITHUB_TOKEN:-}" "GNUPGHOME=$key_home"
   "EXOCHAIN_RELEASE_SIGNING_FINGERPRINT=$EXOCHAIN_RELEASE_SIGNING_FINGERPRINT"
   "RELEASE_PYTHON=$RELEASE_PYTHON" "RELEASE_TRUSTED_PYTHON_ROOT=$RELEASE_TRUSTED_PYTHON_ROOT"
   "RELEASE_TRUSTED_PYTHON_VERSION=3.13.7" "RELEASE_TEMP_ROOT=$RUNNER_TEMP"
   "RELEASE_RECOVERY_DIRECTORY=$RUNNER_TEMP/exochain-recovery-artifacts" "DRY_RUN=false"
 )
+if [[ "$operation" = retained-acceptance || "$operation" = retained-github ]]; then
+  common+=("RELEASE_WORKFLOW_DRY_RUN=$RELEASE_WORKFLOW_DRY_RUN" "GITHUB_JOB=${GITHUB_JOB:-}")
+fi
+if [ "$operation" = retained-github ]; then
+  for output in ARTIFACT_ID ARTIFACT_DIGEST PRODUCER_JOB_ID RECEIPT_MEMBERS RECEIPT_CONTEXT; do
+    name="RELEASE_RECEIPT_$output"
+    common+=("$name=${!name}")
+  done
+fi
 if [ "$operation" = python-readback ]; then
   common+=("RELEASE_RECOVERY_PYTHON_PHASE=readback")
 fi
@@ -83,7 +115,7 @@ fi
   "$capture/verify_release_recovery_027.sh" > "$capture/identity.json"
 
 case "$operation" in
-  import|npm-*)
+  import|retained-acceptance|retained-github|npm-*)
     capture_helper resolve_release_tool_path.sh
     [ -n "${RELEASE_TRUSTED_NODE_ROOT:-}" ] || fail 'trusted Node root missing'
     node_env=("RUNNER_TEMP=$RUNNER_TEMP" "RELEASE_TRUSTED_NODE_ROOT=$RELEASE_TRUSTED_NODE_ROOT" "RELEASE_TRUSTED_NODE_VERSION=24.15.0")
@@ -97,9 +129,13 @@ case "$operation" in
     ;;
 esac
 case "$operation" in
-  import)
+  import|retained-acceptance)
     capture_helper import_release_recovery_027.sh
-    /usr/bin/env -i "${common[@]}" /bin/bash --noprofile --norc -p "$capture/import_release_recovery_027.sh"
+    if [ "$operation" = retained-acceptance ]; then
+      /usr/bin/env -i "${common[@]}" /bin/bash --noprofile --norc -p "$capture/import_release_recovery_027.sh" retained-acceptance
+    else
+      /usr/bin/env -i "${common[@]}" /bin/bash --noprofile --norc -p "$capture/import_release_recovery_027.sh"
+    fi
     ;;
   npm-*)
     profile="${operation#npm-}"
@@ -124,5 +160,9 @@ case "$operation" in
   github)
     capture_helper recover_github_release_027.py
     /usr/bin/env -i "${common[@]}" "$RELEASE_PYTHON" -I -B "$capture/recover_github_release_027.py"
+    ;;
+  retained-github)
+    capture_helper recover_github_release_027.py
+    /usr/bin/env -i "${common[@]}" "$RELEASE_PYTHON" -I -B "$capture/recover_github_release_027.py" retained-github
     ;;
 esac

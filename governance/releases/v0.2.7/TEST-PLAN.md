@@ -11,7 +11,9 @@ PR #836; live run 35131939792 failed Gate 9 before publication and was canceled.
 The original security-remediation scope and issue dispositions remain in
 `governance/releases/v0.2.6/`; their historical evidence is not rewritten.
 0.2.7 inherits that remediation, fixes the publication-truth assertion and
-aligns all release package versions. It is not yet a published release.
+aligns all release package versions. At this September 16 correction checkpoint,
+it was not yet a published release; later package publication and recovery
+events are recorded in `RECOVERY-VALIDATION.md`.
 
 - `tools/` publication validators/tests and their CI integration: EXOCHAIN core.
 - Cargo manifests, first-party lock entries and Rust SDK version: EXOCHAIN core.
@@ -100,7 +102,12 @@ Acceptance commands:
   tests, all-target Clippy, format and warning-denied documentation locally;
   require fresh exact-head hosted CI before integration.
 
-## Integration and release acceptance
+## Historical September 16 integration and release acceptance plan
+
+The following paragraph records the original product-correction sequence as
+written before `v0.2.7` and subsequent maintenance tags existed. It is retained
+for chronology, not as current instructions to recreate a product tag or
+republish packages.
 
 Run the inherited required workspace build, debug/release tests, Clippy,
 nightly format, warning-denied rustdoc, audit/deny, repository guards, SDK tests
@@ -119,3 +126,26 @@ claiming completion. Issue #822's 31 published 0.2.3 retirement targets remain
 in scope and require protected execution plus individual yanked readback.
 
 No deployment is claimed without an identified target and runtime verification.
+
+## Current September 24 retained acceptance contract
+
+The product tag and existing maintenance tags are immutable. Subsequent
+recovery established separate public records for all 32 Rust versions and the
+five npm/Python package files; the exact historical publisher source/ref for
+each file is pinned in `PUBLICATION-IDENTITIES.json`. The original recovery
+mode still rejects expired original artifacts. Bob approved a separate
+`recover-0.2.7-retained` mode specified in `RETAINED-RECOVERY-PLAN.md`, with
+implementation and task-specific reviews through signed
+`e2c138a6c5d9d947240ecd363aa1ab87adcb5e41`. It requires the fixed
+retained transport/custody pair, historical pre-expiry import proof, current
+matching metadata, all 40 original payload hashes, fresh native/public package
+cryptographic checks and current-run receipts. Both dry and live run complete
+read-only package acceptance; only live may reach the protected, journaled
+35-asset GitHub Release completion path.
+
+The exact final-candidate suite, whole-branch review, two final-head maintainer
+approvals, hosted CI, new unused signed maintenance tag, protected dry result,
+separate live authorization, provider/asset readback and issue 822 retirement
+must be evidenced separately. Local fixtures and historical provider readbacks
+do not establish those outcomes. No new product-tag creation or package
+publication is part of the retained path.

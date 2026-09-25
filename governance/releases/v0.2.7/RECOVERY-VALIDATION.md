@@ -300,3 +300,43 @@ remaining two npm packages, Python distributions and GitHub Release are not
 claimed complete. Issue 822 retirement remains separately scoped to its
 reviewed controller and exact replacement/yank readbacks. No runtime deployment
 or executable-native-archive claim is made.
+
+## September 24 retained-custody source and evidence boundary
+
+The original recovery's nonexpiry requirement remained intact when original
+WASM artifact `10518086890` became `expired:true`. The approved retained mode
+requires proof of the pinned successful pre-expiry import, a fresh read of
+matching original metadata, and both retained artifacts to be nonexpired at
+execution. The
+147126946-byte transport is an extracted 40-file payload tree; it does not
+restore or freshly verify the original artifact ZIP envelopes. The 60-file
+custody archive is historical evidence. These are separate from current
+public-package and native cryptographic acceptance.
+
+Task-specific independent reviews approved the retained record/transport,
+read-only acceptance, and protected workflow/GitHub writer packages through
+signed `e2c138a6c5d9d947240ecd363aa1ab87adcb5e41`. Task 1's explicit
+actual-evidence run completed 33 tests without skips; portable fixture runs
+alone can skip three external-evidence checks. Main's later captured-input
+Task 3 custody run completed 34 tests without skips. Those snapshots and
+fixtures are local evidence, not current hosted custody or receipt proof.
+
+Separate credential-free local records under
+`.superpowers/sdd/RETAINED-RECOVERY-PLAN/` document actual legacy/current
+npm runtime contracts, two fresh native cryptographic checks, genuine public
+checks for three npm and two Python files, and all 32 exact nonyanked Rust
+versions. The public crypto record reports 49 successful commands. These
+read-only checks do not establish a current protected producer, direct upload
+receipt handoff, exact-head hosted CI, or GitHub Release completion. Final
+source-run outcomes are to be recorded in the dated immutable-head
+`validation-status.json`, raw logs, release ledger and eventual implementation
+PR. The prepared 84-command inventory (nine core, ten Python, 65 CI-derived
+shell commands) is a plan count by itself; its
+cross-implementation command covers one Rust/Node hash vector and two
+normalized Rust repeatability runs, not external TypeScript conformance.
+
+PR841 approvals were postmerge; PR842's two approvals and 74 checks preceded
+its normal 21:03:20 UTC integration. Neither chronology substitutes for two
+actual final implementation-head maintainer approvals. The remaining protected
+dry and separately approved live executions, 35-asset provider readback and
+issue 822 retirement have not been established by this local source record.

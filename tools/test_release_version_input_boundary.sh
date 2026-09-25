@@ -96,7 +96,7 @@ for job in \
   install-cargo-cyclonedx generate-sbom validate-sbom attest-release \
   preflight-crates reproduce-crates publish install-wasm-pack build-wasm-npm \
   prepare-wasm-npm test-llm-proxy-npm prepare-llm-proxy-npm \
-  publish-wasm-npm publish-llm-proxy-npm github-release; do
+  publish-wasm-npm publish-llm-proxy-npm github-release retained-acceptance retained-github; do
   block=$(job_block "$job")
   [[ -n "$block" ]] || fail "job $job is missing"
   grep -F 'validate-release-inputs' <<<"$block" >/dev/null \
