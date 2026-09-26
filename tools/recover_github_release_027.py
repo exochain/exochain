@@ -263,7 +263,7 @@ def release_metadata(manifest, publications, sha, ref):
     return receipt, {"tag_name": "v0.2.7", "target_commitish": PRODUCT_SHA, "name": "EXOCHAIN v0.2.7", "body": body}
 
 
-def retained_release_metadata(manifest, publications, record, sha, ref):
+def retained_release_metadata(manifest, publications, record, sha, ref, *, policy=None):
     """Stable public custody; execution observations belong only in run evidence."""
     receipt, expected = release_metadata(manifest, publications, sha, ref)
     receipt['schema'] = 'exochain-release-retained-custody/v1'
@@ -280,6 +280,23 @@ def retained_release_metadata(manifest, publications, record, sha, ref):
         'RECOVERY-CUSTODY.json distinguishes original production, historical retention, prior package publication and this acceptance controller. '
         'The release contains exactly 34 original native/SBOM assets and the custody receipt. '
         'Current run/attempt, observations and acceptance receipts remain separate Actions evidence.\n')
+    if policy is not None:
+        # The canonical validator pins the semantic policy; no provider or
+        # per-run observation enters this stable public asset.
+        checker = Path(__file__).with_name('verify_release_recovery_027.py')
+        spec = importlib.util.spec_from_file_location('retained_public_policy_validator', checker)
+        validator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(validator)
+        validator.validate_retained_metadata_policy(manifest, record, policy)
+        disclosure = ('Selected original artifact metadata may be unavailable after its recorded expiry. '
+            'Historical identity is authenticated from retained custody; it is not a claim of current metadata '
+            'visibility or proof of deletion.')
+        receipt['schema'] = 'exochain-release-retained-custody/v2'
+        receipt['metadata_policy_sha256'] = validator.RETAINED_METADATA_POLICY_SHA256
+        receipt['unavailable_originals'] = policy['unavailable_originals']
+        receipt['original_metadata_disclosure'] = disclosure
+        expected['body'] += ('\nMetadata policy SHA-256: `' + validator.RETAINED_METADATA_POLICY_SHA256 + '`. '
+                             + disclosure + '\n')
     return receipt, expected
 
 

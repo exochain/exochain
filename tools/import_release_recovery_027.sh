@@ -7,7 +7,8 @@ set -euo pipefail
 umask 077
 fail() { printf 'release recovery import failed: %s\n' "$1" >&2; exit 1; }
 if [ "$#" -eq 1 ] && [ "$1" = retained-acceptance ]; then
-  [ "${RELEASE_OPERATION:-}" = recover-0.2.7-retained ] || fail 'operation and release mode differ'
+  [[ "${RELEASE_OPERATION:-}" = recover-0.2.7-retained || "${RELEASE_OPERATION:-}" = recover-0.2.7-retained-404 ]] \
+    || fail 'operation and release mode differ'
   [[ "${RELEASE_WORKFLOW_DRY_RUN:-}" = true || "${RELEASE_WORKFLOW_DRY_RUN:-}" = false ]] \
     || fail 'explicit workflow dry-run boolean required'
 else
@@ -56,7 +57,7 @@ for helper in verify_release_recovery_027.sh verify_release_recovery_027.py \
 done
 trusted_git show "$GITHUB_SHA:governance/releases/v0.2.7/RECOVERY-MANIFEST.json" > "$capture/RECOVERY-MANIFEST.json"
 /bin/chmod 400 "$capture/RECOVERY-MANIFEST.json"
-if [ "$RELEASE_OPERATION" = recover-0.2.7-retained ]; then
+if [[ "$RELEASE_OPERATION" = recover-0.2.7-retained || "$RELEASE_OPERATION" = recover-0.2.7-retained-404 ]]; then
   for helper in import_release_recovery_027.sh publish_release_npm_package.sh recover_release_python_027.sh recover_github_release_027.py; do
     trusted_git show "$GITHUB_SHA:tools/$helper" > "$capture/$helper"
     /bin/chmod 400 "$capture/$helper"
@@ -67,6 +68,10 @@ if [ "$RELEASE_OPERATION" = recover-0.2.7-retained ]; then
     trusted_git show "$GITHUB_SHA:governance/releases/v0.2.7/$record.json" > "$capture/$record.json"
     /bin/chmod 400 "$capture/$record.json"
   done
+  if [ "$RELEASE_OPERATION" = recover-0.2.7-retained-404 ]; then
+    trusted_git show "$GITHUB_SHA:governance/releases/v0.2.7/RETAINED-METADATA-POLICY.json" > "$capture/RETAINED-METADATA-POLICY.json"
+    /bin/chmod 400 "$capture/RETAINED-METADATA-POLICY.json"
+  fi
   trusted_git show '2198e4ef610e9ef6d04adf726f7f4b3e156a3bc1:.github/workflows/release.yml' > "$capture/retaining-workflow.yml"
   /bin/chmod 400 "$capture/retaining-workflow.yml"
 fi
@@ -141,7 +146,7 @@ class Transport:
     A validated storage Location is fetched in a separate credential-free
     process. Signed storage URLs and authorization values are never receipts.
     """
-    def __init__(self, scratch, token, manifest, retained=None):
+    def __init__(self, scratch, token, manifest, retained=None, *, policy=None):
         # Opaque Bearer transport syntax (RFC 6750 section 2.1), not a
         # GitHub token-prefix/length assumption. This alphabet cannot break
         # the quoted curl config below: no quotes, backslashes or whitespace.
@@ -150,6 +155,11 @@ class Transport:
         self.scratch, self.token = Path(scratch), token
         self.endpoints = fixed_endpoints(manifest)
         self.retained = retained
+        self.policy = policy
+        self.manifest = manifest
+        if policy is not None:
+            require(retained is not None and policy.get("operation") == "recover-0.2.7-retained-404",
+                    "original observation policy is not selected")
         self.retained_storage = set()
         if retained is not None:
             metadata = [retained[kind]["metadata"] for kind in ("payload", "custody")]
@@ -165,7 +175,7 @@ class Transport:
         if retained is not None:
             self.authenticated.update([self.endpoints["retaining_run"], *self.endpoints["retaining_jobs"]])
 
-    def _get(self, url, destination, limit, authenticated):
+    def _get(self, url, destination, limit, authenticated, *, allow_original_404=False):
         retained_payload = (self.retained is not None and limit == self.retained["payload"]["metadata"]["size_in_bytes"]
                             and (url == self.retained["payload"]["metadata"]["archive_download_url"]
                                  or (not authenticated and url in self.retained_storage)))
@@ -183,25 +193,92 @@ class Transport:
                 "--proto", "=https", "--tlsv1.2", "--connect-timeout", "10", "--max-time", "240",
                 "--max-filesize", str(limit), "--output", str(destination), "--dump-header", str(header_path),
                 "--write-out", "%{http_code}", "--config", "-", url]
+        succeeded = False
         try:
-            result = subprocess.run(argv, input=config.encode(), capture_output=True, env=BASE_ENV, timeout=250, check=False)
+            try:
+                result = subprocess.run(argv, input=config.encode(), capture_output=True, env=BASE_ENV, timeout=250, check=False)
+            except (OSError, subprocess.SubprocessError) as error:
+                raise ImportFailure("bounded provider GET failed") from error
             # Do not propagate curl diagnostics: a URL may contain a storage SAS.
             require(result.returncode == 0, "bounded provider GET failed")
-            require(result.stdout in (b"200", b"302"), "unexpected provider HTTP status")
+            require(result.stdout in ((b"200", b"302", b"404") if allow_original_404 else (b"200", b"302")),
+                    "unexpected provider HTTP status")
             require(destination.is_file() and not destination.is_symlink() and destination.stat().st_size <= limit,
                     "provider response exceeded its bound")
             require(header_path.stat().st_size <= 65536, "provider response headers exceeded their bound")
-            headers = header_path.read_bytes().decode("latin-1")
+            raw_headers = header_path.read_bytes()
+            require(raw_headers.endswith(b"\r\n\r\n"), "provider final HTTP headers malformed")
+            blocks = raw_headers[:-4].split(b"\r\n\r\n")
+            codes = []
+            for block in blocks:
+                lines = block.split(b"\r\n")
+                match = re.fullmatch(rb"HTTP/(?:1\.[01]|2|3) ([1-5][0-9]{2})(?: [\x20-\x7e]*)?", lines[0])
+                require(match is not None and all(re.fullmatch(rb"[\x20-\x7e]*", line) is not None for line in lines[1:]),
+                        "provider HTTP header block malformed")
+                codes.append(int(match.group(1)))
+            require(len(codes) >= 1 and all(code in (100, 103) for code in codes[:-1]) and
+                    codes[-1] == int(result.stdout), "provider final HTTP status differs from curl status")
+            headers = blocks[-1].decode("latin-1")
             locations = [line.split(":", 1)[1].strip() for line in headers.splitlines() if line.lower().startswith("location:")]
             require(len(locations) <= 1, "duplicate provider redirect")
+            succeeded = True
             return int(result.stdout), locations
         finally:
             header_path.unlink(missing_ok=True)
+            if not succeeded:
+                destination.unlink(missing_ok=True)
 
     def get(self, url, destination, limit):
         require(url in self.authenticated or url in self.public, "endpoint is outside fixed read-only inventory")
         status, locations = self._get(url, destination, limit, url in self.authenticated)
         require(status == 200 and not locations, "metadata and registry redirects are forbidden")
+
+    def original_metadata(self, artifact_id: int, destination: Path) -> dict:
+        require(self.policy is not None and type(artifact_id) is int,
+                "original observation requires selected policy and numeric ID")
+        originals = {item["id"] for item in self.manifest["artifacts"] + self.manifest["rust_preparation"]}
+        require(artifact_id in originals, "original observation ID is outside fixed inventory")
+        selected = {item["id"]: item for item in self.policy["unavailable_originals"]}.get(artifact_id)
+        url = API + f"/artifacts/{artifact_id}"
+        require(url in self.authenticated, "original observation endpoint is outside fixed inventory")
+        started = utc_now()
+        status, locations = self._get(url, destination, JSON_LIMIT, True, allow_original_404=True)
+        finished = utc_now()
+        if locations or status not in (200, 404) or (status == 404 and selected is None):
+            Path(destination).unlink(missing_ok=True)
+        require(not locations, "original metadata redirects are forbidden")
+        require(status == 200 or (status == 404 and selected is not None),
+                "unselected original metadata is unavailable")
+        member = f"artifact-metadata/{artifact_id}.json"
+        hashes = {item["path"]: item["sha256"] for item in self.retained["custody"]["files"]}
+        require(member in hashes, "original historical member is absent")
+        observation = {"id": artifact_id, "endpoint_role": "original-artifact-metadata",
+                       "request_started_at": started, "request_finished_at": finished,
+                       "status": status, "variant": "present" if status == 200 else "unavailable_404",
+                       "historical_member": member, "historical_sha256": hashes[member]}
+        if status == 404:
+            Path(destination).unlink(missing_ok=True)
+            require(datetime.fromisoformat(started.replace("Z", "+00:00")) >=
+                    datetime.fromisoformat(selected["expires_at"].replace("Z", "+00:00")),
+                    "original metadata 404 precedes selected expiry")
+        else:
+            raw = Path(destination).read_bytes()
+            require(len(raw) <= JSON_LIMIT, "original metadata response exceeded bound")
+            def unique(pairs):
+                value = {}
+                for key, item in pairs:
+                    require(key not in value, "original metadata has duplicate keys")
+                    value[key] = item
+                return value
+            try:
+                observation["metadata"] = json.loads(raw, object_pairs_hook=unique)
+            except (UnicodeError, ValueError, TypeError) as error:
+                Path(destination).unlink(missing_ok=True)
+                raise ImportFailure("original metadata is malformed JSON") from error
+            if type(observation["metadata"]) is not dict:
+                Path(destination).unlink(missing_ok=True)
+            require(type(observation["metadata"]) is dict, "original metadata is not an object")
+        return observation
 
     def archive(self, artifact, destination):
         fixed = dict(self.endpoints["archives"])
@@ -301,12 +378,127 @@ def utc_now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def acquire_retained(manifest, record, custody, transport, evidence, archives, candidate, workflow):
+def capture_observer(custody, transport, capture: Path, evidence: Path, role: str) -> dict:
+    require(role in ("retained-acceptance", "retained-github") and os.environ.get("GITHUB_JOB") == role,
+            "actual retained observer role differs")
+    run_text, attempt_text = os.environ.get("GITHUB_RUN_ID", ""), os.environ.get("GITHUB_RUN_ATTEMPT", "")
+    require(re.fullmatch(r"[1-9][0-9]*", run_text) is not None and
+            re.fullmatch(r"[1-9][0-9]*", attempt_text) is not None, "actual observer run and attempt required")
+    run_id, attempt = int(run_text), int(attempt_text)
+    sha, ref = os.environ["GITHUB_SHA"], os.environ["GITHUB_REF"]
+    run_url = API + f"/runs/{run_id}/attempts/{attempt}"
+    endpoints = {"run":run_url,"jobs":[run_url + f"/jobs?per_page=100&page={page}" for page in range(1,11)]}
+    transport.authenticated.update([run_url,*endpoints["jobs"]])
+    run, response = fetch_run_jobs(custody, transport, evidence / "observer-current", endpoints, None)
+    custody.validate_run_identity(run, run_id, attempt, sha, ref.removeprefix("refs/tags/"), completed=False)
+    jobs = custody.complete_jobs(response, run_id, attempt, sha, ref.removeprefix("refs/tags/"))
+    name = custody.RECEIPT_JOB if role == "retained-acceptance" else custody.RECEIPT_WRITER_JOB
+    matches = [job for job in jobs.values() if job.get("name") == name]
+    require(len(matches) == 1 and matches[0].get("status") == "in_progress" and matches[0].get("conclusion") is None
+            and matches[0].get("completed_at") is None,
+            "actual retained observer job is not uniquely running")
+    job = matches[0]
+    observer = {"run_id":run_id,"run_attempt":attempt,"controller_sha":sha,"controller_ref":ref,
+                "controller_tag_object":os.environ["EXPECTED_TAG_OBJECT_SHA"],"job_id":job["id"],
+                "job_name":name,"job_started_at":job["started_at"]}
+    custody.timestamp(observer["job_started_at"], "actual observer job start")
+    dump(evidence / "observer.json", observer)
+    return observer
+
+
+def fetch_retained_controls(manifest, record, custody, transport, evidence: Path, *, phase: str) -> dict:
+    require(phase in ("acquisition-start", "acquisition-end", "producer-final", "writer-final", "writer-readback"),
+            "invalid retained control phase")
+    directory = evidence / (phase + "-controls")
+    directory.mkdir(mode=0o700)
+    original_run, original_jobs = fetch_run_jobs(custody, transport, directory / "original",
+        {"run":transport.endpoints["run"], "jobs":transport.endpoints["jobs"]}, manifest["origin"]["jobs_total"])
+    retaining_run, retaining_jobs = fetch_run_jobs(custody, transport, directory / "retaining",
+        {"run":transport.endpoints["retaining_run"], "jobs":transport.endpoints["retaining_jobs"]},
+        record["retaining"]["jobs_total"])
+    retained = []
+    for kind in ("payload", "custody"):
+        pinned = record[kind]["metadata"]
+        path = directory / (kind + "-metadata.json")
+        transport.get(pinned["url"], path, JSON_LIMIT)
+        retained.append(custody.load_json(path, "fresh retained metadata"))
+    controls = {"original_run":original_run,"original_jobs":original_jobs,
+                "retaining_run":retaining_run,"retaining_jobs":retaining_jobs,
+                "retained_metadata":retained,"observed_at":utc_now()}
+    custody.validate_run_identity(original_run, custody.RUN_ID, 1, custody.PRODUCT_COMMIT, "v0.2.7")
+    custody.exact(len(custody.complete_jobs(original_jobs, custody.RUN_ID, 1,
+        custody.PRODUCT_COMMIT, "v0.2.7")), manifest["origin"]["jobs_total"], "fresh original jobs")
+    custody.validate_run_identity(retaining_run, custody.RETAINED_RUN_ID, 1, custody.RETAINED_COMMIT,
+                                  "v0.2.7-recover.2")
+    custody.exact(len(custody.complete_jobs(retaining_jobs, custody.RETAINED_RUN_ID, 1,
+        custody.RETAINED_COMMIT, "v0.2.7-recover.2")), record["retaining"]["jobs_total"], "fresh retaining jobs")
+    observed = custody.timestamp(controls["observed_at"], "retained control observation")
+    for actual, kind in zip(retained, ("payload", "custody")):
+        pinned = record[kind]["metadata"]
+        custody.exact(custody.semantic_digest(actual), custody.semantic_digest(pinned), "fresh retained " + kind)
+        require(actual == pinned and actual.get("expired") is False and
+                custody.timestamp(actual["created_at"], "retained creation") <= observed <
+                custody.timestamp(actual["expires_at"], "retained expiry"),
+                "fresh retained artifact unavailable")
+    dump(directory / "controls.json", controls)
+    return controls
+
+
+def fetch_original_observation_pass(manifest, record, policy, custody, transport, evidence: Path,
+                                    observer: dict, *, phase: str) -> dict:
+    require(phase in ("acquisition-before", "acquisition-after", "producer-final", "writer-final", "writer-readback"),
+            "invalid original observation phase")
+    directory = evidence / (phase + "-observations")
+    directory.mkdir(mode=0o700)
+    records = []
+    for artifact_id in sorted(item["id"] for item in manifest["artifacts"] + manifest["rust_preparation"]):
+        observation = transport.original_metadata(artifact_id, directory / f"{artifact_id}.json")
+        records.append(observation)
+    result = {"observed_at":utc_now(),"records":records}
+    dump(directory / "pass.json", result)
+    return result
+
+
+def acquire_retained(manifest, record, custody, transport, evidence, archives, candidate, workflow, *, policy=None, observer=None):
     """Canonical custody acquisition; no local archive fallback or caller endpoints.
 
     Callers still perform the shared package/native structure and genuine native
     cryptography before claiming acceptance. Neither output alone asserts crypto.
     """
+    if policy is not None:
+        custody.validate_retained_metadata_policy(manifest, record, policy)
+        require(type(observer) is dict, "actual retained observer is required")
+        controls_before = fetch_retained_controls(manifest, record, custody, transport, evidence, phase="acquisition-start")
+        observations_before = fetch_original_observation_pass(manifest, record, policy, custody, transport,
+            evidence, observer, phase="acquisition-before")
+        for kind in ("payload", "custody"):
+            transport.archive(record[kind]["metadata"], archives / f"{record[kind]['metadata']['id']}.zip")
+        historical = archives / f"{record['custody']['metadata']['id']}.zip"
+        verified = custody.verify_retained_transport(manifest, record, archives, candidate)
+        authenticated_history = custody.read_historical_custody(manifest, record, historical)
+        custody.verify_origin(manifest, controls_before["original_run"], controls_before["original_jobs"],
+                              authenticated_history["metadata"])
+        retaining_tag = {"object":record["retaining"]["tag_object"],
+                         "commit":record["retaining"]["controller_sha"],
+                         "ref":record["retaining"]["controller_ref"]}
+        custody._verify_retaining_context(record, controls_before["retaining_run"],
+            controls_before["retaining_jobs"], retaining_tag, workflow)
+        dump(evidence / "acquisition-historical-result.json", authenticated_history["origin"])
+        observations_after = fetch_original_observation_pass(manifest, record, policy, custody, transport,
+            evidence, observer, phase="acquisition-after")
+        controls_after = fetch_retained_controls(manifest, record, custody, transport, evidence, phase="acquisition-end")
+        origin_input = {"schema":"exochain-retained-origin-027/v2","operation":custody.RETAINED_METADATA_OPERATION,
+            "policy_sha256":custody.RETAINED_METADATA_POLICY_SHA256,
+            "observations":{"schema":"exochain-retained-original-observations-027/v1",
+                "operation":custody.RETAINED_METADATA_OPERATION,"policy_sha256":custody.RETAINED_METADATA_POLICY_SHA256,
+                "observer":observer,"before":observations_before,"after":observations_after},
+            "controls_before":controls_before,"controls_after":controls_after,
+            "retaining_tag":retaining_tag}
+        origin = custody.verify_retained_origin(manifest, record, origin_input, historical, workflow, policy=policy)
+        dump(evidence / "acquisition-origin-input.json", origin_input)
+        dump(evidence / "acquisition-origin-result.json", origin)
+        dump(evidence / "retained-transport-result.json", verified)
+        return origin, verified
     before, after = [], []
     for kind in ("payload", "custody"):
         pinned = record[kind]["metadata"]
@@ -339,6 +531,26 @@ def acquire_retained(manifest, record, custody, transport, evidence, archives, c
     verified = custody.verify_retained_transport(manifest, record, archives, candidate)
     dump(evidence / "retained-transport-result.json", verified)
     return origin, verified
+
+
+def finalize_retained_observations(manifest, record, policy, custody, transport, evidence: Path,
+                                   historical: Path, workflow: Path, *, observer: dict,
+                                   initial_input: dict, phase: str) -> dict:
+    require(phase in ("producer-final", "writer-final", "writer-readback"), "invalid final observation phase")
+    custody.validate_retained_metadata_policy(manifest, record, policy)
+    require(initial_input.get("schema") == "exochain-retained-origin-027/v2" and
+            initial_input["observations"]["observer"] == observer, "initial origin or observer differs")
+    initial = custody.verify_retained_origin(manifest, record, initial_input, historical, workflow, policy=policy)
+    after = fetch_original_observation_pass(manifest, record, policy, custody, transport,
+        evidence, observer, phase=phase)
+    controls_after = fetch_retained_controls(manifest, record, custody, transport, evidence, phase=phase)
+    final_input = {**initial_input, "observations":{**initial_input["observations"],"after":after},
+                   "controls_after":controls_after}
+    final = custody.verify_retained_origin(manifest, record, final_input, historical, workflow, policy=policy)
+    require(final["original_vector"] == initial["original_vector"], "original availability transitioned after acquisition")
+    dump(evidence / (phase + "-origin-input.json"), final_input)
+    dump(evidence / (phase + "-origin-result.json"), final)
+    return final_input
 
 
 def fetch_rust(manifest, custody, transport, evidence):
@@ -533,7 +745,7 @@ def check_destinations(runner_temp, destination):
     return evidence
 
 
-def current_receipt_context(custody, transport, capture, evidence, python, node):
+def current_receipt_context(custody, transport, capture, evidence, python, node, *, observer=None, checked_at=None):
     run_text, attempt_text = os.environ.get("GITHUB_RUN_ID", ""), os.environ.get("GITHUB_RUN_ATTEMPT", "")
     require(re.fullmatch(r"[1-9][0-9]*", run_text) is not None
             and re.fullmatch(r"[1-9][0-9]*", attempt_text) is not None, "current numeric run and attempt required")
@@ -546,8 +758,19 @@ def current_receipt_context(custody, transport, capture, evidence, python, node)
     custody.validate_run_identity(run, run_id, attempt, sha, ref.removeprefix("refs/tags/"), completed=False)
     jobs = custody.complete_jobs(jobs_response, run_id, attempt, sha, ref.removeprefix("refs/tags/"))
     producers = [job for job in jobs.values() if job.get("name") == custody.RECEIPT_JOB]
-    require(len(producers) == 1 and producers[0].get("status") == "in_progress", "current acceptance producer is not uniquely running")
+    require(len(producers) == 1 and producers[0].get("status") == "in_progress" and
+            producers[0].get("conclusion") is None and producers[0].get("completed_at") is None,
+            "current acceptance producer is not uniquely running")
     require(os.environ.get("GITHUB_JOB") == "retained-acceptance", "actual job key is not retained acceptance")
+    if observer is not None:
+        require(observer == {"run_id":run_id,"run_attempt":attempt,"controller_sha":sha,"controller_ref":ref,
+            "controller_tag_object":os.environ["EXPECTED_TAG_OBJECT_SHA"],"job_id":producers[0]["id"],
+            "job_name":custody.RECEIPT_JOB,"job_started_at":producers[0]["started_at"]},
+            "captured observer differs from current producer")
+        require(checked_at is not None, "final accepted check time is required")
+        custody.timestamp(checked_at, "final accepted check time")
+    else:
+        require(checked_at is None, "v1 context cannot accept a caller check time")
     def version(argv, pattern):
         result = subprocess.run(argv, env=BASE_ENV, capture_output=True, timeout=30, check=False)
         require(result.returncode == 0 and len(result.stdout) < 4096, "runtime identity command failed")
@@ -556,7 +779,7 @@ def current_receipt_context(custody, transport, capture, evidence, python, node)
         return match.group(1)
     tool_view = Path(os.environ["TRUSTED_RELEASE_PATH"].split(":")[0])
     context = {"controller_sha":sha,"controller_ref":ref,"controller_tag_object":os.environ["EXPECTED_TAG_OBJECT_SHA"],
-        "run_id":run_id,"run_attempt":attempt,"producer_job_id":producers[0]["id"],"checked_at":utc_now(),
+        "run_id":run_id,"run_attempt":attempt,"producer_job_id":producers[0]["id"],"checked_at":checked_at or utc_now(),
         "checker_sha256":hashlib.sha256(custody.read_regular(capture / "verify_release_recovery_027.py", JSON_LIMIT, "captured checker")).hexdigest(),
         "runtime_versions":{
             "python":version([python,"-I","-B","-c","import sys; print('.'.join(map(str,sys.version_info[:3])))"],r"^([0-9]+\.[0-9]+\.[0-9]+)\n$"),
@@ -584,7 +807,7 @@ def accept_publications(custody, publications, candidate, capture, evidence, run
         command(["/bin/bash","--noprofile","--norc","-p",str(capture / "publish_release_npm_package.sh"),profile,"retained-accept"],
                 evidence / f"npm-{profile}-acceptance.txt", child_env, timeout=1200, bounded=True)
         result = custody.load_json(root / f"npm-{profile}/result.json", "current npm acceptance result")
-        expected = {"operation":"recover-0.2.7-retained","controller_commit":os.environ["GITHUB_SHA"],
+        expected = {"operation":os.environ["RELEASE_OPERATION"],"controller_commit":os.environ["GITHUB_SHA"],
             "controller_ref":os.environ["GITHUB_REF"],"package":publication["package"],"version":"0.2.7",
             "tarball_sha256":publication["file"]["sha256"],"provenance_commit":publication["source"]["commit"],
             "provenance_ref":publication["source"]["ref"],"exit_code":0,"acceptance_verified":True,
@@ -599,7 +822,7 @@ def accept_publications(custody, publications, candidate, capture, evidence, run
     command(["/bin/bash","--noprofile","--norc","-p",str(capture / "recover_release_python_027.sh"),"accept"],
             evidence / "python-acceptance.txt", environment, timeout=1200, bounded=True)
     result = custody.load_json(root / "python/result.json", "current Python acceptance")
-    for key,value in {"schema":"exochain-python-retained-acceptance/v1","operation":"recover-0.2.7-retained",
+    for key,value in {"schema":"exochain-python-retained-acceptance/v1","operation":os.environ["RELEASE_OPERATION"],
         "controller_commit":os.environ["GITHUB_SHA"],"controller_ref":os.environ["GITHUB_REF"],
         "exit_code":0,"acceptance_verified":True,"mutation_attempted":False}.items():
         custody.exact(result.get(key),value,"current Python " + key)
@@ -614,10 +837,10 @@ def accept_publications(custody, publications, candidate, capture, evidence, run
     return outcomes
 
 
-def retained_github_preflight(capture, custody, manifest, publications, record, candidate, evidence):
+def retained_github_preflight(capture, custody, manifest, publications, record, candidate, evidence, *, policy=None):
     github = load_module(capture, 'recover_github_release_027')
     receipt, expected = github.retained_release_metadata(manifest,publications,record,
-        os.environ['GITHUB_SHA'],os.environ['GITHUB_REF'])
+        os.environ['GITHUB_SHA'],os.environ['GITHUB_REF'],policy=policy)
     assets = github.release_assets(custody,manifest,candidate,receipt)
     provider = github.GitHub(os.environ['RELEASE_GITHUB_TOKEN'],custody.parse_json)
     result = github.preflight(provider,expected,assets,lambda:custody.verify_files(manifest,candidate))
@@ -629,8 +852,8 @@ def publication_result(publication):
             "public_bytes_verified":True,"crypto_verified":True}
 
 
-def create_retained_receipts(custody, manifest, record, context, summary, checked_publications, evidence):
-    bindings = custody.retained_receipt_bindings(manifest, record, context, summary["origin"])
+def create_retained_receipts(custody, manifest, record, context, summary, checked_publications, evidence, *, policy=None):
+    bindings = custody.retained_receipt_bindings(manifest, record, context, summary["origin"], policy=policy)
     require(summary["rust"] == {"version":"0.2.7","crates_verified":32}, "current Rust acceptance incomplete")
     transport = summary["retained_transport"]
     for key,value in {"retained_archives_verified":2,"payload_files_verified":40,"original_zip_envelopes_verified":0}.items():
@@ -664,7 +887,11 @@ def create_retained_receipts(custody, manifest, record, context, summary, checke
     members = []
     for name, result in (("custody",custody_result),("acceptance",acceptance_result)):
         path = receipt_directory / (name + "-receipt.json")
-        dump(path, {"schema":"exochain-retained-"+name+"-receipt-027/v1",**bindings,"results":result})
+        value = {"schema":"exochain-retained-"+name+"-receipt-027/"+("v2" if policy is not None else "v1"),
+                 **bindings,"results":result}
+        if policy is not None:
+            value["original_observations"] = summary["origin"]["observations"]
+        dump(path, value)
         path.chmod(0o600)
         data = custody.read_regular(path, 512 * 1024, "current receipt")
         members.append({"path":path.name,"size":len(data),"sha256":hashlib.sha256(data).hexdigest()})
@@ -673,13 +900,15 @@ def create_retained_receipts(custody, manifest, record, context, summary, checke
     return members
 
 
-def assert_captured_inputs(capture, custody):
+def assert_captured_inputs(capture, custody, *, policy=None):
     paths = {"tools/"+name:name for name in (
         "verify_release_recovery_027.sh", "verify_release_recovery_027.py", "verify_npm_release_tarball.py",
         "verify_npm_release_package.mjs", "verify_python_release_package.py", "verify_release_sbom.py",
         "transport_release_build_output.py", "import_release_recovery_027.sh", "publish_release_npm_package.sh", "recover_release_python_027.sh", "recover_github_release_027.py")}
     paths.update({"governance/releases/v0.2.7/"+name:name for name in (
         "RECOVERY-MANIFEST.json", "PUBLICATION-IDENTITIES.json", "RETAINED-CUSTODY.json")})
+    if policy is not None:
+        paths["governance/releases/v0.2.7/RETAINED-METADATA-POLICY.json"] = "RETAINED-METADATA-POLICY.json"
     environment = dict(BASE_ENV,GIT_CONFIG_GLOBAL="/dev/null",GIT_CONFIG_NOSYSTEM="1",GIT_NO_REPLACE_OBJECTS="1")
     for source, name in paths.items():
         result = subprocess.run(["/usr/bin/git","--no-replace-objects","-c","core.fsmonitor=false",
@@ -701,21 +930,28 @@ def main():
     candidate = capture / "artifacts"
     archives = capture / "archives"; archives.mkdir(mode=0o700)
     token = os.environ["RELEASE_GITHUB_TOKEN"]
-    retained = os.environ.get("RELEASE_OPERATION") == "recover-0.2.7-retained"
+    operation = os.environ.get("RELEASE_OPERATION")
+    retained = operation in ("recover-0.2.7-retained", "recover-0.2.7-retained-404")
     record = custody.load_retained_record(manifest, capture / "RETAINED-CUSTODY.json") if retained else None
-    transport = Transport(capture, token, manifest, record) if retained else Transport(capture, token, manifest)
+    policy = custody.load_retained_metadata_policy(manifest, record, capture / "RETAINED-METADATA-POLICY.json") \
+        if operation == "recover-0.2.7-retained-404" else None
+    transport = Transport(capture, token, manifest, record, policy=policy) if retained else Transport(capture, token, manifest)
     python, node = os.environ["RELEASE_PYTHON"], os.environ["RELEASE_NODE"]
     require(Path(node).is_absolute() and Path(node).resolve().is_file(), "invalid pinned Node executable")
     require(shutil.disk_usage(runner_temp).free >= 4 * 1024**3, "import requires at least four GiB free")
     before = custody.load_json(capture / "identity-before.json", "initial identity")
     if retained:
-        assert_captured_inputs(capture, custody)
+        assert_captured_inputs(capture, custody, policy=policy)
     summary = {"controller_sha":before["controller_sha"],"controller_ref":before["controller_ref"],
                "product":manifest["product"]}
     helper = [python, "-I", "-B", str(capture / "verify_release_recovery_027.py")]
     if retained:
+        if policy is not None:
+            observer = capture_observer(custody, transport, capture, evidence, "retained-acceptance")
+        else:
+            observer = None
         summary["origin"], summary["retained_transport"] = acquire_retained(manifest, record, custody, transport, evidence, archives,
-                                              candidate, capture / "retaining-workflow.yml")
+                                              candidate, capture / "retaining-workflow.yml", policy=policy, observer=observer)
     else:
         summary["origin"] = fetch_origin(manifest, custody, transport, evidence)
         command(helper + ["origin", "--manifest", str(manifest_path), "--run", str(evidence / "run.json"),
@@ -736,7 +972,7 @@ def main():
     if retained:
         publications = custody.load_publications(manifest, capture / "PUBLICATION-IDENTITIES.json")
         checked_publications = accept_publications(custody, publications, candidate, capture, evidence, runner_temp)
-        retained_github_preflight(capture,custody,manifest,publications,record,candidate,evidence)
+        retained_github_preflight(capture,custody,manifest,publications,record,candidate,evidence,policy=policy)
     command(helper + ["files", "--manifest", str(manifest_path), "--directory", str(candidate)], evidence / "final-file-check.json")
     # No package was executed. Recheck source, signatures and authoritative
     # remote tags immediately before exposing accepted data to later jobs.
@@ -748,43 +984,106 @@ def main():
     require(all(before.get(key) == after.get(key) for key in ("controller_sha", "controller_ref", "product_commit", "product_tag_object")),
             "identity changed during read-only import")
     if retained:
+        if policy is not None:
+            initial_input = custody.load_json(evidence / "acquisition-origin-input.json", "complete acquisition origin")
+            final_input = finalize_retained_observations(manifest, record, policy, custody, transport, evidence,
+                archives / f"{record['custody']['metadata']['id']}.zip", capture / "retaining-workflow.yml",
+                observer=observer, initial_input=initial_input, phase="producer-final")
+            summary["origin"] = custody.verify_retained_origin(manifest, record, final_input,
+                archives / f"{record['custody']['metadata']['id']}.zip", capture / "retaining-workflow.yml", policy=policy)
         # Verify fixed files after the last identity checker, not just before it.
         summary["files"] = custody.verify_files(manifest, candidate)
-        assert_captured_inputs(capture, custody)
-        context = current_receipt_context(custody, transport, capture, evidence, python, node)
-        members = create_retained_receipts(custody, manifest, record, context, summary, checked_publications, evidence)
+        assert_captured_inputs(capture, custody, policy=policy)
+        context = current_receipt_context(custody, transport, capture, evidence, python, node,
+            observer=observer, checked_at=utc_now() if policy is not None else None)
+        members = create_retained_receipts(custody, manifest, record, context, summary, checked_publications,
+            evidence, policy=policy)
     shutil.copyfile(capture / "identity-before.json", evidence / "identity-before.json")
     dump(evidence / "import-receipt.json", summary)
     check_destinations(runner_temp, destination)
     # Everything executed before this point is a read or local private write.
     # Fresh-runner ownership and absent destinations are mandatory. No reuse or
     # merge of an earlier import tree is supported.
-    descriptor = os.open(os.environ["GITHUB_OUTPUT"], os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW | os.O_CLOEXEC)
+    output_path = Path(os.environ["GITHUB_OUTPUT"])
+    descriptor = os.open(output_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
     exposed = []
+    staged_output = None
+    staged_descriptor = None
     try:
         metadata = os.fstat(descriptor)
         require(stat.S_ISREG(metadata.st_mode) and metadata.st_nlink == 1, "GITHUB_OUTPUT must be one regular file")
+        staged_descriptor, staged_name = tempfile.mkstemp(prefix="exochain-output-", dir=output_path.parent)
+        staged_output = Path(staged_name)
+        os.fchmod(staged_descriptor, stat.S_IMODE(metadata.st_mode))
         outputs = f"artifact_directory={destination}\nevidence_directory={final_evidence}\n"
         if retained:
             outputs += (f"receipt_directory={final_evidence / 'current-receipts'}\n"
                         f"producer_job_id={context['producer_job_id']}\n"
                         f"receipt_members={json.dumps(members,separators=(',',':'))}\n"
                         f"receipt_context={json.dumps(context,separators=(',',':'))}\n")
+        copied = 0
+        original_digest = hashlib.sha256()
+        while True:
+            chunk = os.read(descriptor, 65536)
+            if not chunk:
+                break
+            copied += len(chunk)
+            original_digest.update(chunk)
+            require(os.write(staged_descriptor, chunk) == len(chunk), "staged controller output write was incomplete")
+        require(copied == metadata.st_size, "GITHUB_OUTPUT changed during staging")
         evidence.rename(final_evidence)
         exposed.append((final_evidence, evidence))
         candidate.rename(destination)
         exposed.append((destination, candidate))
         encoded = outputs.encode()
-        require(os.write(descriptor, encoded) == len(encoded), "controller output write was incomplete")
-        os.fsync(descriptor)
+        require(os.write(staged_descriptor, encoded) == len(encoded), "staged controller output write was incomplete")
+        os.fsync(staged_descriptor)
+        os.close(staged_descriptor)
+        staged_descriptor = None
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        current_digest = hashlib.sha256()
+        while True:
+            chunk = os.read(descriptor, 65536)
+            if not chunk:
+                break
+            current_digest.update(chunk)
+        current = os.lstat(output_path)
+        require((current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns, current.st_mode) ==
+                (metadata.st_dev, metadata.st_ino, metadata.st_size, metadata.st_mtime_ns, metadata.st_mode)
+                and current_digest.digest() == original_digest.digest(),
+                "GITHUB_OUTPUT changed before exposure")
+        os.close(descriptor)
+        descriptor = None
+        # The atomic replacement is the final fallible exposure operation. A
+        # failed write, sync or replace cannot publish partial acceptance keys.
+        os.replace(staged_output, output_path)
+        staged_output = None
     except BaseException:
-        # No accepted tree or receipt directory survives a failed exposure.
+        # The old output remains intact until replace succeeds. Each private
+        # cleanup is independent so one failure cannot conceal another tree.
         for public, private in reversed(exposed):
-            public.rename(private)
+            try:
+                public.rename(private)
+            except BaseException:
+                print("release recovery import destination rollback failed", file=sys.stderr)
+        if staged_output is not None:
+            try:
+                staged_output.unlink(missing_ok=True)
+            except BaseException:
+                print("release recovery import staged output cleanup failed", file=sys.stderr)
         raise
     finally:
-        os.close(descriptor)
-    print(json.dumps({"artifact_directory":str(destination), "evidence_directory":str(final_evidence)}, sort_keys=True))
+        if staged_descriptor is not None:
+            os.close(staged_descriptor)
+        if descriptor is not None:
+            os.close(descriptor)
+    # GITHUB_OUTPUT is the handoff. A closed diagnostic stdout must not turn
+    # an already committed atomic handoff into a reported failed operation.
+    try:
+        os.write(1, (json.dumps({"artifact_directory":str(destination),
+                                 "evidence_directory":str(final_evidence)}, sort_keys=True) + "\n").encode())
+    except OSError:
+        pass
 
 
 if __name__ == "__main__":

@@ -208,6 +208,40 @@ class GithubRecoveryTests(unittest.TestCase):
         self.assertNotIn('checked_at', receipt)
         self.assertIn('expired',metadata['body'])
 
+    def test_v2_public_custody_is_stable_and_discloses_loss(self):
+        root = HELPER.parent.parent / 'governance/releases/v0.2.7'
+        manifest, publications, record, policy = [json.loads((root / name).read_text()) for name in
+            ['RECOVERY-MANIFEST.json','PUBLICATION-IDENTITIES.json','RETAINED-CUSTODY.json',
+             'RETAINED-METADATA-POLICY.json']]
+        first, body = self.v.retained_release_metadata(manifest, publications, record,
+            'a'*40, 'refs/tags/v0.2.7-recover.3', policy=policy)
+        second, second_body = self.v.retained_release_metadata(manifest, publications, record,
+            'a'*40, 'refs/tags/v0.2.7-recover.3', policy=policy)
+        disclosure = ('Selected original artifact metadata may be unavailable after its recorded expiry. '
+            'Historical identity is authenticated from retained custody; it is not a claim of current metadata '
+            'visibility or proof of deletion.')
+        self.assertEqual(first, second)
+        self.assertEqual(body, second_body)
+        self.assertEqual(first['schema'], 'exochain-release-retained-custody/v2')
+        self.assertEqual(first['metadata_policy_sha256'], 'bf9968454e1fb95fde2b2c435f61940a39cc25e6fb45a28ff9523a82f755c244')
+        self.assertEqual(first['unavailable_originals'], policy['unavailable_originals'])
+        self.assertEqual(first['original_metadata_disclosure'], disclosure)
+        self.assertIn(disclosure, body['body'])
+        self.assertIn(first['metadata_policy_sha256'], body['body'])
+        self.assertEqual(len(first['github_release_assets']), 35)
+        self.assertNotIn('original_observations', first)
+        self.assertNotIn('observed_at', first)
+        v1, v1_body = self.v.retained_release_metadata(manifest, publications, record,
+            'a'*40, 'refs/tags/v0.2.7-recover.3')
+        encoded = lambda value:(json.dumps(value,sort_keys=True,indent=2)+'\n').encode()
+        assets={'RECOVERY-CUSTODY.json':encoded(first)}
+        for release_body, existing_asset in ((v1_body['body'],encoded(first)),(body['body'],encoded(v1))):
+            provider=FakeProvider({**body,'body':release_body,'id':123,'draft':True,'prerelease':False},
+                {'RECOVERY-CUSTODY.json':existing_asset})
+            with self.assertRaises(ValueError):
+                self.v.preflight(provider,body,assets,lambda:None)
+            self.assertEqual(provider.mutations,[])
+
     def test_successor_receipt_distinguishes_package_publishers_from_controller(self):
         root = HELPER.parent.parent / "governance/releases/v0.2.7"
         manifest = json.loads((root / "RECOVERY-MANIFEST.json").read_text())

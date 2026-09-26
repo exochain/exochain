@@ -26,6 +26,14 @@ fail() {
   exit 1
 }
 
+is_retained_operation() {
+  [[ "$RELEASE_OPERATION" = recover-0.2.7-retained || "$RELEASE_OPERATION" = recover-0.2.7-retained-404 ]]
+}
+
+is_recovery_operation() {
+  [[ "$RELEASE_OPERATION" = recover-0.2.7 ]] || is_retained_operation
+}
+
 validate_npm_registry_response() {
   local response_file="$1"
   local expected_name="$2"
@@ -209,8 +217,8 @@ validate_npm_release_context() {
         || fail "normal release cannot accept maintenance refs or recovery context"
       [ -n "${RELEASE_GITHUB_TOKEN:-}" ] || fail "RELEASE_GITHUB_TOKEN is required"
       ;;
-    recover-0.2.7|recover-0.2.7-retained)
-      if [ "$RELEASE_OPERATION" = recover-0.2.7-retained ]; then
+    recover-0.2.7|recover-0.2.7-retained|recover-0.2.7-retained-404)
+      if is_retained_operation; then
         [[ "${RELEASE_NPM_MODE:-}" = retained-accept || "${RELEASE_NPM_MODE:-}" = retained-readback ]] \
           || fail 'explicit retained-accept mode or retained-readback required'
         [[ "${RELEASE_WORKFLOW_DRY_RUN:-}" = true || "${RELEASE_WORKFLOW_DRY_RUN:-}" = false ]] \
@@ -230,7 +238,7 @@ validate_npm_release_context() {
       for name in RUNNER_TEMP RELEASE_RECOVERY_DIRECTORY GNUPGHOME EXOCHAIN_RELEASE_SIGNING_FINGERPRINT GITHUB_OUTPUT; do
         [ -n "${!name:-}" ] || fail "$name is required for recovery"
       done
-      if [ "$profile" = wasm ] || [ "$RELEASE_OPERATION" = recover-0.2.7-retained ]; then
+      if [ "$profile" = wasm ] || is_retained_operation; then
         acceptance_only=true
         provenance_commit=666c578f719d1e54fce95d6831a3af92ea80df93
         provenance_ref=refs/tags/v0.2.7
@@ -274,7 +282,7 @@ run_public_npm() {
 }
 
 capture_npm_recovery_context() {
-  [[ "$RELEASE_OPERATION" = recover-0.2.7 || "$RELEASE_OPERATION" = recover-0.2.7-retained ]] || return 0
+  is_recovery_operation || return 0
   local source_path target
   for source_path in tools/verify_release_recovery_027.py tools/verify_release_recovery_027.sh \
     governance/releases/v0.2.7/RECOVERY-MANIFEST.json \
@@ -295,7 +303,7 @@ capture_npm_recovery_context() {
 }
 
 resolve_npm_publication_identity() {
-  if [[ "$RELEASE_OPERATION" = recover-0.2.7 || "$RELEASE_OPERATION" = recover-0.2.7-retained ]]; then
+  if is_recovery_operation; then
     local record identity
     record="$(/usr/bin/env -i "$python_path" -I -B "$recovery_verifier" publication \
       --manifest "$recovery_manifest" --identities "$recovery_publications" --publication "$profile")" \
@@ -314,7 +322,7 @@ print(r["source"]["commit"], r["source"]["ref"], sep=chr(9))
 }
 
 verify_recovery_npm_files() {
-  [[ "$RELEASE_OPERATION" = recover-0.2.7 || "$RELEASE_OPERATION" = recover-0.2.7-retained ]] || return 0
+  is_recovery_operation || return 0
   /usr/bin/env -i "$python_path" -I -B "$recovery_verifier" manifest \
     --manifest "$recovery_manifest" >/dev/null \
     || fail "recovery manifest is not the fixed reviewed manifest"
@@ -353,7 +361,7 @@ initialize_npm_recovery_receipts() {
   acceptance_verified=false
   # Final public readback cannot mint a substitute producer receipt.
   [ "${RELEASE_NPM_MODE:-}" != retained-readback ] || return 0
-  [[ "$RELEASE_OPERATION" = recover-0.2.7 || "$RELEASE_OPERATION" = recover-0.2.7-retained ]] || return 0
+  is_recovery_operation || return 0
   /usr/bin/env -i "$python_path" -I -B - "$RUNNER_TEMP" "$profile" "$GITHUB_OUTPUT" <<'PY' \
     || fail "recovery receipt directory cannot be initialized exclusively"
 import os
@@ -395,7 +403,7 @@ PY
 }
 
 write_npm_recovery_receipt() {
-  [[ "$RELEASE_OPERATION" = recover-0.2.7 || "$RELEASE_OPERATION" = recover-0.2.7-retained ]] || return 0
+  is_recovery_operation || return 0
   /usr/bin/env -i "$python_path" -I -B - "$recovery_receipt_root" "$1" "${2:-}" \
     "$GITHUB_SHA" "$GITHUB_REF" "$package_name" "$RELEASE_VERSION" \
     "$RELEASE_EXPECTED_TARBALL_SHA256" "$provenance_commit" "$provenance_ref" \
@@ -412,8 +420,8 @@ exit_code = int(status) if status else None
 upload_code = int(upload_exit) if upload_exit else None
 assert exit_code is None or 0 <= exit_code <= 255
 assert upload_code is None or 0 <= upload_code <= 255
-assert operation in ("recover-0.2.7", "recover-0.2.7-retained")
-assert operation != "recover-0.2.7-retained" or (phase == "result" and attempted == "false" and upload_code is None)
+assert operation in ("recover-0.2.7", "recover-0.2.7-retained", "recover-0.2.7-retained-404")
+assert operation == "recover-0.2.7" or (phase == "result" and attempted == "false" and upload_code is None)
 value = {"schema":"exochain-npm-recovery-receipt/v1", "operation":operation,
          "controller_commit":commit, "controller_ref":ref, "package":package,
          "version":version, "tarball_sha256":digest,
@@ -586,14 +594,14 @@ PY
 finish_npm_publication() {
   local status="$1"
   trap - EXIT
-  if [[ "$RELEASE_OPERATION" = recover-0.2.7 || "$RELEASE_OPERATION" = recover-0.2.7-retained ]] && [ -n "${recovery_receipt_root:-}" ]; then
+  if is_recovery_operation && [ -n "${recovery_receipt_root:-}" ]; then
     if ! retain_npm_public_readbacks; then
       printf 'npm recovery public readbacks could not be retained\n' >&2
       status=1
     fi
   fi
   /bin/rm -rf -- "$publish_root" || status=1
-  if [[ "$RELEASE_OPERATION" = recover-0.2.7 || "$RELEASE_OPERATION" = recover-0.2.7-retained ]] && [ -n "${recovery_receipt_root:-}" ]; then
+  if is_recovery_operation && [ -n "${recovery_receipt_root:-}" ]; then
     if ! write_npm_recovery_receipt result "$status"; then
       printf 'npm recovery outcome receipt could not be persisted\n' >&2
       status=1
@@ -813,7 +821,7 @@ printf '%s\n' \
   || fail "publisher user and global npm config paths must differ"
 
 run_authenticated_npm() {
-  [ "$acceptance_only" = false ] && [ "$RELEASE_OPERATION" != recover-0.2.7-retained ] \
+  [ "$acceptance_only" = false ] && ! is_retained_operation \
     || fail 'authenticated npm is forbidden in acceptance-only mode'
   /usr/bin/env -i \
     ACTIONS_ID_TOKEN_REQUEST_TOKEN="${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" \
@@ -842,7 +850,7 @@ run_authenticated_npm() {
 }
 
 verify_release_binding() {
-  if [[ "$RELEASE_OPERATION" = recover-0.2.7 || "$RELEASE_OPERATION" = recover-0.2.7-retained ]]; then
+  if is_recovery_operation; then
     /bin/cat "$recovery_binding_verifier"
   else
     /usr/bin/git --no-replace-objects -c core.fsmonitor=false -c core.untrackedCache=false -c core.ignoreStat=false \
