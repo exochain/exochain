@@ -84,7 +84,6 @@ fi
 # BEGIN RECOVERY_IMPORT_PYTHON
 """Fixed import orchestration. Network and subprocess boundaries are testable;
 there are no runtime endpoint, command, manifest, or proof overrides."""
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import hashlib
 import importlib.util
@@ -556,13 +555,12 @@ def finalize_retained_observations(manifest, record, policy, custody, transport,
 def fetch_rust(manifest, custody, transport, evidence):
     directory = evidence / "rust-responses"
     directory.mkdir(mode=0o700)
-    def fetch(item):
-        name, url = item
+    responses = {}
+    for name, url in fixed_endpoints(manifest)["rust"]:
         path = directory / (name + ".json")
+        time.sleep(1)
         transport.get(url, path, JSON_LIMIT)
-        return name, custody.load_json(path, "public Rust version")
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        responses = dict(pool.map(fetch, fixed_endpoints(manifest)["rust"]))
+        responses[name] = custody.load_json(path, "public Rust version")
     return custody.verify_rust(manifest, responses)
 
 

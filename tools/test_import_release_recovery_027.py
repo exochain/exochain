@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import time
 import types
 import unittest
@@ -951,12 +952,83 @@ class ImportTests(unittest.TestCase):
                 if bad == "checksum": record["version"]["checksum"] = "a" * 64
                 destination.write_text(json.dumps(record))
             transport = types.SimpleNamespace(get=get)
-            if bad:
-                self.reject(self.i.fetch_rust, self.manifest, self.custody, transport, directory)
-            else:
-                self.assertEqual(self.i.fetch_rust(self.manifest, self.custody, transport, directory)["crates_verified"], 32)
+            with patch.object(self.i.time, "sleep"):
+                if bad:
+                    self.reject(self.i.fetch_rust, self.manifest, self.custody, transport, directory)
+                else:
+                    self.assertEqual(self.i.fetch_rust(self.manifest, self.custody, transport, directory)["crates_verified"], 32)
             self.assertEqual(len(calls), 32)
             self.assertTrue(all(url.startswith("https://crates.io/api/v1/crates/") and url.endswith("/0.2.7") for url in calls))
+
+    def test_rust_requests_are_serial_and_paced_across_fetch_calls(self):
+        # Catches a missing first delay, concurrent batching, reordering, or
+        # a rate state that resets between producer and final-writer passes.
+        expected = ["https://crates.io/api/v1/crates/" + crate["name"] + "/0.2.7"
+                    for crate in self.manifest["rust_crates"]]
+        self.assertEqual(len(expected), 32)
+        self.assertEqual(len(set(expected)), 32)
+        crates = {crate["name"]: crate for crate in self.manifest["rust_crates"]}
+        clock = [0]
+        delays = []
+        calls = []
+        active = [0]
+        maximum_active = [0]
+
+        def sleep(seconds):
+            delays.append(seconds)
+            clock[0] += seconds
+
+        def get(url, destination, limit):
+            active[0] += 1
+            maximum_active[0] = max(maximum_active[0], active[0])
+            try:
+                calls.append((url, clock[0], limit))
+                if len(calls) == 1:
+                    threading.Event().wait(0.02)
+                crate = crates[url.split("/")[-2]]
+                destination.write_text(json.dumps({"version": {"id": 123, "crate": crate["name"],
+                    "num": "0.2.7", "yanked": False, "checksum": crate["sha256"]}}))
+            finally:
+                active[0] -= 1
+
+        transport = types.SimpleNamespace(get=get)
+        with patch.object(self.i.time, "sleep", side_effect=sleep):
+            for pass_name in ("producer", "final-writer"):
+                evidence = self.root / pass_name
+                evidence.mkdir()
+                result = self.i.fetch_rust(self.manifest, self.custody, transport, evidence)
+                self.assertEqual(result["crates_verified"], 32)
+        self.assertEqual([url for url, _, _ in calls], expected + expected)
+        self.assertEqual([limit for _, _, limit in calls], [self.i.JSON_LIMIT] * 64)
+        self.assertEqual(maximum_active[0], 1)
+        self.assertEqual(len(delays), 64)
+        self.assertTrue(all(delay >= 1 for delay in delays))
+        request_times = [timestamp for _, timestamp, _ in calls]
+        self.assertGreaterEqual(request_times[0], 1)
+        self.assertTrue(all(after - before >= 1 for before, after in
+                            zip(request_times, request_times[1:])))
+
+    def test_rust_transport_failure_stops_without_retry_or_later_requests(self):
+        # Catches executor prefetch, retry, or partial-inventory acceptance.
+        expected = ["https://crates.io/api/v1/crates/" + crate["name"] + "/0.2.7"
+                    for crate in self.manifest["rust_crates"][:3]]
+        calls = []
+        delays = []
+
+        def get(url, destination, limit):
+            calls.append(url)
+            if len(calls) == 3:
+                raise self.i.ImportFailure("fixture HTTP 403")
+            crate = self.manifest["rust_crates"][len(calls) - 1]
+            destination.write_text(json.dumps({"version": {"id": 123, "crate": crate["name"],
+                "num": "0.2.7", "yanked": False, "checksum": crate["sha256"]}}))
+
+        with patch.object(self.i.time, "sleep", side_effect=lambda seconds: delays.append(seconds)):
+            self.reject(self.i.fetch_rust, self.manifest, self.custody,
+                        types.SimpleNamespace(get=get), self.root)
+        self.assertEqual(calls, expected)
+        self.assertEqual(len(delays), 3)
+        self.assertTrue(all(delay >= 1 for delay in delays))
 
     def attestation(self):
         artifact = next(a for a in self.manifest["artifacts"] if a["lane"] == "native-x86_64")
