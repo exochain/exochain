@@ -313,6 +313,75 @@ class RetainedTests(unittest.TestCase):
     def record(self):
         return self.v.load_retained_record(self.manifest, self.record_path)
 
+    def metadata_policy_fixture(self):
+        return {
+            "schema": "exochain-retained-metadata-policy-027/v1",
+            "operation": "recover-0.2.7-retained-404",
+            "manifest_sha256": "17c77eafa0ea34fa7437cbc0d6988f561d686e330bee8c17cfe0e6a354e1bec4",
+            "publications_sha256": "4596c339d2af34ce3aeff5f2dd4a6be95fbb044250e934a27221170b97902ca7",
+            "retained_sha256": "7f2eac05d0fea00a29a1ea3ebf7605eee7ab66905a40d8e016ef50510c2c038a",
+            "repository": {"name": "exochain/exochain", "id": 1116455646, "owner_id": 129763194},
+            "original": {"run_id": 35257955565, "attempt": 1},
+            "retaining": {"run_id": 35754493083, "attempt": 1},
+            "retained_artifact_ids": [10779404529, 10780480598],
+            "unavailable_originals": [
+                {"id": 10518086890, "historical_member": "artifact-metadata/10518086890.json", "historical_sha256": "23a1d7f70d0da078e712fe0844f5c52101cd9b03e510941f6c758508a6e73245", "expires_at": "2026-09-24T20:09:34Z"},
+                {"id": 10518128532, "historical_member": "artifact-metadata/10518128532.json", "historical_sha256": "d465cde79dd2ecd25a46cf065841a5d8eef5792f8a0d91bdf70c10a888caf93d", "expires_at": "2026-09-24T20:19:17Z"},
+                {"id": 10517978596, "historical_member": "artifact-metadata/10517978596.json", "historical_sha256": "dcec5cb76b7875501c83c343957a4ccded7501142d009412e54ce82d517531ad", "expires_at": "2026-09-24T20:19:29Z"},
+                {"id": 10517854663, "historical_member": "artifact-metadata/10517854663.json", "historical_sha256": "ea27bd26387b0335aa33a9931d432a749ed834222ffd085d370bd1d7d1a26bf9", "expires_at": "2026-09-24T20:24:33Z"},
+            ],
+        }
+
+    def test_metadata_policy_rejects_nested_tampering_and_operation_confusion(self):
+        validator = self.v
+        record, policy = self.record(), self.metadata_policy_fixture()
+        self.assertEqual(validator.validate_retained_metadata_policy(self.manifest, record, policy), policy)
+        self.assertEqual([x["id"] for x in policy["unavailable_originals"]],
+                         [10518086890, 10518128532, 10517978596, 10517854663])
+        self.assertEqual(policy["retained_artifact_ids"], [10779404529, 10780480598])
+        self.assertEqual(validator.load_retained_metadata_policy(
+            self.manifest, record, ROOT / "governance/releases/v0.2.7/RETAINED-METADATA-POLICY.json"), policy)
+        with self.assertRaises(validator.RecoveryError):
+            validator.validate_retained_metadata_policy(self.manifest, record, dict(policy, operation="recover-0.2.7-retained"))
+        for path, replacement in (("schema", "other"), ("manifest_sha256", "0" * 64),
+                                  ("publications_sha256", "0" * 64), ("retained_sha256", "0" * 64),
+                                  ("repository.id", True), ("repository.owner_id", 1),
+                                  ("original.attempt", 2), ("retaining.run_id", 1),
+                                  ("retained_artifact_ids.0", True), ("retained_artifact_ids.1", 1),
+                                  ("unavailable_originals.0.id", True),
+                                  ("unavailable_originals.1.historical_member", "wrong"),
+                                  ("unavailable_originals.2.historical_sha256", "0" * 64),
+                                  ("unavailable_originals.3.expires_at", "2026-09-25T20:24:33Z")):
+            changed = copy.deepcopy(policy)
+            target = changed
+            parts = path.split(".")
+            for part in parts[:-1]:
+                target = target[int(part)] if part.isdigit() else target[part]
+            last = parts[-1]
+            target[int(last) if last.isdigit() else last] = replacement
+            with self.subTest(path=path):
+                self.reject(validator.validate_retained_metadata_policy, self.manifest, record, changed)
+        for mutation in (lambda p: p.update(extra=1), lambda p: p.pop("repository"),
+                         lambda p: p["repository"].update(extra=1),
+                         lambda p: p["unavailable_originals"].append(copy.deepcopy(p["unavailable_originals"][0])),
+                         lambda p: p["unavailable_originals"].reverse(),
+                         lambda p: p["retained_artifact_ids"].reverse()):
+            changed = copy.deepcopy(policy)
+            mutation(changed)
+            self.reject(validator.validate_retained_metadata_policy, self.manifest, record, changed)
+        for index, item in enumerate(policy["unavailable_originals"]):
+            for field, replacement in (("id", 1), ("historical_member", "artifact-metadata/1.json"),
+                                       ("historical_sha256", "0" * 64), ("expires_at", "2026-09-25T20:00:00Z")):
+                changed = copy.deepcopy(policy)
+                changed["unavailable_originals"][index][field] = replacement
+                with self.subTest(original=index, field=field):
+                    self.reject(validator.validate_retained_metadata_policy, self.manifest, record, changed)
+        policy_path = self.root / "policy.json"
+        policy_path.write_text(json.dumps(policy))
+        self.assertEqual(validator.load_retained_metadata_policy(self.manifest, record, policy_path), policy)
+        policy_path.write_text(json.dumps(policy).replace('"schema":', '"schema": "other", "schema":', 1))
+        self.reject(validator.load_retained_metadata_policy, self.manifest, record, policy_path)
+
     def test_retained_cli_interfaces_are_bounded_json(self):
         for mode in ("retained-record", "retained-origin", "retained-transport", "retained-receipts"):
             result = subprocess.run([sys.executable, "-B", str(HELPER), mode, "--manifest", str(MANIFEST),
@@ -475,6 +544,10 @@ class RetainedTests(unittest.TestCase):
             run[key]["owner"] = {"id": 129763194}
         for item in metadata:
             item.update(created_at="2026-09-17T20:00:00Z", updated_at="2026-09-17T20:00:00Z", expires_at="2026-09-24T20:00:00Z")
+        expiries = {item["id"]: item["expires_at"] for item in self.metadata_policy_fixture()["unavailable_originals"]}
+        for item in metadata:
+            if item["id"] in expiries:
+                item["expires_at"] = expiries[item["id"]]
         historical = {"origin": self.v.verify_origin(self.manifest, run, jobs, metadata), "metadata": metadata}
         retaining_run = copy.deepcopy(run)
         retaining_run.update(id=35754493083, head_sha=self.v.RETAINED_COMMIT, head_branch="v0.2.7-recover.2")
@@ -497,6 +570,223 @@ class RetainedTests(unittest.TestCase):
         self.enterContext(mock.patch.object(self.v, "read_historical_custody", return_value=historical))
         self.enterContext(mock.patch.object(self.v, "verify_retaining_workflow_source"))
         return record, envelope
+
+    def observation_fixture(self, missing_ids=(), *, offset_seconds=0):
+        from datetime import datetime, timedelta, timezone
+        record, origin = self.origin_fixture()
+        policy = self.metadata_policy_fixture()
+        missing = set(missing_ids)
+        policy_by_id = {item["id"]: item for item in policy["unavailable_originals"]}
+        historical = {item["id"]: item for item in self.v.read_historical_custody(self.manifest, record, "fixture")["metadata"]}
+        base = datetime(2026, 9, 25, 22, 1, tzinfo=timezone.utc) + timedelta(seconds=offset_seconds)
+        stamp = lambda seconds: (base + timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        records = []
+        for index, artifact_id in enumerate(sorted(historical)):
+            member = f"artifact-metadata/{artifact_id}.json"
+            item = {"id": artifact_id, "endpoint_role": "original-artifact-metadata",
+                    "request_started_at": stamp(index * 2), "request_finished_at": stamp(index * 2 + 1),
+                    "status": 404 if artifact_id in missing else 200,
+                    "variant": "unavailable_404" if artifact_id in missing else "present",
+                    "historical_member": member,
+                    "historical_sha256": next(x["sha256"] for x in record["custody"]["files"] if x["path"] == member)}
+            if artifact_id not in missing:
+                item["metadata"] = dict(historical[artifact_id], expired=True)
+            records.append(item)
+        before = {"observed_at": stamp(20), "records": copy.deepcopy(records)}
+        after = {"observed_at": stamp(40), "records": copy.deepcopy(records)}
+        for index, item in enumerate(after["records"]):
+            item["request_started_at"] = stamp(21 + index)
+            item["request_finished_at"] = stamp(22 + index)
+        return {"schema": "exochain-retained-original-observations-027/v1",
+                "operation": "recover-0.2.7-retained-404", "policy_sha256": self.v.RETAINED_METADATA_POLICY_SHA256,
+                "observer": {"run_id": 40000000000, "run_attempt": 2, "controller_sha": "a" * 40,
+                             "controller_ref": "refs/tags/v0.2.7-recover.3", "controller_tag_object": "b" * 40,
+                             "job_id": 110000000000, "job_name": self.v.RECEIPT_JOB,
+                             "job_started_at": "2026-09-25T22:00:00Z"},
+                "before": before, "after": after}
+
+    def origin_v2_fixture(self, missing_ids=()):
+        record, old = self.origin_fixture()
+        observations = self.observation_fixture(missing_ids)
+        controls = {"original_run": old["original_run"], "original_jobs": old["original_jobs"],
+                    "retaining_run": old["retaining_run"], "retaining_jobs": old["retaining_jobs"],
+                    "retained_metadata": copy.deepcopy(old["retained_before"]),
+                    "observed_at": "2026-09-25T22:00:00Z"}
+        after_controls = copy.deepcopy(controls)
+        after_controls["observed_at"] = "2026-09-25T22:02:00Z"
+        return record, {"schema": "exochain-retained-origin-027/v2", "operation": "recover-0.2.7-retained-404",
+                        "policy_sha256": self.v.RETAINED_METADATA_POLICY_SHA256,
+                        "observations": observations, "controls_before": copy.deepcopy(controls),
+                        "controls_after": after_controls, "retaining_tag": old["retaining_tag"]}
+
+    def test_observations_accept_all_200_and_each_eligible_404(self):
+        validator = self.v
+        record, old = self.origin_fixture()
+        historical = validator.read_historical_custody(self.manifest, record, "fixture")
+        policy = self.metadata_policy_fixture()
+        for missing in ((), (10518086890,), (10518128532,), (10517978596,), (10517854663,),
+                        (10518086890, 10518128532, 10517978596, 10517854663)):
+            with self.subTest(missing=missing):
+                vector = validator.validate_original_observations(
+                    self.manifest, record, policy, historical, self.observation_fixture(missing), now="2026-09-25T22:03:00Z")
+                self.assertEqual(len(vector), 9)
+                self.assertEqual([x["id"] for x in vector if x["status"] == 404], sorted(missing))
+
+    def test_normalized_vector_ignores_times_but_detects_transition(self):
+        validator = self.v
+        record, _ = self.origin_fixture()
+        historical = validator.read_historical_custody(self.manifest, record, "fixture")
+        policy = self.metadata_policy_fixture()
+        validate = lambda observations: validator.validate_original_observations(
+            self.manifest, record, policy, historical, observations, now="2026-09-25T22:04:00Z")
+        first = self.observation_fixture((10518086890,))
+        later = self.observation_fixture((10518086890,), offset_seconds=60)
+        self.assertEqual(validate(first), validate(later))
+        target = next(x for x in later["after"]["records"] if x["id"] == 10518086890)
+        target.update(status=200, variant="present", metadata=next(dict(x, expired=True) for x in historical["metadata"] if x["id"] == 10518086890))
+        with self.assertRaisesRegex(validator.RecoveryError, "original availability transition"):
+            validate(later)
+        reverse = self.observation_fixture()
+        target = next(x for x in reverse["after"]["records"] if x["id"] == 10518086890)
+        target.update(status=404, variant="unavailable_404")
+        target.pop("metadata")
+        with self.assertRaisesRegex(validator.RecoveryError, "original availability transition"):
+            validate(reverse)
+
+    def test_observations_reject_fifth_early_conflicting_or_fabricated_metadata(self):
+        validator = self.v
+        record, _ = self.origin_fixture()
+        historical = validator.read_historical_custody(self.manifest, record, "fixture")
+        policy = self.metadata_policy_fixture()
+        validate = lambda observations: validator.validate_original_observations(
+            self.manifest, record, policy, historical, observations, now="2026-09-25T22:04:00Z")
+        for artifact_id in (10517981432, 10518080916, 10517457207, 10517966616, 10517459550):
+            fifth = self.observation_fixture()
+            for phase in ("before", "after"):
+                target = next(x for x in fifth[phase]["records"] if x["id"] == artifact_id)
+                target.update(status=404, variant="unavailable_404")
+                target.pop("metadata")
+            with self.subTest(non_policy_id=artifact_id):
+                with self.assertRaisesRegex(validator.RecoveryError, "unselected original metadata unavailable"):
+                    validate(fifth)
+        early = self.observation_fixture((10518086890,))
+        target = next(x for x in early["before"]["records"] if x["id"] == 10518086890)
+        target["request_started_at"] = "2026-09-24T20:09:33Z"
+        target["request_finished_at"] = "2026-09-24T20:09:34Z"
+        with self.assertRaisesRegex(validator.RecoveryError, "original 404 precedes pinned expiry"):
+            validator.validate_original_observation(self.manifest, record, policy, historical, target,
+                                                    now="2026-09-24T20:09:34Z")
+        for mutation in (lambda x: x["before"]["records"][0]["metadata"].update(digest="sha256:" + "0" * 64),
+                         lambda x: x["before"]["records"][0]["metadata"].update(expired=1),
+                         lambda x: x["before"]["records"][0].update(historical_sha256="0" * 64),
+                         lambda x: x["before"]["records"].pop(),
+                         lambda x: x["before"]["records"].reverse(),
+                         lambda x: x["before"]["records"].append(copy.deepcopy(x["before"]["records"][0]))):
+            changed = self.observation_fixture()
+            mutation(changed)
+            self.reject(validate, changed)
+        fabricated = self.observation_fixture((10518086890,))
+        target = next(x for x in fabricated["before"]["records"] if x["id"] == 10518086890)
+        target["metadata"] = {"expired": True}
+        self.reject(validate, fabricated)
+        fabricated = self.observation_fixture((10518086890,))
+        target = next(x for x in fabricated["before"]["records"] if x["id"] == 10518086890)
+        target["expired"] = True
+        self.reject(validate, fabricated)
+        wrong_member = self.observation_fixture()
+        wrong_member["before"]["records"][0]["historical_member"] = "artifact-metadata/1.json"
+        self.reject(validate, wrong_member)
+
+    def test_pure_observation_rejects_equal_nested_numeric_type_substitution(self):
+        record, _ = self.origin_fixture()
+        historical = self.v.read_historical_custody(self.manifest, record, "fixture")
+        policy = self.metadata_policy_fixture()
+        observations = self.observation_fixture()
+        for phase in ("before", "after"):
+            observations[phase]["records"][0]["metadata"]["workflow_run"]["id"] = float(35257955565)
+        self.assertEqual(observations["before"]["records"][0]["metadata"]["workflow_run"]["id"], 35257955565)
+        with self.assertRaises(self.v.RecoveryError):
+            self.v.validate_original_observations(self.manifest, record, policy, historical, observations,
+                                                  now="2026-09-25T22:03:00Z")
+
+    def test_observation_chronology_binds_actual_job_and_checked_at(self):
+        validator = self.v
+        record, _ = self.origin_fixture()
+        historical = validator.read_historical_custody(self.manifest, record, "fixture")
+        policy = self.metadata_policy_fixture()
+        validate = lambda observations: validator.validate_original_observations(
+            self.manifest, record, policy, historical, observations, now="2026-09-25T22:03:00Z")
+        self.assertEqual(len(validate(self.observation_fixture())), 9)
+        for mutation in (lambda x: x["observer"].update(job_started_at="2026-09-25T22:02:00Z"),
+                         lambda x: x["before"].update(observed_at="2026-09-25T22:00:00Z"),
+                         lambda x: x["after"].update(observed_at="2026-09-25T22:04:00Z"),
+                         lambda x: x["after"]["records"][0].update(request_started_at="2026-09-25T22:01:18Z", request_finished_at="2026-09-25T22:01:19Z"),
+                         lambda x: x["after"]["records"][0].update(request_finished_at="2026-09-25T22:00:00Z"),
+                         lambda x: x["observer"].update(run_id=35257955565)):
+            changed = self.observation_fixture()
+            mutation(changed)
+            self.reject(validate, changed)
+
+    def test_origin_v2_rejects_incomplete_controls_and_retained_drift(self):
+        validator = self.v
+        record, origin = self.origin_v2_fixture((10518086890,))
+        policy = self.metadata_policy_fixture()
+        result = validator.verify_retained_origin(self.manifest, record, origin, "fixture", "fixture", policy=policy)
+        self.assertEqual(result["schema"], "exochain-retained-origin-result-027/v2")
+        self.assertNotIn("current_original_origin", result)
+        self.assertFalse(result["current_crypto_verified"])
+        for mutation in (lambda x: x["controls_before"]["original_jobs"]["jobs"].pop(),
+                         lambda x: x["controls_after"]["retaining_jobs"]["jobs"].pop(),
+                         lambda x: x["controls_before"]["original_run"].update(run_attempt=2),
+                         lambda x: x["controls_after"]["original_run"].update(head_sha="0" * 40),
+                         lambda x: x["controls_before"]["original_run"].update(head_branch="wrong"),
+                         lambda x: x["controls_before"]["original_jobs"]["jobs"][1].update(id=x["controls_before"]["original_jobs"]["jobs"][0]["id"]),
+                         lambda x: x["controls_before"]["retaining_run"].update(head_sha="0" * 40),
+                         lambda x: x["controls_after"]["retaining_run"].update(run_attempt=2),
+                         lambda x: x["controls_before"]["retaining_jobs"]["jobs"][1].update(id=107409656991),
+                         lambda x: x["controls_after"]["retaining_jobs"]["jobs"][0]["steps"][0].update(conclusion="failure"),
+                         lambda x: x["controls_before"]["retaining_jobs"]["jobs"][0]["steps"].pop(),
+                         lambda x: x["retaining_tag"].update(ref="refs/tags/wrong"),
+                         lambda x: x["controls_after"]["retained_metadata"][0].update(expired=True),
+                         lambda x: x["controls_after"]["retained_metadata"][0].update(expires_at="2026-09-25T22:02:00Z"),
+                         lambda x: x["controls_before"]["retained_metadata"][1].update(digest="sha256:" + "0" * 64)):
+            changed = copy.deepcopy(origin)
+            mutation(changed)
+            with self.subTest(mutation=mutation):
+                with self.assertRaises(validator.RecoveryError):
+                    validator.verify_retained_origin(self.manifest, record, changed, "fixture", "fixture", policy=policy)
+
+    def test_origin_v2_rejects_wrong_retaining_workflow_and_post_expiry_import(self):
+        original_workflow_validator = self.v.verify_retaining_workflow_source
+        record, origin = self.origin_v2_fixture()
+        policy = self.metadata_policy_fixture()
+        bad_workflow = self.root / "wrong-retaining-workflow.yml"
+        bad_workflow.write_bytes(b"changed workflow bytes")
+        with mock.patch.object(self.v, "verify_retaining_workflow_source", original_workflow_validator):
+            with self.assertRaises(self.v.RecoveryError):
+                self.v.verify_retained_origin(self.manifest, record, origin, "fixture", bad_workflow, policy=policy)
+        historical = copy.deepcopy(self.v.read_historical_custody(self.manifest, record, "fixture"))
+        altered = next(x for x in historical["metadata"] if x["id"] == 10517457207)
+        altered["expires_at"] = "2026-09-23T22:33:26Z"
+        for phase in ("before", "after"):
+            observed = next(x for x in origin["observations"][phase]["records"] if x["id"] == altered["id"])
+            observed["metadata"]["expires_at"] = altered["expires_at"]
+        with mock.patch.object(self.v, "read_historical_custody", return_value=historical):
+            with self.assertRaisesRegex(self.v.RecoveryError, "historical import was not pre-expiry"):
+                self.v.verify_retained_origin(self.manifest, record, origin, "fixture", "fixture", policy=policy)
+
+    def test_origin_v2_requires_initial_controls_before_first_original_request(self):
+        record, origin = self.origin_v2_fixture()
+        policy = self.metadata_policy_fixture()
+        first_start = origin["observations"]["before"]["records"][0]["request_started_at"]
+        equal = copy.deepcopy(origin)
+        equal["controls_before"]["observed_at"] = first_start
+        result = self.v.verify_retained_origin(self.manifest, record, equal, "fixture", "fixture", policy=policy)
+        self.assertEqual(result["schema"], "exochain-retained-origin-result-027/v2")
+        inside = copy.deepcopy(origin)
+        inside["controls_before"]["observed_at"] = "2026-09-25T22:01:10Z"
+        with self.assertRaises(self.v.RecoveryError):
+            self.v.verify_retained_origin(self.manifest, record, inside, "fixture", "fixture", policy=policy)
 
     def test_retained_origin_preserves_actual_expiry_without_normalizing_original_mode(self):
         record, envelope = self.origin_fixture()
@@ -631,6 +921,277 @@ class RetainedTests(unittest.TestCase):
             envelope[key].update(digest="sha256:" + digest, size_in_bytes=len(data))
         envelope["members"] = members
         return path
+
+    def v2_receipt_fixture(self):
+        record, publications, envelope, old_receipts = self.receipt_fixture()
+        _, origin = self.origin_v2_fixture((10518086890,))
+        origin["controls_before"]["observed_at"] = "2026-09-25T22:00:01Z"
+        policy = self.metadata_policy_fixture()
+        verified = self.v.verify_retained_origin(self.manifest, record, origin, "fixture", "fixture", policy=policy)
+        context = envelope["context"]
+        context["checked_at"] = "2026-09-25T22:02:00Z"
+        producer = envelope["current_jobs"]["jobs"][0]
+        producer["started_at"] = "2026-09-25T22:00:00Z"
+        producer["completed_at"] = "2026-09-25T22:03:30Z"
+        producer["steps"] = [
+            {"name": "Verify Retained Custody, Publications and GitHub Inventory", "number": 7,
+             "status": "completed", "conclusion": "success", "started_at": "2026-09-25T22:00:01Z", "completed_at": "2026-09-25T22:02:01Z"},
+            {"name": self.v.RECEIPT_UPLOAD, "number": 8, "status": "completed", "conclusion": "success",
+             "started_at": "2026-09-25T22:02:02Z", "completed_at": "2026-09-25T22:03:00Z"}]
+        metadata = envelope["metadata_before"]
+        metadata["created_at"] = metadata["updated_at"] = "2026-09-25T22:02:30Z"
+        metadata["expires_at"] = "2026-10-25T22:02:30Z"
+        envelope["metadata_after"] = copy.deepcopy(metadata)
+        envelope["schema"] = "exochain-retained-receipts-input-027/v2"
+        envelope["operation"] = "recover-0.2.7-retained-404"
+        envelope["policy_sha256"] = self.v.RETAINED_METADATA_POLICY_SHA256
+        envelope["observed_at"] = "2026-09-25T22:03:31Z"
+        envelope["origin"] = origin
+        bindings = {"mode": "recover-0.2.7-retained-404", **context, "checker_version": "retained-027/v2",
+                    "retained_record_sha256": self.v.RETAINED_RECORD_SHA256,
+                    "metadata_policy_sha256": self.v.RETAINED_METADATA_POLICY_SHA256,
+                    "manifest_sha256": self.v.MANIFEST_SHA256, "publications_sha256": self.v.PUBLICATIONS_SHA256,
+                    "product": self.manifest["product"], "historical_original_origin": verified["historical_original_origin"],
+                    "original_vector": verified["original_vector"],
+                    "transports": [{"id": record[k]["metadata"]["id"], "digest": record[k]["metadata"]["digest"]}
+                                   for k in ("payload", "custody")], "mutation_attempted": False}
+        receipts = {}
+        for kind in ("custody", "acceptance"):
+            old = old_receipts[f"{kind}-receipt.json"]
+            receipts[f"{kind}-receipt.json"] = {"schema": f"exochain-retained-{kind}-receipt-027/v2", **bindings,
+                                                 "original_observations": origin["observations"],
+                                                 "results": old["results"]}
+        return record, publications, policy, envelope, receipts
+
+    def writer_origin_fixture(self, envelope):
+        """A separate successful writer read with the same status/identity vector."""
+        writer = copy.deepcopy(envelope["origin"])
+        producer = envelope["current_jobs"]["jobs"][0]
+        writer_job = {**copy.deepcopy(producer), "id": 110000000001, "name": self.v.RECEIPT_WRITER_JOB,
+                      "status": "in_progress", "conclusion": None, "started_at": "2026-09-25T22:04:00Z",
+                      "completed_at": None, "steps": []}
+        if not any(job["id"] == writer_job["id"] for job in envelope["current_jobs"]["jobs"]):
+            envelope["current_jobs"]["jobs"].append(writer_job)
+            envelope["current_jobs"]["total_count"] = 2
+        observations = writer["observations"]
+        observations["observer"].update(job_id=110000000001, job_name=self.v.RECEIPT_WRITER_JOB,
+                                        job_started_at="2026-09-25T22:04:00Z")
+        for phase, base, observed in (("before", 0, "2026-09-25T22:05:20Z"),
+                                      ("after", 21, "2026-09-25T22:05:40Z")):
+            passage = observations[phase]
+            passage["observed_at"] = observed
+            for index, item in enumerate(passage["records"]):
+                second = base + index * (2 if phase == "before" else 1)
+                item["request_started_at"] = f"2026-09-25T22:05:{second:02d}Z"
+                item["request_finished_at"] = f"2026-09-25T22:05:{second + 1:02d}Z"
+        writer["controls_before"]["observed_at"] = "2026-09-25T22:04:59Z"
+        writer["controls_after"]["observed_at"] = "2026-09-25T22:05:41Z"
+        return writer
+
+    def test_full_v2_accepts_independent_writer_origin_and_rejects_cross_job_transition(self):
+        record, publications, policy, envelope, receipts = self.v2_receipt_fixture()
+        producer_observations = copy.deepcopy(receipts["custody-receipt.json"]["original_observations"])
+        writer = self.writer_origin_fixture(envelope)
+        envelope["origin"] = writer
+        envelope["observed_at"] = "2026-09-25T22:06:00Z"
+        historical = self.v.read_historical_custody(self.manifest, record, "fixture")
+        producer_vector = self.v.validate_original_observations(
+            self.manifest, record, policy, historical, producer_observations, now="2026-09-25T22:02:00Z")
+        writer_vector = self.v.verify_retained_origin(self.manifest, record, writer, "fixture", "fixture", policy=policy)["original_vector"]
+        self.assertEqual(producer_vector, writer_vector)
+        self.assertNotEqual(producer_observations, writer["observations"])
+        path = self.write_receipt_fixture(envelope, receipts)
+        result = self.v.verify_retained_receipts(self.manifest, record, publications, envelope,
+                                                 "fixture", "fixture", path, policy=policy)
+        self.assertEqual(result["original_vector"], writer_vector)
+        premature_final = copy.deepcopy(envelope)
+        premature_final["observed_at"] = "2026-09-25T22:05:40Z"
+        with self.assertRaises(self.v.RecoveryError):
+            self.v.verify_retained_receipts(self.manifest, record, publications, premature_final,
+                                            "fixture", "fixture", path, policy=policy)
+        for field, wrong in (("run_id", 40000000001), ("run_attempt", 3),
+                             ("controller_sha", "d" * 40), ("controller_ref", "refs/tags/v0.2.7-recover.4"),
+                             ("controller_tag_object", "e" * 40)):
+            changed_identity = copy.deepcopy(envelope)
+            changed_identity["origin"]["observations"]["observer"][field] = wrong
+            with self.subTest(writer_field=field):
+                with self.assertRaises(self.v.RecoveryError):
+                    self.v.verify_retained_receipts(self.manifest, record, publications, changed_identity,
+                                                    "fixture", "fixture", path, policy=policy)
+        changed = copy.deepcopy(envelope)
+        changed["origin"] = self.writer_origin_fixture(envelope)
+        for phase in ("before", "after"):
+            target = next(x for x in changed["origin"]["observations"][phase]["records"] if x["id"] == 10518086890)
+            target["status"] = 200
+            target["variant"] = "present"
+            target["metadata"] = copy.deepcopy(next(x for x in historical["metadata"] if x["id"] == 10518086890))
+            target["metadata"]["expired"] = True
+        changed_vector = self.v.verify_retained_origin(self.manifest, record, changed["origin"],
+                                                       "fixture", "fixture", policy=policy)["original_vector"]
+        self.assertNotEqual(producer_vector, changed_vector)
+        with self.assertRaisesRegex(self.v.RecoveryError, "producer/writer original vector"):
+            self.v.verify_retained_receipts(self.manifest, record, publications, changed,
+                                            "fixture", "fixture", path, policy=policy)
+
+    def test_full_v2_rejects_producer_raw_time_tampering_with_same_vector(self):
+        record, publications, policy, envelope, receipts = self.v2_receipt_fixture()
+        envelope["origin"] = self.writer_origin_fixture(envelope)
+        envelope["observed_at"] = "2026-09-25T22:06:00Z"
+        historical = self.v.read_historical_custody(self.manifest, record, "fixture")
+        original_vector = self.v.validate_original_observations(
+            self.manifest, record, policy, historical, receipts["custody-receipt.json"]["original_observations"],
+            now="2026-09-25T22:02:00Z")
+        for member in receipts.values():
+            member["original_observations"]["before"]["records"][0]["request_started_at"] = "2026-09-25T22:00:00Z"
+        tampered_vector = self.v.validate_original_observations(
+            self.manifest, record, policy, historical, receipts["custody-receipt.json"]["original_observations"],
+            now="2026-09-25T22:02:00Z")
+        self.assertEqual(original_vector, tampered_vector)
+        path = self.write_receipt_fixture(envelope, receipts)
+        with self.assertRaisesRegex(self.v.RecoveryError, "outside import/check interval"):
+            self.v.verify_retained_receipts(self.manifest, record, publications, envelope,
+                                            "fixture", "fixture", path, policy=policy)
+
+    def test_preliminary_receipt_profile_rejects_replay_without_historical_origin(self):
+        record, publications, policy, envelope, receipts = self.v2_receipt_fixture()
+        path = self.write_receipt_fixture(envelope, receipts)
+        preliminary = copy.deepcopy(envelope)
+        preliminary.pop("origin")
+        preliminary.pop("metadata_after")
+        result = self.v.retained_receipt_provenance(self.manifest, record, policy, preliminary)
+        self.assertEqual(set(result), {"profile", "context", "upload_outputs", "observed_at"})
+        self.assertEqual(result["profile"]["zip_sha256"], envelope["upload_outputs"]["artifact_digest"])
+        self.assertNotIn("acceptance_verified", result)
+        self.assertEqual(result["profile"]["zip_size"], path.stat().st_size)
+        with self.assertRaises(self.v.RecoveryError):
+            self.v.verify_retained_receipts(self.manifest, record, publications, preliminary,
+                                            "fixture", "fixture", path, policy=policy)
+        for mutation in (lambda e: e.update(operation="recover-0.2.7-retained"),
+                         lambda e: e.update(policy_sha256="0" * 64),
+                         lambda e: e["context"].update(run_attempt=1),
+                         lambda e: e["context"].update(run_id=35257955565),
+                         lambda e: e["context"].update(controller_sha=PRODUCT_SHA),
+                         lambda e: e["context"].update(controller_ref=self.v.RETAINED_REF),
+                         lambda e: e["context"].update(controller_tag_object="wrong"),
+                         lambda e: e["current_run"].update(run_attempt=1),
+                         lambda e: e["current_jobs"].update(total_count=2),
+                         lambda e: e["current_jobs"]["jobs"][0].update(run_attempt=1),
+                         lambda e: e["current_jobs"]["jobs"][0].update(conclusion="failure"),
+                         lambda e: e["current_jobs"]["jobs"][0]["steps"][0].update(conclusion="failure"),
+                         lambda e: e["current_jobs"]["jobs"][0]["steps"][1].update(conclusion="failure"),
+                         lambda e: e["metadata_before"].update(expired=True),
+                         lambda e: e["metadata_before"].update(size_in_bytes=1048577),
+                         lambda e: e["metadata_before"].update(digest="sha256:" + "0" * 64),
+                         lambda e: e["metadata_before"].update(expires_at="2026-09-25T22:03:31Z"),
+                         lambda e: e["upload_outputs"].update(artifact_id=1),
+                         lambda e: e["upload_outputs"].pop("artifact_id"),
+                         lambda e: e["members"][0].update(sha256="wrong"),
+                         lambda e: e.update(observed_at="2026-10-25T22:02:30Z")):
+            changed = copy.deepcopy(preliminary)
+            mutation(changed)
+            with self.subTest(mutation=mutation):
+                with self.assertRaises(self.v.RecoveryError):
+                    self.v.retained_receipt_provenance(self.manifest, record, policy, changed)
+
+    def test_preliminary_receipt_provenance_enforces_each_chronology_inequality(self):
+        record, _, policy, envelope, receipts = self.v2_receipt_fixture()
+        self.write_receipt_fixture(envelope, receipts)
+        preliminary = copy.deepcopy(envelope)
+        preliminary.pop("origin")
+        preliminary.pop("metadata_after")
+        self.assertEqual(set(self.v.retained_receipt_provenance(self.manifest, record, policy, preliminary)),
+                         {"profile", "context", "upload_outputs", "observed_at"})
+
+        # Each case crosses one neighboring boundary in the required chronology.
+        negative = (
+            ("producer_start_after_import_start", lambda e: e["current_jobs"]["jobs"][0].update(started_at="2026-09-25T22:00:02Z")),
+            ("checked_before_import_start", lambda e: e["context"].update(checked_at="2026-09-25T22:00:00Z")),
+            ("checked_after_import_end", lambda e: e["context"].update(checked_at="2026-09-25T22:02:02Z")),
+            ("import_end_after_upload_start", lambda e: e["current_jobs"]["jobs"][0]["steps"][0].update(completed_at="2026-09-25T22:02:03Z")),
+            ("upload_start_after_upload_end", lambda e: e["current_jobs"]["jobs"][0]["steps"][1].update(started_at="2026-09-25T22:03:01Z")),
+            ("producer_end_before_upload_end", lambda e: e["current_jobs"]["jobs"][0].update(completed_at="2026-09-25T22:02:59Z")),
+            ("observed_before_producer_end", lambda e: e.update(observed_at="2026-09-25T22:03:29Z")),
+        )
+        for label, mutate in negative:
+            changed = copy.deepcopy(preliminary)
+            mutate(changed)
+            with self.subTest(negative=label):
+                with self.assertRaisesRegex(self.v.RecoveryError, "current producer/import/upload chronology differs"):
+                    self.v.retained_receipt_provenance(self.manifest, record, policy, changed)
+
+        equality = (
+            ("producer_start_equals_import_start", lambda e: e["current_jobs"]["jobs"][0].update(started_at="2026-09-25T22:00:01Z")),
+            ("checked_equals_import_start", lambda e: e["context"].update(checked_at="2026-09-25T22:00:01Z")),
+            ("checked_equals_import_end", lambda e: e["context"].update(checked_at="2026-09-25T22:02:01Z")),
+            ("import_end_equals_upload_start", lambda e: e["current_jobs"]["jobs"][0]["steps"][0].update(completed_at="2026-09-25T22:02:02Z")),
+            ("upload_start_equals_upload_end", lambda e: e["current_jobs"]["jobs"][0]["steps"][1].update(started_at="2026-09-25T22:02:30Z", completed_at="2026-09-25T22:02:30Z")),
+            ("upload_end_equals_producer_end", lambda e: e["current_jobs"]["jobs"][0]["steps"][1].update(completed_at="2026-09-25T22:03:30Z")),
+            ("producer_end_equals_observed", lambda e: e.update(observed_at="2026-09-25T22:03:30Z")),
+        )
+        for label, mutate in equality:
+            changed = copy.deepcopy(preliminary)
+            mutate(changed)
+            with self.subTest(equality=label):
+                self.assertEqual(self.v.retained_receipt_provenance(self.manifest, record, policy, changed)["observed_at"],
+                                 changed["observed_at"])
+
+    def test_v2_receipts_bind_policy_operation_vector_and_raw_observations(self):
+        record, publications, policy, envelope, receipts = self.v2_receipt_fixture()
+        path = self.write_receipt_fixture(envelope, receipts)
+        result = self.v.verify_retained_receipts(self.manifest, record, publications, envelope,
+                                                 "fixture", "fixture", path, policy=policy)
+        custody_receipt, acceptance_receipt = receipts.values()
+        self.assertEqual(custody_receipt["checker_version"], "retained-027/v2")
+        self.assertEqual(custody_receipt["mode"], "recover-0.2.7-retained-404")
+        self.assertEqual(custody_receipt["original_observations"], acceptance_receipt["original_observations"])
+        self.assertEqual(custody_receipt["original_vector"], result["original_vector"])
+        last_observation_finish = max(x["request_finished_at"] for x in envelope["origin"]["observations"]["after"]["records"])
+        self.assertLessEqual(last_observation_finish, envelope["context"]["checked_at"])
+        self.assertLessEqual(envelope["context"]["checked_at"], envelope["current_jobs"]["jobs"][0]["steps"][1]["started_at"])
+        for mutation in (lambda e: e.update(origin=None),
+                         lambda e: e["origin"]["observations"]["after"]["records"][0].update(request_started_at="2026-09-25T21:59:59Z"),
+                         lambda e: e["origin"]["observations"]["after"]["records"][0].update(request_started_at="2026-09-25T22:02:02Z"),
+                         lambda e: e["origin"]["observations"]["observer"].update(job_id=1),
+                         lambda e: e["metadata_after"].update(expired=True),
+                         lambda e: e.update(observed_at="2026-10-25T22:02:30Z")):
+            changed = copy.deepcopy(envelope)
+            mutation(changed)
+            with self.subTest(mutation=mutation):
+                with self.assertRaises(self.v.RecoveryError):
+                    self.v.verify_retained_receipts(self.manifest, record, publications, changed,
+                                                    "fixture", "fixture", path, policy=policy)
+        changed_receipts = copy.deepcopy(receipts)
+        changed_receipts["custody-receipt.json"]["original_observations"]["after"]["records"][0]["request_finished_at"] = "2026-09-25T22:01:59Z"
+        changed = copy.deepcopy(envelope)
+        bad_path = self.write_receipt_fixture(changed, changed_receipts)
+        with self.assertRaises(self.v.RecoveryError):
+            self.v.verify_retained_receipts(self.manifest, record, publications, changed, "fixture", "fixture", bad_path, policy=policy)
+        for mutation in (lambda r: r["custody-receipt.json"].update(checker_version="retained-027/v1"),
+                         lambda r: r["acceptance-receipt.json"].update(metadata_policy_sha256="0" * 64),
+                         lambda r: r["custody-receipt.json"]["results"].update(controller_signature_verified=False),
+                         lambda r: r["acceptance-receipt.json"]["results"]["publications"][0].update(crypto_verified=False),
+                         lambda r: r["custody-receipt.json"].pop("original_observations")):
+            modified = copy.deepcopy(receipts)
+            mutation(modified)
+            changed = copy.deepcopy(envelope)
+            bad_path = self.write_receipt_fixture(changed, modified)
+            with self.subTest(mutation=mutation):
+                with self.assertRaises(self.v.RecoveryError):
+                    self.v.verify_retained_receipts(self.manifest, record, publications, changed, "fixture", "fixture", bad_path, policy=policy)
+        with self.assertRaises(self.v.RecoveryError):
+            self.v.verify_retained_receipts(self.manifest, record, publications, envelope,
+                                            "fixture", "fixture", path)
+        old_record, old_publications, old_envelope, old_receipts = self.receipt_fixture()
+        old_path = self.write_receipt_fixture(old_envelope, old_receipts)
+        with self.assertRaises(self.v.RecoveryError):
+            self.v.verify_retained_receipts(self.manifest, old_record, old_publications, old_envelope,
+                                            "fixture", "fixture", old_path, policy=policy)
+        corrupted = copy.deepcopy(envelope)
+        malformed_path = self.root / "malformed-receipt.zip"
+        malformed_path.write_bytes(b"not a receipt ZIP")
+        with self.assertRaises(self.v.RecoveryError):
+            self.v.verify_retained_receipts(self.manifest, record, publications, corrupted,
+                                            "fixture", "fixture", malformed_path, policy=policy)
 
     def test_current_receipts_require_direct_upload_same_attempt_and_complete_current_acceptance(self):
         record, publications, envelope, receipts = self.receipt_fixture()

@@ -43,6 +43,8 @@ MAX_TOTAL_BYTES = 192 * 1024 * 1024
 CHUNK_BYTES = 1024 * 1024
 LANES = ("npm-wasm", "npm-llm", "npm-sdk", "python", "sbom", "native-x86_64", "native-aarch64")
 RETAINED_RECORD_SHA256 = "7f2eac05d0fea00a29a1ea3ebf7605eee7ab66905a40d8e016ef50510c2c038a"
+RETAINED_METADATA_POLICY_SHA256 = "bf9968454e1fb95fde2b2c435f61940a39cc25e6fb45a28ff9523a82f755c244"
+RETAINED_METADATA_OPERATION = "recover-0.2.7-retained-404"
 RETAINED_RUN_ID = 35754493083
 RETAINED_COMMIT = "2198e4ef610e9ef6d04adf726f7f4b3e156a3bc1"
 RETAINED_REF = "refs/tags/v0.2.7-recover.2"
@@ -50,7 +52,9 @@ RETAINED_MAX_BYTES = 147126946
 DISK_FLOOR_BYTES = 4 * 1024**3
 RECEIPT_MAX_BYTES = 1024 * 1024
 RECEIPT_JOB = "Verify Retained 0.2.7 Custody and Publications"
+RECEIPT_WRITER_JOB = "Complete Retained 0.2.7 GitHub Release"
 RECEIPT_UPLOAD = "Upload Current Retained Acceptance Receipt"
+RECEIPT_IMPORT = "Verify Retained Custody, Publications and GitHub Inventory"
 RECEIPT_ARTIFACT = "exochain-027-retained-acceptance-receipt"
 EMPTY_HISTORICAL = ("npm-llm-tarball-check.txt", "npm-sdk-tarball-check.txt", "npm-wasm-tarball-check.txt", "python-artifact-check.json")
 
@@ -83,6 +87,40 @@ def validate_retained_record(manifest, record):
 
 def load_retained_record(manifest, path):
     return validate_retained_record(manifest, load_json(path, "retained custody record"))
+
+
+def validate_retained_metadata_policy(manifest, record, policy):
+    validate_retained_record(manifest, record)
+    keys(policy, ("schema", "operation", "manifest_sha256", "publications_sha256", "retained_sha256",
+                  "repository", "original", "retaining", "retained_artifact_ids", "unavailable_originals"), "retained metadata policy")
+    exact(policy["schema"], "exochain-retained-metadata-policy-027/v1", "retained metadata policy schema")
+    exact(policy["operation"], RETAINED_METADATA_OPERATION, "retained metadata operation")
+    for name, expected in (("manifest_sha256", MANIFEST_SHA256), ("publications_sha256", PUBLICATIONS_SHA256),
+                           ("retained_sha256", RETAINED_RECORD_SHA256)):
+        exact(policy[name], expected, "retained metadata " + name)
+    exact(policy["repository"], {"name": "exochain/exochain", "id": REPOSITORY_ID, "owner_id": 129763194}, "policy repository")
+    exact(policy["original"], {"run_id": RUN_ID, "attempt": 1}, "policy original run")
+    exact(policy["retaining"], {"run_id": RETAINED_RUN_ID, "attempt": 1}, "policy retaining run")
+    exact(policy["retained_artifact_ids"], [record[k]["metadata"]["id"] for k in ("payload", "custody")], "policy retained IDs")
+    originals = policy["unavailable_originals"]
+    require(type(originals) is list and len(originals) == 4, "policy unavailable inventory differs")
+    exact([item.get("id") if type(item) is dict else None for item in originals],
+          [10518086890, 10518128532, 10517978596, 10517854663], "policy unavailable IDs")
+    custody_members = {item["path"]: item["sha256"] for item in record["custody"]["files"]}
+    original_ids = {item["id"] for item in manifest["artifacts"] + manifest["rust_preparation"]}
+    for item in originals:
+        keys(item, ("id", "historical_member", "historical_sha256", "expires_at"), "policy original")
+        positive_integer(item["id"], "policy original ID")
+        require(item["id"] in original_ids, "policy original outside manifest")
+        exact(item["historical_member"], f"artifact-metadata/{item['id']}.json", "policy historical member")
+        exact(item["historical_sha256"], custody_members.get(item["historical_member"]), "policy custody member hash")
+        timestamp(item["expires_at"], "policy original expiry")
+    exact(semantic_digest(policy), RETAINED_METADATA_POLICY_SHA256, "reviewed retained metadata policy digest")
+    return policy
+
+
+def load_retained_metadata_policy(manifest, record, path):
+    return validate_retained_metadata_policy(manifest, record, load_json(path, "retained metadata policy"))
 
 
 def retained_profile(manifest, record, kind):
@@ -286,18 +324,106 @@ def successful_steps(job):
     return {step["name"]: step for step in steps}
 
 
-def verify_retained_origin(manifest, record, input_record, evidence_path, workflow_path):
-    validate_retained_record(manifest, record)
-    keys(input_record, ("schema", "observed_at", "retaining_run", "retaining_jobs", "retaining_tag",
-                        "original_run", "original_jobs", "original_metadata", "retained_before", "retained_after"), "retained origin input")
-    exact(input_record["schema"], "exochain-retained-origin-input-027/v1", "retained origin input schema")
-    observed = timestamp(input_record["observed_at"], "observation")
+def validate_original_observation(manifest, record, policy, historical, observation, *, now):
+    """Validate one typed status against authenticated history; never authorize by itself."""
+    validate_retained_metadata_policy(manifest, record, policy)
+    require(type(observation) is dict, "original observation must be an object")
+    keys(observation, ("id", "endpoint_role", "request_started_at", "request_finished_at", "status", "variant",
+                       "historical_member", "historical_sha256") if observation.get("status") == 404 else
+         ("id", "endpoint_role", "request_started_at", "request_finished_at", "status", "variant",
+          "historical_member", "historical_sha256", "metadata"), "original observation")
+    positive_integer(observation["id"], "observed original ID")
+    exact(observation["endpoint_role"], "original-artifact-metadata", "original endpoint role")
+    start = timestamp(observation["request_started_at"], "original request start")
+    finish = timestamp(observation["request_finished_at"], "original request finish")
+    require(start <= finish <= timestamp(now, "verifier now"), "original observation chronology differs")
+    require(type(historical) is dict and type(historical.get("metadata")) is list, "historical origin absent")
+    by_id = {item["id"]: item for item in historical["metadata"]}
+    require(observation["id"] in by_id and len(by_id) == 9, "observed original outside authenticated history")
+    original = by_id[observation["id"]]
+    member = f"artifact-metadata/{observation['id']}.json"
+    exact(observation["historical_member"], member, "original historical member")
+    custody_members = {item["path"]: item["sha256"] for item in record["custody"]["files"]}
+    exact(observation["historical_sha256"], custody_members.get(member), "original historical hash")
+    selected = {item["id"]: item for item in policy["unavailable_originals"]}.get(observation["id"])
+    if selected is not None:
+        exact(observation["historical_sha256"], selected["historical_sha256"], "selected historical hash")
+        exact(original["expires_at"], selected["expires_at"], "selected historical expiry")
+    require(type(observation["status"]) is int and observation["status"] in (200, 404), "original actual status disallowed")
+    if observation["status"] == 404:
+        require(selected is not None, "unselected original metadata unavailable")
+        exact(observation["variant"], "unavailable_404", "unavailable original variant")
+        require(start >= timestamp(selected["expires_at"], "selected original expiry"), "original 404 precedes pinned expiry")
+        return {"id": observation["id"], "variant": "unavailable_404", "status": 404,
+                "historical_sha256": observation["historical_sha256"]}
+    exact(observation["variant"], "present", "present original variant")
+    actual = observation["metadata"]
+    keys(actual, original.keys(), "present original metadata")
+    for key, value in original.items():
+        if key != "expired":
+            exact(actual[key], value, "present original " + key)
+    require(type(actual["expired"]) is bool, "present original expired must be boolean")
+    require(actual["expired"] == (finish >= timestamp(original["expires_at"], "original expiry")),
+            "present original expiry differs from request finish")
+    try:
+        actual_digest = semantic_digest(actual)
+        expected_digest = semantic_digest(dict(original, expired=actual["expired"]))
+    except (TypeError, ValueError, RecursionError) as error:
+        raise RecoveryError("present original metadata is not canonical JSON") from error
+    exact(actual_digest, expected_digest, "strict present original metadata types")
+    return {"id": observation["id"], "variant": "present", "status": 200,
+            "historical_sha256": observation["historical_sha256"], "metadata_sha256": actual_digest}
+
+
+def validate_original_observations(manifest, record, policy, historical, observations, *, now):
+    validate_retained_metadata_policy(manifest, record, policy)
+    keys(observations, ("schema", "operation", "policy_sha256", "observer", "before", "after"), "original observations")
+    exact(observations["schema"], "exochain-retained-original-observations-027/v1", "observations schema")
+    exact(observations["operation"], RETAINED_METADATA_OPERATION, "observations operation")
+    exact(observations["policy_sha256"], RETAINED_METADATA_POLICY_SHA256, "observations policy pin")
+    observer = observations["observer"]
+    keys(observer, ("run_id", "run_attempt", "controller_sha", "controller_ref", "controller_tag_object",
+                    "job_id", "job_name", "job_started_at"), "original observer")
+    for field in ("run_id", "run_attempt", "job_id"):
+        positive_integer(observer[field], "observer " + field)
+    require(observer["run_id"] not in (RUN_ID, RETAINED_RUN_ID), "observer reused historical run")
+    verify_controller(observer["controller_sha"], observer["controller_ref"], observer["controller_ref"].removeprefix("refs/tags/") if type(observer["controller_ref"]) is str else "")
+    require(type(observer["controller_tag_object"]) is str and re.fullmatch(r"[0-9a-f]{40}", observer["controller_tag_object"]) is not None,
+            "observer tag object is invalid")
+    require(observer["job_name"] in (RECEIPT_JOB, RECEIPT_WRITER_JOB), "observer job role is not retained producer or writer")
+    job_start = timestamp(observer["job_started_at"], "observer job start")
+    now_time = timestamp(now, "verifier now")
+    vectors = []
+    prior_finish = job_start
+    expected_ids = sorted(item["id"] for item in manifest["artifacts"] + manifest["rust_preparation"])
+    for phase in ("before", "after"):
+        passage = observations[phase]
+        keys(passage, ("observed_at", "records"), phase + " observation pass")
+        observed = timestamp(passage["observed_at"], phase + " observed at")
+        require(type(passage["records"]) is list and len(passage["records"]) == 9, "original observation inventory incomplete")
+        exact([item.get("id") if type(item) is dict else None for item in passage["records"]], expected_ids,
+              "original observation order/inventory")
+        vector = []
+        for item in passage["records"]:
+            request_start = timestamp(item.get("request_started_at"), "original request start")
+            request_finish = timestamp(item.get("request_finished_at"), "original request finish")
+            require(prior_finish <= request_start <= request_finish <= observed <= now_time,
+                    "original observation interval outside job/pass")
+            vector.append(validate_original_observation(manifest, record, policy, historical, item, now=now))
+            prior_finish = request_finish
+        vectors.append(vector)
+        prior_finish = observed
+    exact(vectors[0], vectors[1], "original availability transition")
+    return vectors[1]
+
+
+def _verify_retaining_context(record, retaining_run, retaining_jobs, retaining_tag, workflow_path):
     retaining = record["retaining"]
-    exact(input_record["retaining_tag"], {"object": retaining["tag_object"], "commit": RETAINED_COMMIT, "ref": RETAINED_REF}, "retaining tag object and peel")
+    exact(retaining_tag, {"object": retaining["tag_object"], "commit": RETAINED_COMMIT, "ref": RETAINED_REF}, "retaining tag object and peel")
     verify_retaining_workflow_source(record, workflow_path)
-    validate_run_identity(input_record["retaining_run"], RETAINED_RUN_ID, 1, RETAINED_COMMIT, "v0.2.7-recover.2")
-    exact(input_record["retaining_run"].get("conclusion"), "failure", "retaining overall conclusion")
-    jobs = complete_jobs(input_record["retaining_jobs"], RETAINED_RUN_ID, 1, RETAINED_COMMIT, "v0.2.7-recover.2")
+    validate_run_identity(retaining_run, RETAINED_RUN_ID, 1, RETAINED_COMMIT, "v0.2.7-recover.2")
+    exact(retaining_run.get("conclusion"), "failure", "retaining overall conclusion")
+    jobs = complete_jobs(retaining_jobs, RETAINED_RUN_ID, 1, RETAINED_COMMIT, "v0.2.7-recover.2")
     exact(len(jobs), retaining["jobs_total"], "complete retaining jobs inventory")
     producer = jobs.get(retaining["producer"]["id"])
     require(producer is not None, "retaining producer is absent")
@@ -313,7 +439,73 @@ def verify_retained_origin(manifest, record, input_record, evidence_path, workfl
         for key, value in expected.items():
             exact(step.get(key), value, "retaining step " + key)
         require(timestamp(step.get("started_at"), "step start") <= timestamp(step.get("completed_at"), "step end"), "retaining step chronology differs")
-    import_finished = timestamp(retaining["producer"]["steps"][0]["completed_at"], "proved historical import")
+    require(timestamp(producer["started_at"], "retaining producer start") <=
+            timestamp(retaining["producer"]["steps"][0]["started_at"], "retaining import start") <=
+            timestamp(retaining["producer"]["steps"][0]["completed_at"], "retaining import finish") <=
+            timestamp(retaining["producer"]["steps"][1]["started_at"], "retaining payload upload start") <=
+            timestamp(retaining["producer"]["steps"][1]["completed_at"], "retaining payload upload end") <=
+            timestamp(retaining["producer"]["steps"][2]["started_at"], "retaining custody upload start") <=
+            timestamp(retaining["producer"]["steps"][2]["completed_at"], "retaining custody upload end") <=
+            timestamp(producer["completed_at"], "retaining producer finish"), "retaining import/upload chronology differs")
+    return timestamp(retaining["producer"]["steps"][0]["completed_at"], "proved historical import")
+
+
+def _verify_retained_origin_v2(manifest, record, policy, input_record, evidence_path, workflow_path, *, historical=None):
+    validate_retained_metadata_policy(manifest, record, policy)
+    keys(input_record, ("schema", "operation", "policy_sha256", "observations", "controls_before", "controls_after", "retaining_tag"), "retained origin v2 input")
+    exact(input_record["schema"], "exochain-retained-origin-027/v2", "retained origin v2 schema")
+    exact(input_record["operation"], RETAINED_METADATA_OPERATION, "retained origin v2 operation")
+    exact(input_record["policy_sha256"], RETAINED_METADATA_POLICY_SHA256, "retained origin v2 policy")
+    if historical is None:
+        historical = read_historical_custody(manifest, record, evidence_path)
+    import_finished = None
+    before_time = None
+    for phase in ("controls_before", "controls_after"):
+        controls = input_record[phase]
+        keys(controls, ("original_run", "original_jobs", "retaining_run", "retaining_jobs", "retained_metadata", "observed_at"), "origin " + phase)
+        observed = timestamp(controls["observed_at"], phase + " observed at")
+        if before_time is not None:
+            require(before_time <= observed, "origin controls reversed")
+        else:
+            before_time = observed
+        import_finished = _verify_retaining_context(record, controls["retaining_run"], controls["retaining_jobs"],
+                                                    input_record["retaining_tag"], workflow_path)
+        validate_run_identity(controls["original_run"], RUN_ID, 1, PRODUCT_COMMIT, "v0.2.7")
+        verify_origin(manifest, controls["original_run"], controls["original_jobs"], historical["metadata"])
+        values = controls["retained_metadata"]
+        require(type(values) is list and len(values) == 2, "retained control metadata inventory differs")
+        for actual, kind in zip(values, ("payload", "custody")):
+            exact(actual, record[kind]["metadata"], "fresh retained " + kind + " metadata")
+            exact(semantic_digest(actual), semantic_digest(record[kind]["metadata"]), "strict retained control types")
+            require(timestamp(actual["created_at"], "retained creation") <= observed < timestamp(actual["expires_at"], "retained expiry"),
+                    "retained control outside availability interval")
+    observations = input_record["observations"]
+    vector = validate_original_observations(manifest, record, policy, historical, observations,
+                                            now=input_record["controls_after"]["observed_at"])
+    require(before_time <= timestamp(observations["before"]["records"][0]["request_started_at"], "first original request") <=
+            timestamp(observations["before"]["observed_at"], "before original observations") <=
+            timestamp(observations["after"]["observed_at"], "after original observations") <=
+            timestamp(input_record["controls_after"]["observed_at"], "after controls"), "origin observation/control chronology differs")
+    for original in historical["metadata"]:
+        require(timestamp(original["created_at"], "original creation") <= import_finished < timestamp(original["expires_at"], "original expiry"),
+                "historical import was not pre-expiry")
+    return {"schema": "exochain-retained-origin-result-027/v2", "mode": RETAINED_METADATA_OPERATION,
+            "retained_record_sha256": RETAINED_RECORD_SHA256, "metadata_policy_sha256": RETAINED_METADATA_POLICY_SHA256,
+            "historical_original_origin": historical["origin"], "observations": observations, "original_vector": vector,
+            "retaining_run_id": RETAINED_RUN_ID, "retained_artifacts_verified": 2, "historical_files_verified": 60,
+            "current_crypto_verified": False, "signature_verified": False, "mutation_attempted": False}
+
+
+def verify_retained_origin(manifest, record, input_record, evidence_path, workflow_path, *, policy=None):
+    if policy is not None:
+        return _verify_retained_origin_v2(manifest, record, policy, input_record, evidence_path, workflow_path)
+    validate_retained_record(manifest, record)
+    keys(input_record, ("schema", "observed_at", "retaining_run", "retaining_jobs", "retaining_tag",
+                        "original_run", "original_jobs", "original_metadata", "retained_before", "retained_after"), "retained origin input")
+    exact(input_record["schema"], "exochain-retained-origin-input-027/v1", "retained origin input schema")
+    observed = timestamp(input_record["observed_at"], "observation")
+    import_finished = _verify_retaining_context(record, input_record["retaining_run"], input_record["retaining_jobs"],
+                                                input_record["retaining_tag"], workflow_path)
     for phase in ("retained_before", "retained_after"):
         values = input_record[phase]
         require(type(values) is list and len(values) == 2, "retained metadata inventory differs")
@@ -409,14 +601,7 @@ def verify_retained_transport(manifest, record, archives, destination=None):
         return result
 
 
-def retained_receipt_bindings(manifest, record, context, origin):
-    """Build receipt bindings only; this does not verify signatures or crypto.
-
-    The producing job may use this while running. Only the final consumer calls
-    verify_retained_receipts, after authoritative producer/upload completion.
-    Context must be captured from the actual executing controller/environment.
-    """
-    validate_retained_record(manifest, record)
+def _validate_retained_receipt_context(context):
     keys(context, ("controller_sha", "controller_ref", "controller_tag_object", "run_id", "run_attempt",
                    "producer_job_id", "checked_at", "checker_sha256", "runtime_versions", "dry_run"), "current receipt context")
     sha, ref = context["controller_sha"], context["controller_ref"]
@@ -436,7 +621,27 @@ def retained_receipt_bindings(manifest, record, context, origin):
         require(type(value) is str and re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", value) is not None, "runtime version must be exact")
     for runtime, expected in {"python": "3.13.7", "node": "24.15.0", "npm": "11.12.1"}.items():
         exact(versions[runtime], expected, "pinned current " + runtime + " runtime")
+
+
+def retained_receipt_bindings(manifest, record, context, origin, *, policy=None):
+    """Build flat receipt bindings; result does not independently perform crypto."""
+    validate_retained_record(manifest, record)
+    _validate_retained_receipt_context(context)
     exact(origin.get("retained_record_sha256"), RETAINED_RECORD_SHA256, "receipt origin record pin")
+    if policy is not None:
+        validate_retained_metadata_policy(manifest, record, policy)
+        exact(origin.get("schema"), "exochain-retained-origin-result-027/v2", "receipt v2 origin")
+        exact(origin.get("metadata_policy_sha256"), RETAINED_METADATA_POLICY_SHA256, "receipt v2 policy")
+        exact(origin.get("mode"), RETAINED_METADATA_OPERATION, "receipt v2 operation")
+        require(type(origin.get("original_vector")) is list and len(origin["original_vector"]) == 9, "receipt v2 original vector absent")
+        return {"mode": RETAINED_METADATA_OPERATION, **context, "checker_version": "retained-027/v2",
+                "retained_record_sha256": RETAINED_RECORD_SHA256, "metadata_policy_sha256": RETAINED_METADATA_POLICY_SHA256,
+                "manifest_sha256": MANIFEST_SHA256, "publications_sha256": PUBLICATIONS_SHA256,
+                "product": manifest["product"], "historical_original_origin": origin["historical_original_origin"],
+                "original_vector": origin["original_vector"],
+                "transports": [{"id": record[k]["metadata"]["id"], "digest": record[k]["metadata"]["digest"]} for k in ("payload", "custody")],
+                "mutation_attempted": False}
+    exact(origin.get("schema"), "exochain-retained-origin-result-027/v1", "receipt v1 origin")
     return {"mode": record["mode"], **context, "checker_version": "retained-027/v1",
             "retained_record_sha256": RETAINED_RECORD_SHA256, "manifest_sha256": MANIFEST_SHA256,
             "publications_sha256": PUBLICATIONS_SHA256, "product": manifest["product"],
@@ -445,19 +650,9 @@ def retained_receipt_bindings(manifest, record, context, origin):
             "mutation_attempted": False}
 
 
-def retained_receipt_profile(manifest, record, publications, input_record, evidence_path, workflow_path):
-    """Validate authoritative provenance before downloading; no receipt acceptance.
-
-    Authoritative metadata/jobs and direct upload outputs are supplied by the
-    captured controller via fixed APIs. Embedded JSON cannot establish producer
-    ownership, and the checks below never perform network requests.
-    """
-    validate_publications(manifest, publications)
-    keys(input_record, ("schema", "origin", "context", "current_run", "current_jobs", "upload_outputs", "metadata_before", "members"), "receipt pre-download input")
-    exact(input_record["schema"], "exochain-retained-receipts-input-027/v1", "receipt input schema")
-    origin = verify_retained_origin(manifest, record, input_record["origin"], evidence_path, workflow_path)
+def _retained_receipt_transport_profile(manifest, record, input_record, observed_at, *, require_import):
     context = input_record["context"]
-    bindings = retained_receipt_bindings(manifest, record, context, origin)
+    _validate_retained_receipt_context(context)
     run_id, attempt, sha, ref = (context[k] for k in ("run_id", "run_attempt", "controller_sha", "controller_ref"))
     validate_run_identity(input_record["current_run"], run_id, attempt, sha, ref.removeprefix("refs/tags/"), completed=False)
     jobs = complete_jobs(input_record["current_jobs"], run_id, attempt, sha, ref.removeprefix("refs/tags/"))
@@ -475,8 +670,19 @@ def retained_receipt_profile(manifest, record, publications, input_record, evide
     upload_start = timestamp(upload.get("started_at"), "current upload start")
     upload_end = timestamp(upload.get("completed_at"), "current upload end")
     checked = timestamp(context["checked_at"], "current checks")
-    observed = timestamp(input_record["origin"]["observed_at"], "current observation")
-    require(started <= checked <= upload_start <= upload_end <= finished <= observed, "current producer/upload chronology differs")
+    observed = timestamp(observed_at, "current observation")
+    if require_import:
+        import_step = steps.get(RECEIPT_IMPORT)
+        require(import_step is not None, "current receipt import step absent")
+        exact(import_step.get("status"), "completed", "receipt import status")
+        exact(import_step.get("conclusion"), "success", "receipt import conclusion")
+        import_start = timestamp(import_step.get("started_at"), "current import start")
+        import_end = timestamp(import_step.get("completed_at"), "current import end")
+        require(started <= import_start <= checked <= import_end <= upload_start <= upload_end <= finished <= observed,
+                "current producer/import/upload chronology differs")
+    else:
+        import_step = None
+        require(started <= checked <= upload_start <= upload_end <= finished <= observed, "current producer/upload chronology differs")
     outputs = input_record["upload_outputs"]
     keys(outputs, ("artifact_id", "artifact_digest", "producer_job_id"), "direct upload outputs")
     positive_integer(outputs["artifact_id"], "direct upload artifact ID")
@@ -504,23 +710,142 @@ def retained_receipt_profile(manifest, record, publications, input_record, evide
         require(type(member["sha256"]) is str and re.fullmatch(r"[0-9a-f]{64}", member["sha256"]) is not None, "invalid receipt member hash")
     profile = {"zip_size": metadata["size_in_bytes"], "zip_sha256": outputs["artifact_digest"], "compression": 8,
                "mode": 0o100600, "dos_attributes": 32, "expanded_bytes": sum(m["size"] for m in members), "files": members}
-    return bindings, profile
+    return profile, producer, import_step, upload
 
 
-def verify_retained_receipts(manifest, record, publications, input_record, evidence_path, workflow_path, receipt_path):
+def retained_receipt_provenance(manifest, record, policy, input_record):
+    """Authenticate the direct handoff without historical-origin or receipt-byte claims."""
+    validate_retained_metadata_policy(manifest, record, policy)
+    keys(input_record, ("schema", "operation", "policy_sha256", "observed_at", "context", "current_run",
+                        "current_jobs", "upload_outputs", "metadata_before", "members"), "receipt preliminary input")
+    exact(input_record["schema"], "exochain-retained-receipts-input-027/v2", "receipt v2 input schema")
+    exact(input_record["operation"], RETAINED_METADATA_OPERATION, "receipt v2 operation")
+    exact(input_record["policy_sha256"], RETAINED_METADATA_POLICY_SHA256, "receipt v2 policy")
+    profile, _, _, _ = _retained_receipt_transport_profile(manifest, record, input_record,
+                                                            input_record["observed_at"], require_import=True)
+    return {"profile": profile, "context": input_record["context"],
+            "upload_outputs": input_record["upload_outputs"], "observed_at": input_record["observed_at"]}
+
+
+def retained_receipt_profile(manifest, record, publications, input_record, evidence_path, workflow_path, *, policy=None):
+    """Validate provenance and origin before downloading; no receipt acceptance."""
+    validate_publications(manifest, publications)
+    if policy is None:
+        keys(input_record, ("schema", "origin", "context", "current_run", "current_jobs", "upload_outputs", "metadata_before", "members"), "receipt pre-download input")
+        exact(input_record["schema"], "exochain-retained-receipts-input-027/v1", "receipt input schema")
+        origin = verify_retained_origin(manifest, record, input_record["origin"], evidence_path, workflow_path)
+        bindings = retained_receipt_bindings(manifest, record, input_record["context"], origin)
+        profile, _, _, _ = _retained_receipt_transport_profile(manifest, record, input_record,
+                                                                input_record["origin"]["observed_at"], require_import=False)
+        return bindings, profile
+    keys(input_record, ("schema", "operation", "policy_sha256", "observed_at", "origin", "context", "current_run",
+                        "current_jobs", "upload_outputs", "metadata_before", "members"), "receipt v2 pre-download input")
+    preliminary = {key: value for key, value in input_record.items() if key != "origin"}
+    provenance = retained_receipt_provenance(manifest, record, policy, preliminary)
+    origin = verify_retained_origin(manifest, record, input_record["origin"], evidence_path, workflow_path, policy=policy)
+    bindings = retained_receipt_bindings(manifest, record, input_record["context"], origin, policy=policy)
+    return bindings, provenance["profile"]
+
+
+def _validate_producer_receipt_observations(manifest, record, policy, input_record, historical, receipts, writer_vector):
+    """Authenticate receipt-contained producer observations separately from the writer."""
+    custody = receipts["custody-receipt.json"]
+    acceptance = receipts["acceptance-receipt.json"]
+    require(type(custody) is dict and type(acceptance) is dict, "receipt members must be objects")
+    producer_observations = custody.get("original_observations")
+    require(type(producer_observations) is dict, "producer original observations absent")
+    exact(acceptance.get("original_observations"), producer_observations, "receipt producer observations")
+    exact(semantic_digest(acceptance["original_observations"]), semantic_digest(producer_observations),
+          "strict receipt producer observation types")
+    context = input_record["context"]
+    producer_vector = validate_original_observations(manifest, record, policy, historical, producer_observations,
+                                                     now=context["checked_at"])
+    exact(producer_vector, writer_vector, "producer/writer original vector")
+    producer = complete_jobs(input_record["current_jobs"], context["run_id"], context["run_attempt"],
+                             context["controller_sha"], context["controller_ref"].removeprefix("refs/tags/"))[context["producer_job_id"]]
+    steps = successful_steps(producer)
+    import_step, upload = steps[RECEIPT_IMPORT], steps[RECEIPT_UPLOAD]
+    observer = producer_observations["observer"]
+    for name, value in {"run_id": context["run_id"], "run_attempt": context["run_attempt"],
+                        "controller_sha": context["controller_sha"], "controller_ref": context["controller_ref"],
+                        "controller_tag_object": context["controller_tag_object"], "job_id": producer["id"],
+                        "job_name": producer["name"], "job_started_at": producer["started_at"]}.items():
+        exact(observer[name], value, "producer observation " + name)
+    producer_start = timestamp(producer["started_at"], "producer start")
+    import_start = timestamp(import_step["started_at"], "import start")
+    import_end = timestamp(import_step["completed_at"], "import end")
+    checked = timestamp(context["checked_at"], "producer checked at")
+    upload_start = timestamp(upload["started_at"], "upload start")
+    upload_end = timestamp(upload["completed_at"], "upload end")
+    producer_end = timestamp(producer["completed_at"], "producer end")
+    observed_at = timestamp(input_record["observed_at"], "final receipt observation")
+    require(producer_start <= import_start <= import_end <= upload_start <= upload_end <= producer_end <= observed_at,
+            "producer/import/upload interval differs")
+    for phase in ("before", "after"):
+        passage = producer_observations[phase]
+        for observation in passage["records"]:
+            require(import_start <= timestamp(observation["request_started_at"], "producer observation start") <=
+                    timestamp(observation["request_finished_at"], "producer observation finish") <= checked <= import_end,
+                    "producer original observation outside import/check interval")
+        require(timestamp(passage["observed_at"], "producer observation pass") <= checked,
+                "producer observation pass after checked at")
+    return producer_observations
+
+
+def verify_retained_receipts(manifest, record, publications, input_record, evidence_path, workflow_path, receipt_path, *, policy=None):
     """Final strict ZIP/results acceptance requires real before and after observations."""
-    keys(input_record, ("schema", "origin", "context", "current_run", "current_jobs", "upload_outputs", "metadata_before", "metadata_after", "members"), "receipt verification input")
-    bindings, profile = retained_receipt_profile(manifest, record, publications,
-        {key:value for key,value in input_record.items() if key != 'metadata_after'}, evidence_path, workflow_path)
+    if policy is None:
+        keys(input_record, ("schema", "origin", "context", "current_run", "current_jobs", "upload_outputs", "metadata_before", "metadata_after", "members"), "receipt verification input")
+    else:
+        keys(input_record, ("schema", "operation", "policy_sha256", "observed_at", "origin", "context", "current_run",
+                            "current_jobs", "upload_outputs", "metadata_before", "metadata_after", "members"), "receipt v2 verification input")
+    if policy is None:
+        bindings, profile = retained_receipt_profile(manifest, record, publications,
+            {key:value for key,value in input_record.items() if key != 'metadata_after'}, evidence_path, workflow_path)
+    else:
+        validate_publications(manifest, publications)
+        preliminary = {key: value for key, value in input_record.items() if key not in ("origin", "metadata_after")}
+        profile = retained_receipt_provenance(manifest, record, policy, preliminary)["profile"]
+        historical = read_historical_custody(manifest, record, evidence_path)
+        origin = _verify_retained_origin_v2(manifest, record, policy, input_record["origin"], evidence_path,
+                                           workflow_path, historical=historical)
+        bindings = retained_receipt_bindings(manifest, record, input_record["context"], origin, policy=policy)
     metadata = input_record['metadata_before']
     exact(metadata, input_record['metadata_after'], 'current receipt metadata changed during download')
     exact(semantic_digest(metadata), semantic_digest(input_record['metadata_after']), 'strict receipt metadata types')
+    if policy is not None:
+        observed_at = timestamp(input_record["observed_at"], "final receipt observation")
+        require(observed_at < timestamp(metadata["expires_at"], "current receipt expiry"), "receipt expired before final validation")
+        writer_observer = origin["observations"]["observer"]
+        for field in ("run_id", "run_attempt", "controller_sha", "controller_ref", "controller_tag_object"):
+            exact(writer_observer[field], input_record["context"][field], "writer observation " + field)
+        context = input_record["context"]
+        current_jobs = complete_jobs(input_record["current_jobs"], context["run_id"], context["run_attempt"],
+                                     context["controller_sha"], context["controller_ref"].removeprefix("refs/tags/"))
+        writer_job = current_jobs.get(writer_observer["job_id"])
+        require(writer_job is not None, "writer observation job absent from current run")
+        exact(writer_job.get("name"), writer_observer["job_name"], "writer observation job name")
+        exact(writer_job.get("started_at"), writer_observer["job_started_at"], "writer observation job start")
+        require(timestamp(writer_job["started_at"], "writer job start") <=
+                timestamp(input_record["origin"]["controls_before"]["observed_at"], "writer initial controls") <=
+                timestamp(input_record["origin"]["controls_after"]["observed_at"], "writer final controls") <= observed_at,
+                "writer origin/final receipt chronology differs")
+        if writer_job.get("status") == "completed":
+            exact(writer_job.get("conclusion"), "success", "writer observation completed job conclusion")
+            require(timestamp(origin["observations"]["after"]["observed_at"], "writer final pass") <=
+                    timestamp(writer_job.get("completed_at"), "writer job finish"), "writer observation after job finish")
+        else:
+            exact(writer_job.get("status"), "in_progress", "writer observation job status")
+            exact(writer_job.get("conclusion"), None, "writer in-progress job conclusion")
     context, outputs = input_record['context'], input_record['upload_outputs']
     run_id, attempt = context['run_id'], context['run_attempt']
     fd = regular_fd(receipt_path, RECEIPT_MAX_BYTES, "current receipt ZIP")
     with os.fdopen(fd, "rb") as stream:
         payloads = strict_zip_stream(stream, profile, collect=True)
     receipts = {name: parse_json(data, "current " + name) for name, data in payloads.items()}
+    if policy is not None:
+        producer_observations = _validate_producer_receipt_observations(manifest, record, policy, input_record,
+                                                                        historical, receipts, origin["original_vector"])
     custody_results = {"payload_files_verified": 40, "retained_archives_verified": 2, "original_zip_envelopes_verified": 0,
                        "native_attestations_verified": 2, "native_libraries_per_archive": 29,
                        "product_signature_verified": True, "retaining_signature_verified": True, "controller_signature_verified": True}
@@ -535,15 +860,22 @@ def verify_retained_receipts(manifest, record, publications, input_record, evide
                                             "file": p["file"], "source": p["source"], "public_bytes_verified": True,
                                             "crypto_verified": True} for p in publications["publications"]]}
     for name, results in (("custody", custody_results), ("acceptance", acceptance_results)):
-        expected = {"schema": "exochain-retained-" + name + "-receipt-027/v1", **bindings, "results": results}
+        expected = {"schema": "exochain-retained-" + name + "-receipt-027/" + ("v2" if policy is not None else "v1"),
+                    **bindings, "results": results}
+        if policy is not None:
+            expected["original_observations"] = producer_observations
         exact(receipts[name + "-receipt.json"], expected, "current " + name + " receipt")
         # Recursive bool/int distinctions are checked by canonical JSON bytes.
         exact(semantic_digest(receipts[name + "-receipt.json"]), semantic_digest(expected), "strict receipt value types")
-    return {"schema": "exochain-retained-receipts-result-027/v1", "run_id": run_id, "run_attempt": attempt,
+    result = {"schema": "exochain-retained-receipts-result-027/" + ("v2" if policy is not None else "v1"), "run_id": run_id, "run_attempt": attempt,
             "artifact_id": outputs["artifact_id"], "artifact_digest": outputs["artifact_digest"],
             "producer_job_id": context["producer_job_id"], "receipts_verified": 2, "dry_run": context["dry_run"],
             "crypto_claims_bound_to_current_producer": True, "independent_crypto_verification_performed": False,
             "mutation_attempted": False}
+    if policy is not None:
+        result["metadata_policy_sha256"] = RETAINED_METADATA_POLICY_SHA256
+        result["original_vector"] = origin["original_vector"]
+    return result
 
 
 class RecoveryError(ValueError):

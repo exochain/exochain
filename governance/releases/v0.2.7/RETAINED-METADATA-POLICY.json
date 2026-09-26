@@ -1,0 +1,17 @@
+{
+  "schema": "exochain-retained-metadata-policy-027/v1",
+  "operation": "recover-0.2.7-retained-404",
+  "manifest_sha256": "17c77eafa0ea34fa7437cbc0d6988f561d686e330bee8c17cfe0e6a354e1bec4",
+  "publications_sha256": "4596c339d2af34ce3aeff5f2dd4a6be95fbb044250e934a27221170b97902ca7",
+  "retained_sha256": "7f2eac05d0fea00a29a1ea3ebf7605eee7ab66905a40d8e016ef50510c2c038a",
+  "repository": {"name": "exochain/exochain", "id": 1116455646, "owner_id": 129763194},
+  "original": {"run_id": 35257955565, "attempt": 1},
+  "retaining": {"run_id": 35754493083, "attempt": 1},
+  "retained_artifact_ids": [10779404529, 10780480598],
+  "unavailable_originals": [
+    {"id": 10518086890, "historical_member": "artifact-metadata/10518086890.json", "historical_sha256": "23a1d7f70d0da078e712fe0844f5c52101cd9b03e510941f6c758508a6e73245", "expires_at": "2026-09-24T20:09:34Z"},
+    {"id": 10518128532, "historical_member": "artifact-metadata/10518128532.json", "historical_sha256": "d465cde79dd2ecd25a46cf065841a5d8eef5792f8a0d91bdf70c10a888caf93d", "expires_at": "2026-09-24T20:19:17Z"},
+    {"id": 10517978596, "historical_member": "artifact-metadata/10517978596.json", "historical_sha256": "dcec5cb76b7875501c83c343957a4ccded7501142d009412e54ce82d517531ad", "expires_at": "2026-09-24T20:19:29Z"},
+    {"id": 10517854663, "historical_member": "artifact-metadata/10517854663.json", "historical_sha256": "ea27bd26387b0335aa33a9931d432a749ed834222ffd085d370bd1d7d1a26bf9", "expires_at": "2026-09-24T20:24:33Z"}
+  ]
+}

@@ -127,6 +127,7 @@ def recover(provider, expected, assets, rebind, journal=None):
     require(validate_release(current, expected) == identifier, "release identity changed")
     if current["draft"]:
         mutate("publish_release", {"release_id":identifier}, lambda:provider.publish(identifier))
+        rebind()
     final = provider.lookup()
     require(validate_release(final, expected) == identifier and final["draft"] is False, "release publication not confirmed")
     require(verified_assets(provider, identifier, assets) == set(assets), "published release asset inventory differs")
@@ -263,7 +264,7 @@ def release_metadata(manifest, publications, sha, ref):
     return receipt, {"tag_name": "v0.2.7", "target_commitish": PRODUCT_SHA, "name": "EXOCHAIN v0.2.7", "body": body}
 
 
-def retained_release_metadata(manifest, publications, record, sha, ref):
+def retained_release_metadata(manifest, publications, record, sha, ref, *, policy=None):
     """Stable public custody; execution observations belong only in run evidence."""
     receipt, expected = release_metadata(manifest, publications, sha, ref)
     receipt['schema'] = 'exochain-release-retained-custody/v1'
@@ -280,6 +281,23 @@ def retained_release_metadata(manifest, publications, record, sha, ref):
         'RECOVERY-CUSTODY.json distinguishes original production, historical retention, prior package publication and this acceptance controller. '
         'The release contains exactly 34 original native/SBOM assets and the custody receipt. '
         'Current run/attempt, observations and acceptance receipts remain separate Actions evidence.\n')
+    if policy is not None:
+        # The canonical validator pins the semantic policy; no provider or
+        # per-run observation enters this stable public asset.
+        checker = Path(__file__).with_name('verify_release_recovery_027.py')
+        spec = importlib.util.spec_from_file_location('retained_public_policy_validator', checker)
+        validator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(validator)
+        validator.validate_retained_metadata_policy(manifest, record, policy)
+        disclosure = ('Selected original artifact metadata may be unavailable after its recorded expiry. '
+            'Historical identity is authenticated from retained custody; it is not a claim of current metadata '
+            'visibility or proof of deletion.')
+        receipt['schema'] = 'exochain-release-retained-custody/v2'
+        receipt['metadata_policy_sha256'] = validator.RETAINED_METADATA_POLICY_SHA256
+        receipt['unavailable_originals'] = policy['unavailable_originals']
+        receipt['original_metadata_disclosure'] = disclosure
+        expected['body'] += ('\nMetadata policy SHA-256: `' + validator.RETAINED_METADATA_POLICY_SHA256 + '`. '
+                             + disclosure + '\n')
     return receipt, expected
 
 
@@ -327,13 +345,100 @@ def receipt_handoff(env, parser, checker_sha256):
     return context, members, outputs
 
 
-def receive_current_receipts(custody, importer, manifest, record, publications, transport,
-                            evidence, historical, workflow, origin, handoff):
-    context, members, outputs = handoff
+def _receipt_endpoints(importer, context, outputs, transport):
     url = importer.API + f"/artifacts/{outputs['artifact_id']}"
     run_url = importer.API + f"/runs/{context['run_id']}/attempts/{context['run_attempt']}"
     endpoints = {'run':run_url, 'jobs':[run_url+f'/jobs?per_page=100&page={p}' for p in range(1,11)]}
     transport.authenticated.update([url,run_url,*endpoints['jobs']])
+    return url, endpoints
+
+
+def _require_running_writer(custody, jobs, context, observed_at, observer=None):
+    current = custody.complete_jobs(jobs,context['run_id'],context['run_attempt'],context['controller_sha'],
+                                    context['controller_ref'].removeprefix('refs/tags/'))
+    writers = [job for job in current.values() if job.get('name') == custody.RECEIPT_WRITER_JOB]
+    require(len(writers) == 1 and writers[0].get('status') == 'in_progress' and
+            writers[0].get('conclusion') is None and writers[0].get('completed_at') is None,
+            'actual retained writer is not uniquely running')
+    writer = writers[0]
+    if observer is not None:
+        for field, expected in (('job_id',writer['id']),('job_name',writer['name']),
+                                ('job_started_at',writer['started_at'])):
+            custody.exact(observer[field],expected,'fresh writer observer ' + field)
+    require(custody.timestamp(writer['started_at'],'writer start') <=
+            custody.timestamp(observed_at,'writer observation'), 'writer job starts after observation')
+    return writer
+
+
+def prepare_current_receipt(custody, importer, manifest, record, policy, transport, evidence, handoff):
+    """Authenticate current direct receipt provenance before canonical acquisition."""
+    require(os.environ.get('RELEASE_OPERATION') == custody.RETAINED_METADATA_OPERATION and
+            os.environ.get('GITHUB_JOB') == 'retained-github', 'actual staged writer operation required')
+    custody.validate_retained_metadata_policy(manifest, record, policy)
+    context, members, outputs = handoff
+    for field, actual in (('run_id',os.environ.get('GITHUB_RUN_ID')),
+                          ('run_attempt',os.environ.get('GITHUB_RUN_ATTEMPT'))):
+        require(type(actual) is str and re.fullmatch(r'[1-9][0-9]*',actual) is not None and
+                context.get(field) == int(actual), 'actual writer ' + field + ' differs')
+    for field, actual in (('controller_sha',os.environ.get('GITHUB_SHA')),
+                          ('controller_ref',os.environ.get('GITHUB_REF')),
+                          ('controller_tag_object',os.environ.get('EXPECTED_TAG_OBJECT_SHA'))):
+        require(context.get(field) == actual, 'actual writer ' + field + ' differs')
+    url, endpoints = _receipt_endpoints(importer, context, outputs, transport)
+    run, jobs = importer.fetch_run_jobs(custody,transport,evidence/'preliminary-current-attempt',endpoints,None)
+    path = evidence/'preliminary-receipt-metadata.json'
+    transport.get(url,path,importer.JSON_LIMIT)
+    prepared = {'schema':'exochain-retained-receipts-input-027/v2',
+        'operation':custody.RETAINED_METADATA_OPERATION,'policy_sha256':custody.RETAINED_METADATA_POLICY_SHA256,
+        'observed_at':importer.utc_now(),'context':context,'current_run':run,'current_jobs':jobs,
+        'upload_outputs':outputs,'metadata_before':custody.load_json(path,'preliminary current receipt metadata'),
+        'members':members}
+    _require_running_writer(custody,jobs,context,prepared['observed_at'])
+    custody.retained_receipt_provenance(manifest,record,policy,prepared)
+    importer.dump(evidence/'preliminary-receipt-input.json',prepared)
+    return prepared
+
+
+def receive_current_receipts(custody, importer, manifest, record, publications, transport,
+                            evidence, historical, workflow, origin, handoff, *, policy=None, prepared=None):
+    context, members, outputs = handoff
+    url, endpoints = _receipt_endpoints(importer,context,outputs,transport)
+    if policy is not None:
+        require(type(prepared) is dict, 'preliminary receipt provenance required')
+        require(os.environ.get('RELEASE_OPERATION') == custody.RETAINED_METADATA_OPERATION,
+                'actual staged writer operation required')
+        custody.retained_receipt_provenance(manifest,record,policy,prepared)
+        require(prepared['context'] == context and prepared['members'] == members and
+                prepared['upload_outputs'] == outputs, 'direct receipt handoff changed after preliminary proof')
+        run,jobs = importer.fetch_run_jobs(custody,transport,evidence/'current-attempt-before',endpoints,None)
+        before_path = evidence/'receipt-metadata-before.json'
+        transport.get(url,before_path,importer.JSON_LIMIT)
+        metadata_before = custody.load_json(before_path,'fresh receipt metadata before download')
+        custody.exact(metadata_before,prepared['metadata_before'],'receipt metadata changed after preliminary proof')
+        envelope = {'schema':'exochain-retained-receipts-input-027/v2',
+            'operation':custody.RETAINED_METADATA_OPERATION,'policy_sha256':custody.RETAINED_METADATA_POLICY_SHA256,
+            'observed_at':importer.utc_now(),'origin':origin,'context':context,
+            'current_run':run,'current_jobs':jobs,'upload_outputs':outputs,
+            'metadata_before':metadata_before,'members':members}
+        _require_running_writer(custody,jobs,context,envelope['observed_at'],origin['observations']['observer'])
+        custody.retained_receipt_profile(manifest,record,publications,envelope,historical,workflow,policy=policy)
+        receipt = evidence/'current-receipts.zip'
+        transport.receipt_archive(metadata_before,receipt)
+        after_path = evidence/'receipt-metadata-after.json'
+        transport.get(url,after_path,importer.JSON_LIMIT)
+        envelope['metadata_after'] = custody.load_json(after_path,'fresh receipt metadata after download')
+        run,jobs = importer.fetch_run_jobs(custody,transport,evidence/'current-attempt-after',endpoints,None)
+        envelope['current_run'],envelope['current_jobs'] = run,jobs
+        envelope['observed_at'] = importer.utc_now()
+        _require_running_writer(custody,jobs,context,envelope['observed_at'],origin['observations']['observer'])
+        require(custody.timestamp(envelope['observed_at'],'final receipt observation') >=
+                custody.timestamp(prepared['observed_at'],'preliminary receipt observation'),
+                'final receipt observation precedes preliminary proof')
+        result = custody.verify_retained_receipts(manifest,record,publications,envelope,historical,
+                                                  workflow,receipt,policy=policy)
+        importer.dump(evidence/'receipt-input.json',envelope)
+        importer.dump(evidence/'receipt-result.json',result)
+        return result
     run,jobs = importer.fetch_run_jobs(custody,transport,evidence/'current-attempt',endpoints,None)
     transport.get(url,evidence/'receipt-metadata-before.json',importer.JSON_LIMIT)
     envelope = {'schema':'exochain-retained-receipts-input-027/v1','origin':origin,'context':context,
@@ -369,15 +474,51 @@ def readback_publications(importer, publications, candidate, capture, evidence):
             'readback cannot mint producer acceptance receipts')
 
 
-def complete_retained(provider, expected, assets, rebind, receipt_gate, public_gate, journal=None):
+def check_retained_rebind(custody, importer, manifest, record, policy, transport, evidence,
+                          historical, workflow, initial_input, observer, candidate, source_gate):
+    """Revalidate source, exact files, retained controls and the original Vector."""
+    try:
+        source_gate()
+        custody.verify_files(manifest,candidate)
+        return importer.finalize_retained_observations(manifest,record,policy,custody,transport,evidence,
+            historical,workflow,observer=observer,initial_input=initial_input,phase='writer-final')
+    except Exception as failure:
+        # A failed safety check never authorizes the pending write. The bounded
+        # original/retaining read is diagnostic evidence, not a retry of it.
+        endpoints = transport.endpoints
+        try:
+            importer.fetch_run_jobs(custody,transport,evidence/'diagnostic-original',
+                {'run':endpoints['run'],'jobs':endpoints['jobs']},manifest['origin']['jobs_total'])
+            importer.fetch_run_jobs(custody,transport,evidence/'diagnostic-retaining',
+                {'run':endpoints['retaining_run'],'jobs':endpoints['retaining_jobs']},
+                record['retaining']['jobs_total'])
+            importer.dump(evidence/'diagnostic-result.json',{'status':'read','stop_reason':type(failure).__name__})
+        except Exception as diagnostic_failure:
+            importer.dump(evidence/'diagnostic-result.json',
+                {'status':'failed','stop_reason':type(failure).__name__,
+                 'diagnostic_error_type':type(diagnostic_failure).__name__})
+            raise failure from diagnostic_failure
+        raise
+
+
+def complete_retained(provider, expected, assets, rebind, receipt_gate, public_gate, journal=None,
+                      *, prepare_gate=None, acquire_gate=None, final_gate=None):
+    if prepare_gate is not None:
+        require(acquire_gate is not None and final_gate is not None, 'incomplete staged writer gates')
+        prepare_gate()
+        acquire_gate()
     receipt_gate()
     public_gate()
+    if final_gate is not None:
+        final_gate()
     return recover(provider,expected,assets,rebind,journal)
 
 
 def retained_main():
     env = os.environ
-    require(env.get('RELEASE_OPERATION') == 'recover-0.2.7-retained' and env.get('RELEASE_VERSION') == '0.2.7', 'wrong retained operation')
+    operation = env.get('RELEASE_OPERATION')
+    require(operation in ('recover-0.2.7-retained', 'recover-0.2.7-retained-404') and
+            env.get('RELEASE_VERSION') == '0.2.7', 'wrong retained operation')
     require(env.get('GITHUB_JOB') == 'retained-github' and env.get('RELEASE_WORKFLOW_DRY_RUN') == 'false', 'actual live retained writer job required')
     require(env.get('GITHUB_ACTIONS') == 'true' and env.get('GITHUB_EVENT_NAME') == 'workflow_dispatch'
             and env.get('RUNNER_ENVIRONMENT') == 'github-hosted', 'genuine hosted dispatch required')
@@ -397,6 +538,8 @@ def retained_main():
         'verify_python_release_package.py','verify_release_sbom.py','transport_release_build_output.py')}
     paths.update({'governance/releases/v0.2.7/'+name:name for name in
                   ('RECOVERY-MANIFEST.json','PUBLICATION-IDENTITIES.json','RETAINED-CUSTODY.json')})
+    if operation == 'recover-0.2.7-retained-404':
+        paths['governance/releases/v0.2.7/RETAINED-METADATA-POLICY.json'] = 'RETAINED-METADATA-POLICY.json'
     def source(path, commit=sha):
         return subprocess.check_output(['/usr/bin/git','--no-replace-objects','-c','core.fsmonitor=false',
             '-C',str(workspace),'show',commit+':'+path],env=git_env,timeout=30)
@@ -417,6 +560,8 @@ def retained_main():
     manifest = custody.load_manifest(capture/'RECOVERY-MANIFEST.json')
     publications = custody.load_publications(manifest,capture/'PUBLICATION-IDENTITIES.json')
     record = custody.load_retained_record(manifest,capture/'RETAINED-CUSTODY.json')
+    policy = (custody.load_retained_metadata_policy(manifest,record,capture/'RETAINED-METADATA-POLICY.json')
+              if operation == 'recover-0.2.7-retained-404' else None)
     workflow = capture/'retaining-workflow.yml'
     with workflow.open('xb') as output: output.write(source('.github/workflows/release.yml',record['retaining']['controller_sha']))
     workflow.chmod(0o400)
@@ -425,49 +570,78 @@ def retained_main():
     evidence = capture/'evidence'; evidence.mkdir(mode=0o700)
     archives = capture/'archives'; archives.mkdir(mode=0o700)
     candidate = capture/'artifacts'
-    transport = importer.Transport(capture,env.get('RELEASE_GITHUB_TOKEN',''),manifest,record)
+    transport = importer.Transport(capture,env.get('RELEASE_GITHUB_TOKEN',''),manifest,record,policy=policy)
     def identities():
-        importer.assert_captured_inputs(capture,custody)
+        importer.assert_captured_inputs(capture,custody,policy=policy)
         require(source('tools/recover_github_release_027.py') == custody.read_regular(capture/'recover_github_release_027.py',4*1024*1024,'writer'), 'writer source changed')
         subprocess.run(['/bin/bash','--noprofile','--norc','-p',str(capture/'verify_release_recovery_027.sh')],
             env=dict(env),stdout=subprocess.DEVNULL,timeout=240,check=True)
     identities()
-    importer.acquire_retained(manifest,record,custody,transport,evidence,archives,candidate,workflow)
-    origin = custody.load_json(evidence/'retained-origin-input.json','fresh origin')
-    historical = archives/f"{record['custody']['metadata']['id']}.zip"
-    receipt,expected = retained_release_metadata(manifest,publications,record,sha,ref)
-    assets = release_assets(custody,manifest,candidate,receipt)
     provider = GitHub(env['RELEASE_GITHUB_TOKEN'],custody.parse_json)
+    expected, assets, state = {}, {}, {}
+    historical = archives/f"{record['custody']['metadata']['id']}.zip"
+    if policy is None:
+        importer.acquire_retained(manifest,record,custody,transport,evidence,archives,candidate,workflow)
+        state['origin'] = custody.load_json(evidence/'retained-origin-input.json','fresh origin')
+        receipt, public = retained_release_metadata(manifest,publications,record,sha,ref)
+        expected.update(public)
+        assets.update(release_assets(custody,manifest,candidate,receipt))
     rebind_count = 0
     def rebind():
         nonlocal rebind_count
-        identities()
-        custody.verify_files(manifest,candidate)
         rebind_count += 1
-        for kind in ('payload','custody'):
-            pinned = record[kind]['metadata']; path = evidence/f'rebind-{rebind_count}-{kind}.json'
-            transport.get(pinned['url'],path,importer.JSON_LIMIT)
-            observed = custody.load_json(path,'fresh retained availability')
-            custody.exact(custody.semantic_digest(observed),custody.semantic_digest(pinned),'fresh retained availability')
-            require(custody.timestamp(importer.utc_now(),'observation') < custody.timestamp(pinned['expires_at'],'expiry'), 'retained artifact expired')
+        if policy is not None:
+            directory = evidence/f'rebind-{rebind_count}'
+            directory.mkdir(mode=0o700)
+            check_retained_rebind(custody,importer,manifest,record,policy,transport,directory,
+                historical,workflow,state['origin'],state['observer'],candidate,identities)
+        else:
+            identities()
+            custody.verify_files(manifest,candidate)
+            for kind in ('payload','custody'):
+                pinned = record[kind]['metadata']; path = evidence/f'rebind-{rebind_count}-{kind}.json'
+                transport.get(pinned['url'],path,importer.JSON_LIMIT)
+                observed = custody.load_json(path,'fresh retained availability')
+                custody.exact(custody.semantic_digest(observed),custody.semantic_digest(pinned),'fresh retained availability')
+                require(custody.timestamp(importer.utc_now(),'observation') < custody.timestamp(pinned['expires_at'],'expiry'), 'retained artifact expired')
+    def prepare_gate():
+        state['prepared'] = prepare_current_receipt(custody,importer,manifest,record,policy,transport,evidence,handoff)
+        state['observer'] = importer.capture_observer(custody,transport,capture,evidence,'retained-github')
+    def acquire_gate():
+        importer.acquire_retained(manifest,record,custody,transport,evidence,archives,candidate,workflow,
+                                  policy=policy,observer=state['observer'])
+        state['origin'] = custody.load_json(evidence/'acquisition-origin-input.json','fresh acquisition origin')
+        receipt, public = retained_release_metadata(manifest,publications,record,sha,ref,policy=policy)
+        expected.update(public)
+        assets.update(release_assets(custody,manifest,candidate,receipt))
     def receipt_gate():
-        receive_current_receipts(custody,importer,manifest,record,publications,transport,evidence,historical,workflow,origin,handoff)
+        state['receipt'] = receive_current_receipts(custody,importer,manifest,record,publications,
+            transport,evidence,historical,workflow,state['origin'],handoff,policy=policy,
+            prepared=state.get('prepared'))
     def public_gate():
         importer.validate_packages(manifest,candidate,capture,evidence,env['RELEASE_PYTHON'],env['RELEASE_NODE'])
         importer.fetch_rust(manifest,custody,transport,evidence)
         readback_publications(importer,publications,candidate,capture,evidence)
         rebind()
+    def final_gate():
+        directory = evidence/'post-public-final'
+        directory.mkdir(mode=0o700)
+        state['public_final'] = check_retained_rebind(custody,importer,manifest,record,policy,
+            transport,directory,historical,workflow,state['origin'],state['observer'],candidate,identities)
     journal = Journal(capture/'mutation-journal.jsonl',{'controller_sha':sha,'controller_ref':ref,
         'run_id':handoff[0]['run_id'],'run_attempt':handoff[0]['run_attempt'],'original_source':PRODUCT_SHA})
     print('GitHub retained mutation journal: '+str(journal.path),flush=True)
-    result = complete_retained(provider,expected,assets,rebind,receipt_gate,public_gate,journal)
+    result = complete_retained(provider,expected,assets,rebind,receipt_gate,public_gate,journal,
+        prepare_gate=prepare_gate if policy is not None else None,
+        acquire_gate=acquire_gate if policy is not None else None,
+        final_gate=final_gate if policy is not None else None)
     importer.dump(evidence/'release-result.json',result)
     print(json.dumps(result,sort_keys=True))
 
 
 def main():
     env = os.environ
-    if env.get('RELEASE_OPERATION') == 'recover-0.2.7-retained':
+    if env.get('RELEASE_OPERATION') in ('recover-0.2.7-retained', 'recover-0.2.7-retained-404'):
         require(sys.argv[1:] == ['retained-github'], 'explicit retained writer operation required')
         return retained_main()
     require(env.get("RELEASE_OPERATION") == "recover-0.2.7" and env.get("RELEASE_VERSION") == "0.2.7", "wrong recovery operation")

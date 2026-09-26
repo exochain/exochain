@@ -211,4 +211,19 @@ grep -q 'publication credentials must be absent' "$receipts/stderr"
 reset_case bootstrap-rejects-ref
 expect_failure /usr/bin/env ACTIONS_ID_TOKEN_REQUEST_TOKEN= RELEASE_TAG=v0.2.7 /bin/bash "$helper" preflight
 grep -q 'invalid controller commit or maintenance tag' "$receipts/stderr"
+for operation in recover-0.2.7-retained recover-0.2.7-retained-404; do
+  for retained_mode in accept retained-readback; do
+    reset_case "bootstrap-$operation-$retained_mode"
+    expect_failure /usr/bin/env -i "RELEASE_OPERATION=$operation" RELEASE_WORKFLOW_DRY_RUN=true \
+      /bin/bash "$helper" "$retained_mode"
+    grep -q 'invalid controller commit or maintenance tag' "$receipts/stderr"
+    reset_case "bootstrap-oidc-$operation-$retained_mode"
+    expect_failure /usr/bin/env -i "RELEASE_OPERATION=$operation" RELEASE_WORKFLOW_DRY_RUN=true \
+      ACTIONS_ID_TOKEN_REQUEST_URL=fixture /bin/bash "$helper" "$retained_mode"
+    grep -q 'publication credentials must be absent' "$receipts/stderr"
+  done
+  reset_case "bootstrap-preflight-$operation"
+  expect_failure /usr/bin/env -i "RELEASE_OPERATION=$operation" /bin/bash "$helper" preflight
+  grep -q 'operation and release mode differ' "$receipts/stderr"
+done
 echo 'Python recovery orchestration tests passed (fixture crypto seam; no live publication proof).'

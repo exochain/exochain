@@ -206,8 +206,9 @@ The retained operation pins `RETAINED-CUSTODY.json` to the existing
 `RECOVERY-MANIFEST.json` and `PUBLICATION-IDENTITIES.json`. It authenticates
 the original product and retaining controller, proves the successful original
 attempt-1 import preceded original expiry using the pinned historical evidence
-and current matching metadata, then freshly downloads both nonexpired retained
-artifacts from fixed GitHub endpoints. The 147126946-byte payload transport
+and current matching metadata for this strict older mode. It then freshly
+downloads both nonexpired retained artifacts from fixed GitHub endpoints. The
+147126946-byte payload transport
 contains 40 extracted original files, not the seven original ZIP envelopes or
 two Rust preparation archives. Its separate custody archive has 60 historical
 evidence members. Strict ZIP headers, signed data descriptors, file types,
@@ -239,3 +240,65 @@ PR841's approvals occurred after merge; PR842's two approvals and 74 checks
 preceded its normal integration at 21:03:20 UTC. No retrospective approval is
 implied by this extension. No release, retirement or runtime deployment is
 claimed here.
+
+## September 25 retained-metadata amendment
+
+Bob approved `RETAINED-METADATA-AMENDMENT.md` on September 25 and the detailed
+implementation plan with subagents on September 26 for implementation and a
+reviewed PR. The amendment adds only `recover-0.2.7-retained-404` for version
+`0.2.7`; neither `recover-0.2.7` nor `recover-0.2.7-retained` falls back to it.
+The new operation requires the separately pinned
+`RETAINED-METADATA-POLICY.json` (semantic SHA-256
+`bf9968454e1fb95fde2b2c435f61940a39cc25e6fb45a28ff9523a82f755c244`).
+It does not change the three earlier manifest, publication or retained-custody
+records or their pins.
+
+The exact four original artifact IDs `10518086890`, `10518128532`,
+`10517978596` and `10517854663` may each have an actual HTTP 404 only when its
+request starts at or after its pinned historical expiry. Each of the other five
+IDs `10517981432`, `10518080916`, `10517457207`, `10517966616` and
+`10517459550` requires an exact HTTP 200. A selected ID may still return 200;
+all nine returning 200 is valid. Every 200 must match authenticated historical
+metadata except the strictly checked Boolean `expired` value. A 404 is a typed
+`unavailable_404` observation, not a fabricated metadata object, current
+`expired` value or proof of deletion. Its member hash is authenticated against
+the 60-member historical custody archive. Current immutable fields cannot be
+compared for an absent object, and the seven original ZIP envelopes are not
+recovered. Other statuses, early or unselected 404s, and changing availability
+or identity across checks stop acceptance.
+
+The existing read-only retained producer and protected live writer use the same
+signed source, original run `35257955565` attempt 1 and retaining run
+`35754493083` attempt 1. They require complete 62/68-job controls, nine typed
+observations before and after acquisition, and both exact retained metadata
+records: payload `10779404529` and custody `10780480598`, each nonexpired at
+every required check. Original pre-expiry import and actual retaining
+import/upload chronology remain provable from authenticated history. The strict
+40-file payload and 60-member custody ZIP profiles, source/signer checks, two
+genuine native attestations, five genuine public-package byte/crypto checks and
+32 exact nonyanked Rust checksum checks remain required. No payload rebuild,
+repack, stage, upload, republication, alternate ID, local fallback or retention
+extension is introduced.
+
+Before acquiring the fixed transports, the writer authenticates direct receipt
+outputs and the actual in-progress writer job in the same run/attempt. That
+preliminary provenance is not receipt or publication acceptance. After canonical
+acquisition, it verifies receipt metadata before download, the strict current
+receipt ZIP and both members, and metadata after download; its final receipt
+time is captured after those reads and checked before expiry. Both v2 members
+contain raw producer observations. The verifier preserves the producer's
+`checked_at`, validates producer/import/upload chronology, and compares the
+producer and writer's normalized nine-item Vectors without requiring equal
+request times. The acquisition input remains intact while separate post-public
+and per-write finalization checks run. Source/files, nine original observations,
+both retained records and fresh run/job controls are rebound before each
+mutation and final readback. A mismatch stops the pending operation even if a
+bounded diagnostic read fails; prior and uncertain journal entries remain.
+
+Public output remains exactly 35 assets with no overwrite. Version 2 stable
+custody and body disclose the fixed policy and the loss of current visibility;
+operational timestamps and raw observations stay in separate run evidence.
+Unit source reviews and historical approvals are distinct from final-source
+validation, fresh cryptographic evidence, exact-head CI and two new non-author
+human approvals. No new protected run, release execution or 35-asset readback
+is claimed by this documentation snapshot.

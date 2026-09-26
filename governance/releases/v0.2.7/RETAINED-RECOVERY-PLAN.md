@@ -181,10 +181,12 @@ status: the retaining run later failed in unrelated publication acceptance.
    attempt-1 run/jobs. Require immutable identity/digest/size/source/producer
    agreement. Record actual `expired` values and elapsed expiry honestly. Only
    the new retained contract admits original expiry after the proved pre-expiry
-   import; existing `origin` continues requiring fresh non-expiry. A changed
+   import; existing `origin` continues requiring fresh non-expiry. For this
+   September 24 strict retained mode, a changed
    immutable field, missing metadata, incomplete pagination, unavailable pinned
    evidence or unprovable import chronology fails closed. No metadata-loss
-   fallback is included in this proposal.
+   fallback is included in this proposal. The later approved explicit
+   retained-metadata operation is specified separately below.
 5. Verify the retained ZIP's exact outer bytes and every original member before
    exposing a destination. Its 147,126,946-byte bound is separate from the
    unchanged 96 MiB original-ZIP bound. Do not globally increase parser limits.
@@ -346,7 +348,7 @@ and protection gates without reopening resolved ownership assignments.
 
 ## 7. Implementation tasks and remaining acceptance
 
-The approved source extension now uses `RETAINED-CUSTODY.json`, strict
+The September 24 approved source extension uses `RETAINED-CUSTODY.json`, strict
 `retained-record`, `retained-origin`, `retained-transport` and
 `retained-receipts` interfaces, a fixed `recover-0.2.7-retained` operation, and
 separate `retained-acceptance` and live-only `retained-github` jobs. Task 1
@@ -512,3 +514,85 @@ versions, two native crypto checks, three genuine npm audits and two genuine
 Python Sigstore checks. These observations do not establish a successful
 current protected producer, exact-head hosted CI, current-run receipts or
 GitHub Release completion. No package payload has been rebuilt or republished.
+
+## 10. Separately approved retained-metadata amendment (September 25–26)
+
+Bob approved `RETAINED-METADATA-AMENDMENT.md` on September 25, then the
+detailed implementation plan with subagents on September 26 for implementation
+and reviewed PR preparation. The amendment bytes remain unchanged; its former
+awaiting-approval wording describes an earlier snapshot. This section adds one
+fixed operation, `recover-0.2.7-retained-404` for product `0.2.7`, under the
+separate `RETAINED-METADATA-POLICY.json` semantic pin
+`bf9968454e1fb95fde2b2c435f61940a39cc25e6fb45a28ff9523a82f755c244`.
+The existing manifest, publication and retained-custody records and pins do not
+change. `recover-0.2.7` and `recover-0.2.7-retained` keep their strict original
+metadata rules; no fallback or general missing-metadata switch exists. The
+checked September 24 Task 4 documentation item above records that older plan,
+not completion or approval of a new protected execution.
+
+Only IDs `10518086890`, `10518128532`, `10517978596` and `10517854663` may
+have a typed `unavailable_404` response, each no earlier than its pinned
+historical expiry. IDs `10517981432`, `10518080916`, `10517457207`,
+`10517966616` and `10517459550` always require exact 200. Every selected ID
+may also be present, so all-nine-200 is valid. Each 200 must equal its
+authenticated historical metadata except the strictly checked Boolean
+`expired` value. A 404 supplies only endpoint status, bounded request times and
+the authenticated historical member/hash. It supplies no current metadata or
+`expired` value and cannot establish deletion or a fresh immutable-field
+comparison. The nine ordered records in each before/after pass must produce
+the same normalized availability/identity Vector, including across the
+producer and writer despite different legitimate request times. Any other
+status, early 404 or change between checks stops acceptance.
+
+The fixed retained payload `10779404529` and custody `10780480598` must remain
+exact and nonexpired strictly before their respective expiry at every required
+check. The original attempt-1 run `35257955565` with 62 jobs and retaining
+attempt-1 run `35754493083` with 68 jobs are read as fresh positive controls;
+the authenticated custody profile proves the nine historical member hashes
+and the successful original pre-expiry import and retaining producer
+import/upload chronology. The strict 40-file payload and 60-member custody
+ZIP profiles remain; none of the seven original ZIP envelopes is restored.
+Original, retaining and current source/tag/signer checks, two genuine native
+attestations, five actual public package byte/crypto checks and 32 exact
+nonyanked Rust checksums still gate acceptance. No rebuild, repack, stage,
+upload, republication, alternate ID, local payload fallback or retention
+extension is permitted.
+
+The existing `retained-acceptance` producer stays read-only in dry and live;
+only the existing live `retained-github` writer may receive contents-write
+after full CI, both protected human gates and signed-tag verification. The
+workflow uses the exact new option/predicates, same source capture and five
+direct receipt outputs, with no new package or OIDC permission; dry skips the
+writer. In the new writer path, direct output ID/digest, successful same-attempt
+producer/import/upload, receipt metadata and actual in-progress writer are
+authenticated before canonical acquisition. This preliminary proof has no
+historical-origin input and does not authorize public acceptance. Acquisition
+then preserves `acquisition-origin-input.json` unchanged. The writer verifies
+fresh pre-download receipt metadata, strict ZIP/member bytes, after-download
+metadata and refreshed jobs, capturing a final `observed_at` after these reads
+and before expiry. Both v2 members carry raw producer observations; the
+verifier preserves producer `checked_at`, checks producer and writer chronology
+separately, then compares normalized Vectors. Synthetic origin or receipt
+proof cannot replace these same-run checks.
+
+Public crypto checks follow full receipt acceptance; post-public finalization
+is separate from acquisition. Source/files, all nine original observations,
+both retained records and complete original/retaining controls are rebound
+before release creation, every asset upload, publication and final readback.
+Any mismatch stops the pending operation even if a bounded diagnostic read
+also fails. Earlier successful and uncertain mutation journal entries remain,
+without automatic retry, overwrite or rollback. Version 2 public custody/body
+bytes disclose the fixed policy and current visibility loss; operational
+timestamps and raw observations remain separate run evidence. The stable
+public inventory remains exactly 35 assets.
+
+At this documentation snapshot, reviewed unit source and historical fixture
+evidence exist; full final-source gates, fresh archive/crypto checks,
+independent whole-change review, exact-head hosted CI and two new non-author
+human approvals are still separate evidence stages. Failed dry run
+`36091900371` attempt 1 has no acceptance receipt. Its diagnostic observations
+and older approvals are not new execution consent. Actual later results belong
+in the preserved execution ledger and self-contained PR handoff after the
+complete signed candidate is frozen; a later source correction requires full
+validation again. No new protected run, live completion, provider/35-asset
+readback or issue 822 retirement is claimed here.
