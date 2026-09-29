@@ -306,8 +306,8 @@ or executable-native-archive claim is made.
 The original recovery's nonexpiry requirement remained intact when original
 WASM artifact `10518086890` became `expired:true`. The approved retained mode
 requires proof of the pinned successful pre-expiry import, a fresh read of
-matching original metadata, and both retained artifacts to be nonexpired at
-execution. The
+matching original metadata in that strict older mode, and both retained
+artifacts to be nonexpired at execution. The
 147126946-byte transport is an extracted 40-file payload tree; it does not
 restore or freshly verify the original artifact ZIP envelopes. The 60-file
 custody archive is historical evidence. These are separate from current
@@ -340,3 +340,49 @@ its normal 21:03:20 UTC integration. Neither chronology substitutes for two
 actual final implementation-head maintainer approvals. The remaining protected
 dry and separately approved live executions, 35-asset provider readback and
 issue 822 retirement have not been established by this local source record.
+
+## September 26 retained-metadata source documentation checkpoint
+
+The approved amendment's current implementation adds only
+`recover-0.2.7-retained-404` at version `0.2.7`, with independently recomputed
+policy semantic SHA-256
+`bf9968454e1fb95fde2b2c435f61940a39cc25e6fb45a28ff9523a82f755c244`.
+The three prior records/pins and strict old operations remain unchanged. Four
+fixed original IDs `10518086890`, `10518128532`, `10517978596` and
+`10517854663` may each return actual 404 only after its historical expiry;
+five other IDs must return exact 200. All nine returning 200 is valid. For a
+404, authenticated historical custody proves the member identity, but there
+is no current metadata, current `expired` value, current immutable-field
+comparison or proof of deletion. A response body claiming 404 cannot turn an
+actual 200 into absence. The original ZIP envelopes are not recovered.
+
+The local source and unit regressions cover nine typed before/after
+observations, complete original/retaining run/job controls, both exact
+nonexpired retained metadata objects, and equal normalized Vectors across
+producer and writer despite distinct legitimate request times. They cover
+preliminary same-attempt direct-output provenance before acquisition, strict
+receipt ZIP/member and chronology validation after acquisition, fresh final
+`observed_at` after the download/metadata read and before receipt expiry,
+preserved producer `checked_at`, the writer's actual in-progress identity,
+and per-mutation/final-readback rebind. The 40/60 ZIP profiles, historical
+import/upload chronology, source/signer checks, genuine native/public/Rust
+acceptance and 35-asset no-overwrite writer remain required. Bounded
+diagnostics cannot waive a failed pending rebind; partial or uncertain journal
+entries persist. Stable public v2 body/custody bytes disclose visibility loss
+without operational timestamps. These are source and fixture observations,
+not a current hosted receipt or fresh cryptographic result.
+
+The failed dry run `36091900371` attempt 1 remains failed with no acceptance
+receipt. Its later diagnostic 404 observations are not a new protected
+producer/writer pass. Earlier September 24 native/public crypto and 32 Rust
+readbacks, older 80-command and prepared 84-command inventories, signed unit
+reviews, and historical Max/Robert approvals remain dated historical evidence.
+This documentation checkpoint precedes a frozen signed complete candidate:
+final head/tree, full CI-derived inventory, nine final-source core gates,
+fresh archive download and cryptographic verification, independent whole-change
+review, hosted exact-head CI and two exact-head non-author approvals have not
+yet been recorded here. Their actual commands, logs, failures and outcomes
+belong in the preserved execution ledger and self-contained PR handoff. A
+source correction after that candidate requires fresh complete validation.
+No new maintenance tag, protected dry/live run, publication, provider/35-asset
+readback or issue 822 retirement is claimed at this checkpoint.

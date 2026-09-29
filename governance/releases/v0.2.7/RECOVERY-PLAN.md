@@ -273,8 +273,8 @@ rejects expired original artifacts, so this plan now incorporates the separately
 approved `RETAINED-RECOVERY-PLAN.md` contract. The fixed
 `recover-0.2.7-retained` operation consumes only the pinned, freshly available
 retained payload and custody artifacts. It validates historical pre-expiry
-original import and matching current original metadata without treating old
-ZIPs as freshly acquired. Its 40 payload files are matched to the unchanged
+original import and matching current original metadata in that strict mode,
+without treating old ZIPs as freshly acquired. Its 40 payload files are matched to the unchanged
 manifest; it cannot rebuild, repack or republish any package.
 
 Implementation through signed `e2c138a6c5d9d947240ecd363aa1ab87adcb5e41`
@@ -296,3 +296,59 @@ issue 822 retirement are separate release actions, not results of this source
 plan. Record the exact final run and any failures in dated immutable-head
 evidence rather than promoting earlier fixtures or planning downloads to hosted
 proof.
+
+## September 26 retained-metadata implementation scope
+
+The September 25 approved amendment and September 26 approved detailed plan
+authorize implementation and reviewed PR preparation of the explicit
+`recover-0.2.7-retained-404` operation for version `0.2.7`. They do not
+authorize a new protected run or release mutation. The new policy is
+`exochain-retained-metadata-policy-027/v1`, semantic SHA-256
+`bf9968454e1fb95fde2b2c435f61940a39cc25e6fb45a28ff9523a82f755c244`;
+the manifest, publication and retained-custody semantic pins remain unchanged.
+The old `recover-0.2.7` and `recover-0.2.7-retained` operations remain strict
+and never auto-select the exception.
+
+Only original IDs `10518086890`, `10518128532`, `10517978596` and
+`10517854663` may be typed `unavailable_404` after each pinned historical
+expiry. The other five IDs `10517981432`, `10518080916`, `10517457207`,
+`10517966616` and `10517459550` require exact 200; all nine 200 is valid.
+Each present body must match authenticated historical immutable metadata, with
+strictly checked current Boolean expiry. Absence authenticates the historical
+member hash but yields no current object, `expired` value, immutable-field
+comparison or proof of deletion. Every before/after pass has nine ordered
+observations; normalized Vectors must agree across acquisition, producer final,
+writer and every later rebind. Full original/retaining run/job controls and both
+exact, nonexpired retained metadata records bound to IDs `10779404529` and
+`10780480598` are checked around acquisition and later gates. Preserve the
+original attempt-1 62-job and retaining attempt-1 68-job history, retaining
+producer/import/upload chronology, strict 40/60 ZIP profiles, source/signer
+checks, genuine two-native/five-public-package crypto and 32 Rust checks.
+
+The retained producer performs read-only acceptance in dry and live requests,
+using the same existing workflow DAG, direct five-output receipt handoff, CI,
+signed-tag gate and two protected approval jobs. Dry skips the writer. The live
+writer first validates the direct output's same-attempt provenance and actual
+in-progress job, before canonical complete acquisition. Preliminary provenance
+does not authorize public checks or mutation. The acquisition input remains
+immutable. The writer then checks fresh receipt metadata, strict ZIP/member
+bytes and producer chronology, refreshes metadata and jobs after download,
+captures a final `observed_at` before receipt expiry, validates both raw
+producer observations and compares the normalized producer/writer Vectors.
+Producer `checked_at` is preserved. Public checks and a separate post-public
+finalization precede any write. Source/files, all nine originals, both retained
+objects and complete run/jobs are rebound before every mutation and final
+readback. A mismatch or failed diagnostic stops the pending operation, while
+earlier or uncertain journal entries remain. The version 2 public body and
+custody asset disclose metadata visibility loss without run timestamps;
+exactly 35 stable assets are allowed, with no overwrite.
+
+No rebuild, repack, stage, package upload or republication, alternate artifact
+ID, local payload fallback or retention extension is permitted. The reviewed
+unit fixtures and historical replay are not final-source gates or current
+hosted acceptance. The signed complete candidate is documented before the
+full final-source validation, fresh read-only crypto, independent whole-change
+review, exact-head CI and actual non-author human reviews. Actual results belong
+in the preserved execution ledger and self-contained PR handoff. Separate
+authority governs a new signed tag, protected dry run, live completion,
+provider/35-asset readback and issue 822 retirement.

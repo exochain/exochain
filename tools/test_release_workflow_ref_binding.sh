@@ -1315,6 +1315,31 @@ workflow_path = ARGV.fetch(0)
 workflow = Psych.load_file(workflow_path)
 jobs = workflow.fetch("jobs")
 
+retained_condition = "(needs.validate-release-inputs.outputs.operation == 'recover-0.2.7-retained' || needs.validate-release-inputs.outputs.operation == 'recover-0.2.7-retained-404')"
+retained_producer = jobs.fetch("retained-acceptance")
+retained_writer = jobs.fetch("retained-github")
+unless retained_producer.fetch("if") == "${{ #{retained_condition} }}" &&
+       retained_writer.fetch("if") == "${{ #{retained_condition} && !inputs.dry_run }}"
+  raise "#{workflow_path}: retained operations must share the producer and live-only writer"
+end
+expected_receipt_outputs = {
+  "artifact_id" => "${{ steps.receipt.outputs.artifact-id }}",
+  "artifact_digest" => "${{ steps.receipt.outputs.artifact-digest }}",
+  "producer_job_id" => "${{ steps.acceptance.outputs.producer_job_id }}",
+  "receipt_members" => "${{ steps.acceptance.outputs.receipt_members }}",
+  "receipt_context" => "${{ steps.acceptance.outputs.receipt_context }}"
+}
+unless retained_producer.fetch("outputs") == expected_receipt_outputs
+  raise "#{workflow_path}: retained producer direct receipt outputs changed"
+end
+writer_env = retained_writer.fetch("steps").fetch(3).fetch("env")
+expected_receipt_outputs.each_key do |name|
+  binding = "${{ needs.retained-acceptance.outputs.#{name} }}"
+  unless writer_env.fetch("RELEASE_RECEIPT_#{name.upcase}") == binding
+    raise "#{workflow_path}: retained writer receipt #{name} is not a direct producer output"
+  end
+end
+
 expected_needs = {
   "validate-release-inputs" => [],
   "approve" => %w[ci validate-release-inputs],

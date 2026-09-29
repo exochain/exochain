@@ -20,7 +20,7 @@ for credential_name in CARGO_REGISTRY_TOKEN NPM_TOKEN NODE_AUTH_TOKEN \
     TWINE_PASSWORD PYPI_TOKEN PYPI_API_TOKEN ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL; do
   [ -z "${!credential_name:-}" ] || fail "publication credentials and OIDC must be absent during helper capture"
 done
-if [ "${RELEASE_OPERATION:-}" = recover-0.2.7-retained ]; then
+if [[ "${RELEASE_OPERATION:-}" = recover-0.2.7-retained || "${RELEASE_OPERATION:-}" = recover-0.2.7-retained-404 ]]; then
   [ -z "${RELEASE_RECOVERY_PYTHON_PHASE:-}" ] || fail 'retained acceptance forbids stage exemptions'
 fi
 
@@ -154,11 +154,28 @@ original_commit="$(trusted_git rev-parse --verify 'refs/tags/v0.2.7^{commit}')"
   --remote-refs "$capture/original-remote-refs.txt" >/dev/null
 
 retaining_verified=false
-if [ "${RELEASE_OPERATION:-}" = recover-0.2.7-retained ]; then
+if [[ "${RELEASE_OPERATION:-}" = recover-0.2.7-retained || "${RELEASE_OPERATION:-}" = recover-0.2.7-retained-404 ]]; then
   trusted_git show "$controller_sha:governance/releases/v0.2.7/RETAINED-CUSTODY.json" > "$capture/RETAINED-CUSTODY.json"
   /bin/chmod 400 "$capture/RETAINED-CUSTODY.json"
   /usr/bin/env -i "$python_path" -I -B "$capture/verify_release_recovery_027.py" retained-record \
     --manifest "$capture/RECOVERY-MANIFEST.json" --record "$capture/RETAINED-CUSTODY.json" >/dev/null
+  if [ "$RELEASE_OPERATION" = recover-0.2.7-retained-404 ]; then
+    trusted_git show "$controller_sha:governance/releases/v0.2.7/RETAINED-METADATA-POLICY.json" > "$capture/RETAINED-METADATA-POLICY.json"
+    /bin/chmod 400 "$capture/RETAINED-METADATA-POLICY.json"
+    /usr/bin/env -i "$python_path" -I -B - "$capture" <<'POLICY_CHECK' >/dev/null
+import importlib.util, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location('retained_identity_checker', root / 'verify_release_recovery_027.py')
+checker = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(checker)
+manifest = checker.load_manifest(root / 'RECOVERY-MANIFEST.json')
+record = checker.load_retained_record(manifest, root / 'RETAINED-CUSTODY.json')
+checker.load_retained_metadata_policy(manifest, record, root / 'RETAINED-METADATA-POLICY.json')
+POLICY_CHECK
+    trusted_git show "$controller_sha:governance/releases/v0.2.7/RETAINED-METADATA-POLICY.json" \
+      | /usr/bin/cmp - "$capture/RETAINED-METADATA-POLICY.json" \
+      || fail 'retained metadata policy capture changed'
+  fi
   [ "$(trusted_git rev-parse --verify refs/tags/v0.2.7-recover.2)" = cab642330dfc34099cddbe3721b376e26a67c722 ] \
     && [ "$(trusted_git rev-parse --verify 'refs/tags/v0.2.7-recover.2^{commit}')" = 2198e4ef610e9ef6d04adf726f7f4b3e156a3bc1 ] \
     || fail 'retaining tag local identity differs'

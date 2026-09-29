@@ -79,17 +79,18 @@ printf '%s\\n' "$acceptance_only" "$provenance_commit" "$provenance_ref"
         self.assertEqual(output.splitlines(), ["true", PRODUCT, "refs/tags/v0.2.7"])
 
     def test_retained_all_profiles_are_credential_free_before_bootstrap(self):
-        self.env["RELEASE_OPERATION"] = "recover-0.2.7-retained"
         self.env["RELEASE_NPM_MODE"] = "retained-accept"
-        for dry in ("true", "false"):
-            self.env["RELEASE_WORKFLOW_DRY_RUN"] = dry
-            for profile in ("wasm", "llm", "sdk"):
-                with self.subTest(dry=dry, profile=profile):
-                    self.assertEqual(self.succeeds(f"profile={profile}; validate_npm_release_context; printf '%s' \"$acceptance_only\""), "true")
-                    for credential in ("NODE_AUTH_TOKEN", "NPM_TOKEN", "PYPI_API_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_URL"):
-                        self.env[credential] = "fixture"
-                        self.rejected(f"profile={profile}; validate_npm_release_context", "publishing credentials or OIDC")
-                        del self.env[credential]
+        for operation in ('recover-0.2.7-retained','recover-0.2.7-retained-404'):
+            self.env['RELEASE_OPERATION'] = operation
+            for dry in ("true", "false"):
+                self.env["RELEASE_WORKFLOW_DRY_RUN"] = dry
+                for profile in ("wasm", "llm", "sdk"):
+                    with self.subTest(operation=operation,dry=dry, profile=profile):
+                        self.assertEqual(self.succeeds(f"profile={profile}; validate_npm_release_context; printf '%s' \"$acceptance_only\""), "true")
+                        for credential in ("NODE_AUTH_TOKEN", "NPM_TOKEN", "PYPI_API_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_URL"):
+                            self.env[credential] = "fixture"
+                            self.rejected(f"profile={profile}; validate_npm_release_context", "publishing credentials or OIDC")
+                            del self.env[credential]
 
     def test_retained_environment_cannot_enable_ordinary_entrypoint(self):
         self.env["RELEASE_OPERATION"] = "recover-0.2.7-retained"
@@ -111,26 +112,28 @@ printf '%s\\n' "$acceptance_only" "$provenance_commit" "$provenance_ref"
         self.rejected("profile=sdk; validate_npm_release_context","retained mode requires retained operation")
 
     def test_retained_dry_and_live_all_profiles_never_enter_upload(self):
-        self.env.update(RELEASE_OPERATION="recover-0.2.7-retained", RELEASE_NPM_MODE="retained-accept")
-        for dry in ("true","false"):
-            self.env["RELEASE_WORKFLOW_DRY_RUN"] = dry
-            for profile in ("wasm","llm","sdk"):
-                for status in (0,1):
-                    with self.subTest(dry=dry,profile=profile,status=status):
-                        self.events.unlink(missing_ok=True)
-                        body = self.orchestration(profile,status).rsplit("publish_or_accept_npm",1)[0]
-                        body += self.mapping()+"\npublish_or_accept_npm"
-                        if status == 0:
-                            self.succeeds(body)
-                        else:
-                            self.rejected(body,"acceptance-only mapped npm version is absent")
-                        events = self.events.read_text().splitlines()
-                        self.assertFalse(any(e.startswith(("actor","authority","authenticated:","visibility:")) for e in events))
-                        result = json.loads((self.receipt_path / "result.json").read_text())
-                        self.assertEqual(result["operation"],"recover-0.2.7-retained")
-                        self.assertIs(result["mutation_attempted"],False)
-                        self.assertIs(result["acceptance_verified"],status==0)
-                        self.assertFalse((self.receipt_path / "intent.json").exists())
+        self.env['RELEASE_NPM_MODE'] = 'retained-accept'
+        for operation in ('recover-0.2.7-retained','recover-0.2.7-retained-404'):
+            self.env['RELEASE_OPERATION'] = operation
+            for dry in ("true","false"):
+                self.env["RELEASE_WORKFLOW_DRY_RUN"] = dry
+                for profile in ("wasm","llm","sdk"):
+                    for status in (0,1):
+                        with self.subTest(operation=operation,dry=dry,profile=profile,status=status):
+                            self.events.unlink(missing_ok=True)
+                            body = self.orchestration(profile,status).rsplit("publish_or_accept_npm",1)[0]
+                            body += self.mapping()+"\npublish_or_accept_npm"
+                            if status == 0:
+                                self.succeeds(body)
+                            else:
+                                self.rejected(body,"acceptance-only mapped npm version is absent")
+                            events = self.events.read_text().splitlines()
+                            self.assertFalse(any(e.startswith(("actor","authority","authenticated:","visibility:")) for e in events))
+                            result = json.loads((self.receipt_path / "result.json").read_text())
+                            self.assertEqual(result["operation"],operation)
+                            self.assertIs(result["mutation_attempted"],False)
+                            self.assertIs(result["acceptance_verified"],status==0)
+                            self.assertFalse((self.receipt_path / "intent.json").exists())
 
     def test_authenticated_boundary_itself_rejects_retained(self):
         self.env["RELEASE_OPERATION"] = "recover-0.2.7-retained"

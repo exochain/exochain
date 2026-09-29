@@ -29,7 +29,7 @@ name: EXOCHAIN Release
         description: "Normal release or fixed original-artifact 0.2.7 recovery"
         required: true
         type: choice
-        options: [release, recover-0.2.7, recover-0.2.7-retained]
+        options: [release, recover-0.2.7, recover-0.2.7-retained, recover-0.2.7-retained-404]
         default: release
       version:
         description: "Release version (e.g. 0.2.0)"
@@ -129,7 +129,7 @@ jobs:
               [[ "$GITHUB_REF" != refs/tags/v0.2.7-recover.* ]] || exit 1
               printf 'tag=v%s\n' "$version" >> "$GITHUB_OUTPUT"
               ;;
-            recover-0.2.7|recover-0.2.7-retained)
+            recover-0.2.7|recover-0.2.7-retained|recover-0.2.7-retained-404)
               [ "$version" = 0.2.7 ] || exit 1
               [[ "$GITHUB_REF" =~ ^refs/tags/v0\.2\.7-recover\.[1-9][0-9]*$ ]] || exit 1
               printf 'tag=%s\n' "${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
@@ -5426,7 +5426,7 @@ jobs:
 
   # Fixed original-artifact recovery. Product and publisher identities stay separate.
   retained-acceptance:
-    if: ${{ needs.validate-release-inputs.outputs.operation == 'recover-0.2.7-retained' }}
+    if: ${{ (needs.validate-release-inputs.outputs.operation == 'recover-0.2.7-retained' || needs.validate-release-inputs.outputs.operation == 'recover-0.2.7-retained-404') }}
     name: "Verify Retained 0.2.7 Custody and Publications"
     runs-on: ubuntu-24.04
     needs: [ci, approve, approve-second, verify-signed-tag, validate-release-inputs]
@@ -5571,7 +5571,7 @@ jobs:
           include-hidden-files: false
 
   retained-github:
-    if: ${{ needs.validate-release-inputs.outputs.operation == 'recover-0.2.7-retained' && !inputs.dry_run }}
+    if: ${{ (needs.validate-release-inputs.outputs.operation == 'recover-0.2.7-retained' || needs.validate-release-inputs.outputs.operation == 'recover-0.2.7-retained-404') && !inputs.dry_run }}
     name: "Complete Retained 0.2.7 GitHub Release"
     runs-on: ubuntu-24.04
     needs: [ci, approve, approve-second, verify-signed-tag, validate-release-inputs, retained-acceptance]

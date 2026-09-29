@@ -297,7 +297,8 @@ main() {
   [[ "$#" = 1 && ( "$1" = preflight || "$1" = readback || "$1" = accept || "$1" = retained-readback ) ]] || fail 'expected preflight, readback, accept or retained-readback'
   local mode="$1" credential path
   if [[ "$mode" = accept || "$mode" = retained-readback ]]; then
-    [[ "${RELEASE_OPERATION:-}" = recover-0.2.7-retained ]] || fail 'operation and release mode differ'
+    [[ "${RELEASE_OPERATION:-}" = recover-0.2.7-retained || "${RELEASE_OPERATION:-}" = recover-0.2.7-retained-404 ]] \
+      || fail 'operation and release mode differ'
     [[ "${RELEASE_WORKFLOW_DRY_RUN:-}" = true || "${RELEASE_WORKFLOW_DRY_RUN:-}" = false ]] \
       || fail 'explicit workflow dry-run boolean required'
     [[ -z "${RELEASE_RECOVERY_PYTHON_PHASE:-}" ]] || fail 'retained acceptance forbids stage exemptions'
@@ -394,9 +395,10 @@ main() {
     write_outputs
   elif [[ "$mode" = accept ]]; then
     public_command "$tool_python" -I -B - "$receipts" "$scratch/exochain-recovery-receipts" \
-      "$GITHUB_SHA" "$GITHUB_REF" <<'PY'
+      "$GITHUB_SHA" "$GITHUB_REF" "$RELEASE_OPERATION" <<'PY'
 import json,os,pathlib,sys
-receipts,root,sha,ref=sys.argv[1:]; source=pathlib.Path(receipts); parent=pathlib.Path(root)
+receipts,root,sha,ref,operation=sys.argv[1:]; source=pathlib.Path(receipts); parent=pathlib.Path(root)
+assert operation in ('recover-0.2.7-retained','recover-0.2.7-retained-404')
 assert parent.is_dir() and not parent.is_symlink()
 destination=parent/'python'; destination.mkdir(mode=0o700)
 records=[json.loads((source/(name+'.result.json')).read_text()) for name in
@@ -405,7 +407,7 @@ assert all(r['exit_code']==0 and r['public_bytes_verified'] is True and r['crypt
            and r['mutation_attempted'] is False for r in records)
 fd=os.open(destination/'result.json',os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
 with os.fdopen(fd,'w') as stream:
-    json.dump({'schema':'exochain-python-retained-acceptance/v1','operation':'recover-0.2.7-retained',
+    json.dump({'schema':'exochain-python-retained-acceptance/v1','operation':operation,
         'controller_commit':sha,'controller_ref':ref,'exit_code':0,'mutation_attempted':False,
         'acceptance_verified':True,'files':records},stream,sort_keys=True)
 PY
