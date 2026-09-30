@@ -352,3 +352,15 @@ review, exact-head CI and actual non-author human reviews. Actual results belong
 in the preserved execution ledger and self-contained PR handoff. Separate
 authority governs a new signed tag, protected dry run, live completion,
 provider/35-asset readback and issue 822 retirement.
+
+## September 30 guarded empty-draft implementation
+
+Bob authorized the [specific controller-description transition](EMPTY-DRAFT-CONTROLLER-TRANSITION.md)
+for draft `400420101`, including implementation and legitimate execution with
+all existing protections. No further design/implementation permission is needed
+for this scope. Implement and regress the canonical read-only preflight and
+protected writer together; preserve the reviewed HTTP repair. Independently
+review the complete change and run fresh final-source validation before the
+normal reviewed integration and protected DRY/LIVE path. Do not reuse an old
+producer receipt or failed-job-only rerun, bypass a human gate, or waive expiry.
+Record actual results separately; this plan is not proof of execution.

@@ -3,13 +3,16 @@
 # SPDX-License-Identifier: Apache-2.0
 import importlib.util
 import io
+import hashlib
 import json
 import copy
+from email.message import Message
 import os
 from pathlib import Path
 import tempfile
 import unittest
 import types
+import zipfile
 from unittest.mock import patch
 
 HELPER = Path(__file__).with_name("recover_github_release_027.py")
@@ -35,6 +38,7 @@ class FakeProvider:
     def publish(self, release_id):
         self.mutations.append("publish")
         self.release["draft"] = False
+        self.release['published_at'] = '2026-09-30T21:00:00Z'
 
 
 class GithubRecoveryTests(unittest.TestCase):
@@ -50,6 +54,13 @@ class GithubRecoveryTests(unittest.TestCase):
     def run_recovery(self, provider):
         return self.v.recover(provider, self.expected, self.assets, lambda:self.binds.append("bind"))
 
+    def fixed_predecessor(self):
+        root=HELPER.parent.parent/'governance/releases/v0.2.7'
+        manifest,publications,record,policy=[json.loads((root/name).read_text()) for name in
+            ('RECOVERY-MANIFEST.json','PUBLICATION-IDENTITIES.json','RETAINED-CUSTODY.json',
+             'RETAINED-METADATA-POLICY.json')]
+        return self.v.fixed_empty_predecessor(manifest,publications,record,policy)
+
     def test_read_only_preflight_never_creates_uploads_or_publishes(self):
         self.assertTrue(callable(getattr(self.v, 'preflight', None)), 'read-only preflight absent')
         for draft, assets in [(None, {}), (True, {}), (True, self.assets), (False, self.assets)]:
@@ -58,6 +69,297 @@ class GithubRecoveryTests(unittest.TestCase):
             result = self.v.preflight(provider,self.expected,self.assets,lambda:self.binds.append('bind'))
             self.assertFalse(result['mutation_attempted'])
             self.assertEqual(provider.mutations, [])
+
+    def test_only_exact_empty_predecessor_can_pass_retained_preflight(self):
+        predecessor = self.fixed_predecessor()
+        provider = FakeProvider(dict(predecessor))
+        result = self.v.preflight(provider,self.expected,self.assets,lambda:None,
+                                  predecessor=predecessor)
+        self.assertEqual(result['release_id'],400420101)
+        self.assertEqual(result['existing_assets'],0)
+        self.assertEqual(provider.mutations,[])
+        for change in ({'id':400420102}, {'body':'foreign'}, {'updated_at':'later'},
+                       {'draft':False}, {'prerelease':True}, {'published_at':'now'},
+                       {'created_at':'later'}, {'immutable':True},
+                       {'target_commitish':'foreign'}, {'node_id':'foreign'},
+                       {'assets':[{'name':'foreign'}]}):
+            with self.subTest(change=change):
+                bad=FakeProvider({**predecessor,**change})
+                with self.assertRaises(ValueError):
+                    self.v.preflight(bad,self.expected,self.assets,lambda:None,
+                                     predecessor=predecessor)
+                self.assertEqual(bad.mutations,[])
+        missing=FakeProvider({key:value for key,value in predecessor.items() if key!='published_at'})
+        with self.assertRaises(ValueError):
+            self.v.preflight(missing,self.expected,self.assets,lambda:None,predecessor=predecessor)
+        nonempty=FakeProvider(dict(predecessor),{'archive.tar.gz':b'abc'})
+        with self.assertRaises(ValueError):
+            self.v.preflight(nonempty,self.expected,self.assets,lambda:None,predecessor=predecessor)
+        for release in (None,{**self.expected,'id':400420102,'draft':True,'prerelease':False}):
+            with self.subTest(release=release),self.assertRaises(ValueError):
+                self.v.preflight(FakeProvider(release),self.expected,self.assets,lambda:None,
+                                 predecessor=predecessor)
+        with self.assertRaises(ValueError):
+            self.v.preflight(FakeProvider(dict(predecessor)),self.expected,self.assets,lambda:None)
+
+    def test_retained_transition_runs_after_all_gates_and_before_recovery(self):
+        events=[]
+        provider=FakeProvider()
+        def transition():
+            events.append('transition')
+            provider.release={**self.expected,'id':400420101,'draft':True,'prerelease':False,
+                'published_at':None,'assets':[]}
+            return 400420101,True,lambda release:None
+        self.v.complete_retained(provider,self.expected,self.assets,
+            lambda:events.append('rebind'),lambda:events.append('receipts'),
+            lambda:events.append('public'),prepare_gate=lambda:events.append('prepare'),
+            acquire_gate=lambda:events.append('acquire'),final_gate=lambda:events.append('final'),
+            transition_gate=transition)
+        self.assertEqual(events[:6],['prepare','acquire','receipts','public','final','transition'])
+        self.assertEqual(provider.mutations[0],'upload:archive.tar.gz')
+
+    def test_transition_rechecks_exact_empty_draft_and_stops_on_drift(self):
+        predecessor=self.fixed_predecessor()
+        for change in ({'id':12},{'body':'foreign'},{'draft':False},{'assets':[{'name':'x'}]}):
+            with self.subTest(change=change):
+                provider=FakeProvider({**predecessor,**change})
+                provider.update_body=lambda *args:provider.mutations.append('patch')
+                with self.assertRaises(ValueError):
+                    self.v.transition_empty_draft(provider,self.expected,predecessor,lambda:None,[] .append)
+                self.assertEqual(provider.mutations,[])
+        provider=FakeProvider(dict(predecessor),{'archive.tar.gz':b'abc'})
+        provider.update_body=lambda *args:provider.mutations.append('patch')
+        with self.assertRaises(ValueError):
+            self.v.transition_empty_draft(provider,self.expected,predecessor,lambda:None,None)
+        self.assertEqual(provider.mutations,[])
+
+    def test_transition_unknown_or_postwrite_drift_never_uploads_or_retries(self):
+        predecessor=self.fixed_predecessor()
+        for fault in ('unknown','http-status','response','response-target','readback',
+                      'readback-target','listed-assets'):
+            with self.subTest(fault=fault):
+                provider=FakeProvider(dict(predecessor))
+                journal=[]
+                def update(identifier,body):
+                    provider.mutations.append('patch')
+                    provider.release={**predecessor,'body':body}
+                    if fault=='unknown': raise OSError('uncertain')
+                    if fault=='http-status': raise self.v.GitHubUploadError(422,b'private',{},
+                        operation='release body transition')
+                    if fault=='response': return {**provider.release,'body':'wrong'}
+                    if fault=='response-target': return {**provider.release,'target_commitish':'foreign'}
+                    return dict(provider.release)
+                provider.update_body=update
+                original_lookup=provider.lookup
+                def lookup():
+                    result=original_lookup()
+                    return {**result,'body':'foreign'} if fault=='readback' and provider.mutations else result
+                def drift_lookup():
+                    result=lookup()
+                    return {**result,'target_commitish':'foreign'} if fault=='readback-target' and provider.mutations else result
+                provider.lookup=drift_lookup
+                original_assets=provider.list_assets
+                def list_assets(identifier):
+                    if fault=='listed-assets' and provider.mutations:
+                        return [{'id':123,'name':'foreign','size':1,'state':'uploaded'}]
+                    return original_assets(identifier)
+                provider.list_assets=list_assets
+                with self.assertRaises((ValueError,OSError)):
+                    self.v.complete_retained(provider,self.expected,self.assets,lambda:None,
+                        lambda:None,lambda:None,journal.append,prepare_gate=lambda:None,
+                        acquire_gate=lambda:None,final_gate=lambda:None,
+                        transition_gate=lambda:self.v.transition_empty_draft(provider,self.expected,
+                            predecessor,lambda:None,journal.append))
+                self.assertEqual(provider.mutations,['patch'])
+                self.assertEqual(journal[-1]['outcome'],'unknown')
+                if fault=='http-status':
+                    self.assertEqual(journal[-1]['http_diagnostics']['http_status'],422)
+
+    def test_actual_transition_acceptance_precedes_first_asset_upload(self):
+        predecessor=self.fixed_predecessor()
+        provider=FakeProvider(dict(predecessor))
+        journal=[]
+        gates=[]
+        def update(identifier,body):
+            provider.mutations.append('patch')
+            provider.release={**predecessor,'body':body,'updated_at':'2026-09-30T20:42:00Z'}
+            return dict(provider.release)
+        provider.update_body=update
+        self.v.complete_retained(provider,self.expected,self.assets,lambda:gates.append('rebind'),
+            lambda:gates.append('receipt'),lambda:gates.append('public'),journal.append,
+            prepare_gate=lambda:gates.append('prepare'),acquire_gate=lambda:gates.append('acquire'),
+            final_gate=lambda:gates.append('final'),
+            transition_gate=lambda:(self.v.transition_empty_draft(provider,self.expected,
+                predecessor,lambda:gates.append('transition-rebind'),journal.append),True,
+                lambda release:self.v.validate_continued_release(release,self.expected,predecessor)))
+        self.assertEqual(provider.mutations[0],'patch')
+        self.assertEqual(provider.mutations[1],'upload:archive.tar.gz')
+        transition=[row['outcome'] for row in journal if row['operation']=='transition_controller_body']
+        self.assertEqual(transition,['intent','response_received_not_yet_accepted','accepted'])
+        self.assertLess(journal.index(next(row for row in journal if row['outcome']=='accepted')),
+                        journal.index(next(row for row in journal if row['operation']=='upload_asset')))
+        self.assertEqual(gates[:3],['prepare','acquire','receipt'])
+
+    def test_stale_receipt_or_final_gate_never_enters_transition(self):
+        for fault in ('prepare','acquire','receipt','public','final'):
+            with self.subTest(fault=fault):
+                events=[]
+                provider=FakeProvider()
+                def gate(label):
+                    def run():
+                        events.append(label)
+                        if fault==label: raise ValueError(label)
+                    return run
+                with self.assertRaises(ValueError):
+                    self.v.complete_retained(provider,self.expected,self.assets,lambda:None,
+                        gate('receipt'),gate('public'),prepare_gate=gate('prepare'),
+                        acquire_gate=gate('acquire'),final_gate=gate('final'),
+                        transition_gate=lambda:events.append('transition'))
+                self.assertNotIn('transition',events)
+                self.assertEqual(provider.mutations,[])
+
+    def test_recovery_guard_catches_nonbody_drift_after_transition_readback(self):
+        predecessor=self.fixed_predecessor()
+        provider=FakeProvider(dict(predecessor))
+        journal=[]
+        lookups=0
+        def lookup():
+            nonlocal lookups
+            lookups+=1
+            current=dict(provider.release)
+            if lookups>=3: current['target_commitish']='foreign'
+            return current
+        provider.lookup=lookup
+        def update(identifier,body):
+            provider.mutations.append('patch')
+            provider.release={**predecessor,'body':body,'updated_at':'2026-09-30T20:42:00Z'}
+            return dict(provider.release)
+        provider.update_body=update
+        with self.assertRaises(ValueError):
+            self.v.complete_retained(provider,self.expected,self.assets,lambda:None,
+                lambda:None,lambda:None,journal.append,prepare_gate=lambda:None,
+                acquire_gate=lambda:None,final_gate=lambda:None,
+                transition_gate=lambda:(self.v.transition_empty_draft(provider,self.expected,
+                    predecessor,lambda:None,journal.append),True,
+                    lambda release:self.v.validate_continued_release(release,self.expected,predecessor)))
+        self.assertEqual(provider.mutations,['patch'])
+
+    def test_preflight_rejects_duplicate_same_tag_releases(self):
+        predecessor=self.fixed_predecessor()
+        client=self.v.GitHub('test-only-token',lambda raw,label:json.loads(raw))
+        def listed(method,path,**kwargs):
+            return [dict(predecessor),{**predecessor,'id':400420102}] if path.endswith('page=1') else []
+        client.json=listed
+        with self.assertRaises(ValueError):
+            self.v.preflight(client,self.expected,self.assets,lambda:None,predecessor=predecessor)
+
+    def test_body_transition_uses_only_exact_patch_payload_and_requires_http_200(self):
+        client=self.v.GitHub('test-only-token',lambda raw,label:json.loads(raw))
+        calls=[]
+        def request(method,url,data=None,**kwargs):
+            calls.append((method,url,data))
+            return 200,json.dumps({**self.expected,'id':400420101,'draft':True,
+                'prerelease':False,'published_at':None,'assets':[]}).encode(),{}
+        client.request=request
+        client.update_body(400420101,self.expected['body'])
+        self.assertEqual(calls,[('PATCH','https://api.github.com/repos/exochain/exochain/releases/400420101',
+                                 b'{"body":"fixed reviewed identity"}')])
+        client.request=lambda *args,**kwargs:(201,b'{}',{})
+        with self.assertRaises(ValueError): client.update_body(400420101,'body')
+
+    def test_transition_route_does_not_create_if_pinned_draft_disappears(self):
+        provider=FakeProvider()
+        with self.assertRaises(ValueError):
+            self.v.complete_retained(provider,self.expected,self.assets,lambda:None,
+                lambda:None,lambda:None,prepare_gate=lambda:None,acquire_gate=lambda:None,
+                final_gate=lambda:None,transition_gate=lambda:(400420101,True,lambda release:None))
+        self.assertEqual(provider.mutations,[])
+
+    def test_already_transitioned_same_draft_can_resume_verified_assets(self):
+        provider=FakeProvider({**self.expected,'id':400420101,'draft':True,'prerelease':False},
+                              {'archive.tar.gz':b'abc'})
+        self.v.complete_retained(provider,self.expected,self.assets,lambda:None,
+            lambda:None,lambda:None,prepare_gate=lambda:None,acquire_gate=lambda:None,
+            final_gate=lambda:None,transition_gate=lambda:(400420101,False,lambda release:None))
+        self.assertEqual(provider.mutations,['upload:RECOVERY-CUSTODY.json','publish'])
+
+    def test_historical_failure_requires_exact_live_metadata_archive_and_member(self):
+        root=HELPER.parent.parent/'governance/releases/v0.2.7'
+        manifest,publications,record,policy=[json.loads((root/name).read_text()) for name in
+            ('RECOVERY-MANIFEST.json','PUBLICATION-IDENTITIES.json','RETAINED-CUSTODY.json',
+             'RETAINED-METADATA-POLICY.json')]
+        context={'controller_sha':'b5871abd548d427cacab27e748b49e75897a5f66',
+            'controller_ref':'refs/tags/v0.2.7-recover.4','run_id':36653810772,
+            'run_attempt':1,'original_source':self.v.PRODUCT_SHA}
+        rows=[{**context,'operation':operation,'outcome':outcome,
+               **({'release_id':400420101,'asset':'first.cdx.json'} if operation=='upload_asset' else {})}
+              for operation,outcome in (('create_draft','intent'),
+                ('create_draft','response_received_not_yet_accepted'),
+                ('upload_asset','intent'),('upload_asset','unknown'))]
+        journal='\n'.join(json.dumps(row,separators=(',',':')) for row in rows)
+        journal=(journal+' '*(1473-len(journal)-1)+'\n').encode()
+        self.assertEqual(len(journal),1473)
+        with io.BytesIO() as output:
+            with zipfile.ZipFile(output,'w',compression=zipfile.ZIP_DEFLATED) as bundle:
+                info=zipfile.ZipInfo(self.v.HISTORICAL_MEMBER)
+                info.compress_type=zipfile.ZIP_DEFLATED
+                info.external_attr=0o100600<<16
+                bundle.writestr(info,journal)
+            raw=output.getvalue()
+        self.assertLessEqual(len(raw),603)
+        with io.BytesIO(raw) as output:
+            with zipfile.ZipFile(output,'a') as bundle:
+                bundle.comment=b'x'*(603-len(raw))
+            archive=output.getvalue()
+        self.assertEqual(len(archive),603)
+        endpoint='https://api.github.com/repos/exochain/exochain/actions/artifacts/11124850978'
+        metadata={'id':11124850978,'name':'exochain-027-retained-github-receipts',
+            'size_in_bytes':603,'url':endpoint,'archive_download_url':endpoint+'/zip',
+            'node_id':'MDg6QXJ0aWZhY3QxMTEyNDg1MDk3OA==',
+            'digest':'sha256:'+hashlib.sha256(archive).hexdigest(),
+            'created_at':'2026-09-30T20:41:02Z','updated_at':'2026-09-30T20:41:02Z',
+            'expires_at':'2026-10-30T20:41:01Z','expired':False,
+            'workflow_run':{'id':36653810772,'repository_id':1116455646,
+                'head_repository_id':1116455646,
+                'head_sha':context['controller_sha'],'head_branch':'v0.2.7-recover.4'}}
+        spec=importlib.util.spec_from_file_location('historical_custody',HELPER.with_name('verify_release_recovery_027.py'))
+        custody=importlib.util.module_from_spec(spec);spec.loader.exec_module(custody)
+        importer=types.SimpleNamespace(API='https://api.github.com/repos/exochain/exochain/actions',
+            JSON_LIMIT=4*1024*1024,utc_now=lambda:'2026-09-30T20:42:00Z')
+        for fault in (None,'wrong-id','node','digest','head-repository','expired',
+                      'after-drift','archive','member','late'):
+            with self.subTest(fault=fault),tempfile.TemporaryDirectory() as tmp:
+                evidence=Path(tmp)
+                downloads=[]
+                class Transport:
+                    def get(self,url,path,limit):
+                        self_outer.assertEqual(url,endpoint)
+                        current=copy.deepcopy(metadata)
+                        if fault=='wrong-id': current['id']=1
+                        if fault=='node': current['node_id']='foreign'
+                        if fault=='digest': current['digest']='sha256:'+'0'*64
+                        if fault=='head-repository': current['workflow_run']['head_repository_id']=1
+                        if fault=='expired': current['expired']=True
+                        if fault=='after-drift' and 'after' in path.name: current['updated_at']='changed'
+                        path.write_text(json.dumps(current))
+                    def receipt_archive(self,current,path):
+                        downloads.append(current['id'])
+                        path.write_bytes(b'bad' if fault=='archive' else archive)
+                self_outer=self
+                clock=types.SimpleNamespace(**vars(importer))
+                if fault=='late': clock.utc_now=lambda:'2026-10-30T20:41:01Z'
+                member_hash=hashlib.sha256(journal).hexdigest()
+                archive_hash=hashlib.sha256(archive).hexdigest()
+                if fault=='member': member_hash='0'*64
+                with patch.object(self.v,'HISTORICAL_ARCHIVE_SHA256',archive_hash),\
+                     patch.object(self.v,'HISTORICAL_MEMBER_SHA256',member_hash):
+                    args=(Transport(),custody,clock,evidence,manifest,publications,record,policy)
+                    if fault:
+                        with self.assertRaises(ValueError): self.v.authenticate_failed_predecessor(*args)
+                    else:
+                        self.assertEqual(self.v.authenticate_failed_predecessor(*args)['id'],400420101)
+                self.assertEqual(downloads,[] if fault in ('wrong-id','node','digest',
+                    'head-repository','expired','late') else [11124850978])
 
     def test_retained_writer_requires_current_receipts_before_public_checks_or_writes(self):
         self.assertTrue(callable(getattr(self.v, 'complete_retained', None)), 'retained writer gate absent')
@@ -660,6 +962,143 @@ class GithubRecoveryTests(unittest.TestCase):
         with self.assertRaises(ValueError): client.upload(123,"asset",b"abc")
         client.request = lambda *args, **kwargs:(200,b"too-long",{})
         with self.assertRaises(ValueError): client.download({"id":12,"size":3})
+
+    def test_upload_sends_raw_bytes_but_requests_json_metadata(self):
+        client = self.v.GitHub("test-only-token", lambda b, label:json.loads(b))
+        calls = []
+        class Transport:
+            def open(self, request, timeout):
+                calls.append(request)
+                result = io.BytesIO(b'{"name":"asset +.bin","size":3}')
+                result.status = 201
+                result.headers = {"Content-Type":"application/json"}
+                return result
+        client.transport = Transport()
+        client.upload(123, "asset +.bin", b"\x00\xff\x01")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0].full_url, "https://uploads.github.com/repos/exochain/exochain/releases/123/assets?name=asset%20%2B.bin")
+        self.assertEqual(calls[0].method, "POST")
+        self.assertEqual(calls[0].data, b"\x00\xff\x01")
+        self.assertEqual(calls[0].get_header("Content-type"), "application/octet-stream")
+        self.assertEqual(calls[0].get_header("Accept"), "application/vnd.github+json")
+
+    def test_http_upload_failure_keeps_safe_diagnostics_and_stops_before_next_write(self):
+        for status in (403, 406, 415, 422, 429, 500, 502):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as tmp:
+                client = self.v.GitHub("test-only-token", lambda b, label:json.loads(b))
+                calls = []
+                release = {**self.expected, "id":123, "draft":True, "prerelease":False}
+                class Transport:
+                    def open(inner, request, timeout):
+                        calls.append(request)
+                        if request.method == "POST":
+                            headers = Message()
+                            headers["X-GitHub-Request-Id"] = "AB12:CD34:EF56:7890"
+                            headers["Content-Type"] = "application/json; charset=utf-8"
+                            headers["Set-Cookie"] = "private-cookie-fixture"
+                            raise self.v.urllib.error.HTTPError(request.full_url, status,
+                                "private-reason-fixture", headers, io.BytesIO(b"provider-private-response"))
+                        self.assertEqual(request.method, "GET")
+                        body = ([release] if request.full_url.endswith("/releases?per_page=100&page=1") else [])
+                        result = io.BytesIO(json.dumps(body).encode())
+                        result.status = 200
+                        result.headers = {}
+                        return result
+                client.transport = Transport()
+                path = Path(tmp) / "journal.jsonl"
+                with self.assertRaises(ValueError) as error:
+                    self.v.recover(client, self.expected, self.assets, lambda:None, self.v.Journal(path))
+                events = [json.loads(row) for row in path.read_text().splitlines()]
+                self.assertEqual([event["outcome"] for event in events], ["intent", "unknown"])
+                self.assertEqual(events[1].get("http_diagnostics"), {
+                    "http_status":status, "github_request_id":"AB12:CD34:EF56:7890",
+                    "response_content_type":"application/json", "response_size":25,
+                    "response_sha256":"83aadd2b184b91b53c50dec327824a5a8f497708c0cafeaf27177bb89f1929e1"})
+                self.assertIn("HTTP " + str(status), str(error.exception))
+                self.assertEqual([request.method for request in calls if request.method != "GET"], ["POST"])
+                self.assertTrue(calls[-1].full_url.endswith("/assets?name=archive.tar.gz"))
+                for private in ("test-only-token", "private-cookie-fixture", "private-reason-fixture", "provider-private-response"):
+                    self.assertNotIn(private, path.read_text() + str(error.exception))
+
+    def test_upload_error_diagnostics_reject_untrusted_header_text(self):
+        for request_id in ("Bearer test-only-token", "ABCD\nforged", "A" * 129, "", None):
+            with self.subTest(request_id=request_id):
+                client = self.v.GitHub("test-only-token", lambda b, label:json.loads(b))
+                class Transport:
+                    def open(inner, request, timeout):
+                        result = io.BytesIO(b"provider-private-response")
+                        result.status = 415
+                        result.headers = {"X-GitHub-Request-Id":request_id,
+                                          "Content-Type":"application/x-private-test-only-token"}
+                        return result
+                client.transport = Transport()
+                with self.assertRaises(ValueError) as error:
+                    client.upload(123, "asset", b"abc")
+                diagnostics = getattr(error.exception, "diagnostics", {})
+                self.assertEqual(diagnostics.get("http_status"), 415)
+                self.assertIsNone(diagnostics.get("github_request_id"))
+                self.assertEqual(diagnostics.get("response_content_type"), "other")
+                self.assertNotIn("test-only-token", str(error.exception))
+                self.assertNotIn("provider-private-response", str(error.exception))
+
+    def test_oversized_upload_error_preserves_status_and_labels_only_a_bounded_prefix(self):
+        client = self.v.GitHub("test-only-token", lambda b, label:json.loads(b))
+        release = {**self.expected, "id":123, "draft":True, "prerelease":False}
+        calls, reads = [], []
+        class BoundedErrorBody(io.BytesIO):
+            def read(inner, bound=-1):
+                reads.append(bound)
+                self.assertEqual(bound, 4 * 1024 * 1024 + 1)
+                return super().read(bound)
+        class Transport:
+            def open(inner, request, timeout):
+                calls.append(request)
+                if request.method == "POST":
+                    headers = Message()
+                    headers["X-GitHub-Request-Id"] = "AB12:CD34:EF56:7890"
+                    headers["Content-Type"] = "text/html"
+                    raise self.v.urllib.error.HTTPError(request.full_url, 502, "private-reason",
+                        headers, BoundedErrorBody(b"x" * (4 * 1024 * 1024 + 2)))
+                self.assertEqual(request.method, "GET")
+                body = [release] if request.full_url.endswith("/releases?per_page=100&page=1") else []
+                result = io.BytesIO(json.dumps(body).encode())
+                result.status = 200
+                result.headers = {}
+                return result
+        client.transport = Transport()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "journal.jsonl"
+            with self.assertRaises(ValueError):
+                self.v.recover(client, self.expected, self.assets, lambda:None, self.v.Journal(path))
+            events = [json.loads(row) for row in path.read_text().splitlines()]
+        diagnostics = events[1].get("http_diagnostics", {})
+        self.assertEqual(diagnostics.get("http_status"), 502)
+        self.assertEqual(diagnostics.get("github_request_id"), "AB12:CD34:EF56:7890")
+        self.assertEqual(diagnostics.get("response_content_type"), "text/html")
+        self.assertIs(diagnostics.get("response_truncated"), True)
+        self.assertIsNone(diagnostics.get("response_size"))
+        self.assertIsNone(diagnostics.get("response_sha256"))
+        self.assertEqual(diagnostics.get("response_prefix_size"), 4194305)
+        self.assertEqual(diagnostics.get("response_prefix_sha256"),
+                         "8d3d3c04baadfd31cbebf771836900097b5f36cc142b74e40747c7b372beab8b")
+        self.assertEqual(reads, [4194305])
+        self.assertEqual([event["outcome"] for event in events], ["intent", "unknown"])
+        self.assertEqual([request.method for request in calls if request.method != "GET"], ["POST"])
+
+    def test_download_still_requests_binary_response_after_upload_header_split(self):
+        client = self.v.GitHub("test-only-token", lambda b, label:json.loads(b))
+        calls = []
+        class Transport:
+            def open(inner, request, timeout):
+                calls.append(request)
+                result = io.BytesIO(b"abc")
+                result.status = 200
+                result.headers = {}
+                return result
+        client.transport = Transport()
+        self.assertEqual(client.download({"id":12, "size":3}), b"abc")
+        self.assertEqual(calls[0].get_header("Accept"), "application/octet-stream")
+        self.assertIsNone(calls[0].get_header("Content-type"))
 
 
 if __name__ == "__main__": unittest.main()

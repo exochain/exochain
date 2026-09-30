@@ -302,3 +302,13 @@ Unit source reviews and historical approvals are distinct from final-source
 validation, fresh cryptographic evidence, exact-head CI and two new non-author
 human approvals. No new protected run, release execution or 35-asset readback
 is claimed by this documentation snapshot.
+
+## September 30 empty-draft controller transition
+
+The explicitly approved [guarded transition](EMPTY-DRAFT-CONTROLLER-TRANSITION.md)
+adds one exception for empty unpublished draft `400420101` and its authenticated
+failed-controller history. Only the body may change after the current writer's
+full gates; fresh readback precedes all asset uploads. Every other draft and old
+operation remains strict. The exception preserves source, package identities,
+tags, custody, expiry, exact assets and human protections; it is not a release
+acceptance claim or permission for an automatic retry.

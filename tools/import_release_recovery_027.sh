@@ -101,6 +101,7 @@ import sys
 import tarfile
 import tempfile
 import time
+from types import SimpleNamespace
 from urllib.parse import urlsplit
 
 API = "https://api.github.com/repos/exochain/exochain/actions"
@@ -159,6 +160,7 @@ class Transport:
         if policy is not None:
             require(retained is not None and policy.get("operation") == "recover-0.2.7-retained-404",
                     "original observation policy is not selected")
+            self.endpoints["historical_failure"] = API + "/artifacts/11124850978"
         self.retained_storage = set()
         if retained is not None:
             metadata = [retained[kind]["metadata"] for kind in ("payload", "custody")]
@@ -173,6 +175,8 @@ class Transport:
         self.public = {url for _, url in self.endpoints["rust"]}
         if retained is not None:
             self.authenticated.update([self.endpoints["retaining_run"], *self.endpoints["retaining_jobs"]])
+        if policy is not None:
+            self.authenticated.add(self.endpoints["historical_failure"])
 
     def _get(self, url, destination, limit, authenticated, *, allow_original_404=False):
         retained_payload = (self.retained is not None and limit == self.retained["payload"]["metadata"]["size_in_bytes"]
@@ -841,7 +845,14 @@ def retained_github_preflight(capture, custody, manifest, publications, record, 
         os.environ['GITHUB_SHA'],os.environ['GITHUB_REF'],policy=policy)
     assets = github.release_assets(custody,manifest,candidate,receipt)
     provider = github.GitHub(os.environ['RELEASE_GITHUB_TOKEN'],custody.parse_json)
-    result = github.preflight(provider,expected,assets,lambda:custody.verify_files(manifest,candidate))
+    predecessor = None
+    if policy is not None:
+        transport = Transport(capture,os.environ['RELEASE_GITHUB_TOKEN'],manifest,record,policy=policy)
+        predecessor = github.authenticate_failed_predecessor(transport,custody,
+            SimpleNamespace(API=API,JSON_LIMIT=JSON_LIMIT,utc_now=utc_now),
+            evidence,manifest,publications,record,policy)
+    result = github.preflight(provider,expected,assets,lambda:custody.verify_files(manifest,candidate),
+                              predecessor=predecessor)
     dump(evidence/'github-preflight.json',result)
 
 

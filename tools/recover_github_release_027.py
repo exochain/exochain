@@ -4,6 +4,7 @@
 """Complete only the fixed original release; never replace a release asset."""
 import hashlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -16,15 +17,50 @@ import types
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 
 API = "https://api.github.com/repos/exochain/exochain"
 UPLOADS = "https://uploads.github.com/repos/exochain/exochain"
 PRODUCT_SHA = "666c578f719d1e54fce95d6831a3af92ea80df93"
+HISTORICAL_ARCHIVE_SHA256 = '29f4c3a4e9075aabd725ad4c4ab7225f8e98be5aca3df67309c3e0e0ff0ae09d'
+HISTORICAL_MEMBER_SHA256 = '0c248f93130119592d029253f6f7e370651713054228dae551338690b2157d01'
+HISTORICAL_MEMBER = 'exochain-retained-github.5gehyybi/mutation-journal.jsonl'
+PRESERVED_RELEASE_FIELDS = ('id','node_id','tag_name','target_commitish','name',
+    'draft','prerelease','published_at','created_at','immutable','url','upload_url')
 
 
 def require(condition, message):
     if not condition:
         raise ValueError(message)
+
+
+class GitHubUploadError(ValueError):
+    """A returned upload failure, with bounded diagnostics but no response text."""
+    def __init__(self, status, response, headers, *, truncated=False, operation='asset upload'):
+        require(type(status) is int and 100 <= status <= 599, "invalid upload HTTP status")
+        request_id = headers.get("X-GitHub-Request-Id")
+        if type(request_id) is not str or re.fullmatch(r"[0-9A-Fa-f:]{1,128}", request_id) is None:
+            request_id = None
+        content_type = headers.get("Content-Type", "")
+        if type(content_type) is str and len(content_type) <= 128:
+            content_type = content_type.split(";", 1)[0].strip().lower()
+        if content_type not in ("application/json", "application/octet-stream", "text/html", "text/plain"):
+            content_type = "other"
+        self.diagnostics = {
+            "http_status":status, "github_request_id":request_id,
+            "response_content_type":content_type, "response_size":len(response),
+            "response_sha256":hashlib.sha256(response).hexdigest(),
+        }
+        if truncated:
+            # The bounded read is only a prefix, never a whole-response digest.
+            self.diagnostics.update({
+                "response_truncated":True, "response_size":None, "response_sha256":None,
+                "response_prefix_size":len(response),
+                "response_prefix_sha256":hashlib.sha256(response).hexdigest(),
+            })
+        super().__init__(operation + " failed or unknown with HTTP " + str(status)
+                         + "; do not retry blindly; diagnostics="
+                         + json.dumps(self.diagnostics, sort_keys=True, separators=(",", ":")))
 
 
 class Journal:
@@ -88,7 +124,8 @@ def verified_assets(provider, release_id, expected, verified=None):
     return found
 
 
-def recover(provider, expected, assets, rebind, journal=None):
+def recover(provider, expected, assets, rebind, journal=None, *, required_release_id=None,
+            require_empty_at_start=False, release_guard=None):
     def mutate(operation, details, callback):
         event = {"operation":operation, "product_tag":"v0.2.7", **details}
         if journal is not None:
@@ -97,7 +134,8 @@ def recover(provider, expected, assets, rebind, journal=None):
             result = callback()
         except Exception as error:
             if journal is not None:
-                journal({**event, "outcome":"unknown", "error_type":type(error).__name__})
+                diagnostics = {"http_diagnostics":error.diagnostics} if isinstance(error, GitHubUploadError) else {}
+                journal({**event, "outcome":"unknown", "error_type":type(error).__name__, **diagnostics})
             raise
         if journal is not None:
             journal({**event, "outcome":"response_received_not_yet_accepted"})
@@ -105,10 +143,22 @@ def recover(provider, expected, assets, rebind, journal=None):
 
     rebind()
     release = provider.lookup()
+    if required_release_id is not None:
+        require(required_release_id == 400420101 and release is not None and
+                type(release.get('id')) is int and release['id'] == required_release_id,
+                'transitioned draft disappeared or changed identity')
     if release is None:
         rebind()
         release = mutate("create_draft", {}, lambda:provider.create(expected))
+    if release_guard is not None:
+        release_guard(release)
     identifier = validate_release(release, expected)
+    if required_release_id is not None:
+        require(identifier == required_release_id, 'transitioned draft changed identity')
+        if require_empty_at_start:
+            require(release['draft'] is True and release.get('published_at') is None and
+                    release.get('assets') == [] and provider.list_assets(identifier) == [],
+                    'transitioned draft changed before first upload')
     proof_cache = set()
     found = verified_assets(provider, identifier, assets, proof_cache)
     missing = [name for name in assets if name not in found]
@@ -117,6 +167,8 @@ def recover(provider, expected, assets, rebind, journal=None):
         rebind()
         # Check for a concurrent release/asset change immediately before write.
         current = provider.lookup()
+        if release_guard is not None:
+            release_guard(current)
         require(validate_release(current, expected) == identifier and current["draft"], "draft changed during recovery")
         current_assets = verified_assets(provider, identifier, assets, proof_cache)
         if name not in current_assets:
@@ -124,11 +176,15 @@ def recover(provider, expected, assets, rebind, journal=None):
     require(verified_assets(provider, identifier, assets, proof_cache) == set(assets), "final release asset inventory incomplete")
     rebind()
     current = provider.lookup()
+    if release_guard is not None:
+        release_guard(current)
     require(validate_release(current, expected) == identifier, "release identity changed")
     if current["draft"]:
         mutate("publish_release", {"release_id":identifier}, lambda:provider.publish(identifier))
         rebind()
     final = provider.lookup()
+    if release_guard is not None:
+        release_guard(final)
     require(validate_release(final, expected) == identifier and final["draft"] is False, "release publication not confirmed")
     require(verified_assets(provider, identifier, assets) == set(assets), "published release asset inventory differs")
     rebind()
@@ -137,16 +193,62 @@ def recover(provider, expected, assets, rebind, journal=None):
     return {"tag":"v0.2.7", "release_id":identifier, "asset_count":len(assets), "published":True}
 
 
-def preflight(provider, expected, assets, rebind):
+def validate_empty_predecessor(provider, release, predecessor):
+    require(type(predecessor) is dict and type(release) is dict, 'missing fixed predecessor')
+    for field in (*PRESERVED_RELEASE_FIELDS,'body','updated_at'):
+        require(field in release and field in predecessor, 'missing predecessor ' + field)
+        wanted = predecessor[field]
+        require(type(release[field]) is type(wanted) and release[field] == wanted,
+                'conflicting predecessor ' + field)
+    require(predecessor['id'] == 400420101 and predecessor['draft'] is True and
+            predecessor['prerelease'] is False and predecessor['published_at'] is None and
+            predecessor['updated_at'] == '2026-09-30T20:40:08Z' and
+            predecessor['created_at'] == '2026-09-17T18:17:09Z' and
+            predecessor['node_id'] == 'RE_kwDOQovC3s4X3e0F' and
+            predecessor['immutable'] is False and
+            predecessor['target_commitish'] == PRODUCT_SHA and
+            predecessor['tag_name'] == 'v0.2.7' and predecessor['name'] == 'EXOCHAIN v0.2.7' and
+            hashlib.sha256(predecessor['body'].encode()).hexdigest() ==
+            '27ec3297363af0b6d50246237d9eb1bde7084893953505f674058bebeb27da1d',
+            'invalid predecessor pin')
+    require(type(release.get('assets')) is list and release['assets'] == [],
+            'embedded predecessor assets are not empty')
+    require(provider.list_assets(400420101) == [], 'listed predecessor assets are not empty')
+    return 400420101
+
+
+def validate_continued_release(release, expected, predecessor):
+    identifier = validate_release(release, expected)
+    require(identifier == 400420101, 'transitioned release ID differs')
+    for field in PRESERVED_RELEASE_FIELDS:
+        if field in ('draft', 'published_at'):
+            continue
+        require(field in release and type(release[field]) is type(predecessor[field]) and
+                release[field] == predecessor[field], 'transitioned release metadata differs: ' + field)
+    require('published_at' in release and
+            ((release['draft'] is True and release['published_at'] is None) or
+             (release['draft'] is False and type(release['published_at']) is str)),
+            'transitioned release publication state differs')
+    return identifier
+
+
+def preflight(provider, expected, assets, rebind, *, predecessor=None):
     """Read the full draft/public inventory without entering any mutation path."""
     rebind()
     release = provider.lookup()
     found = set()
     identifier = None
+    if predecessor is not None:
+        require(type(release) is dict and type(release.get('id')) is int and
+                release['id'] == 400420101, 'pinned retained draft is missing or replaced')
     if release is not None:
-        identifier = validate_release(release, expected)
-        found = verified_assets(provider, identifier, assets)
-        require(release['draft'] or found == set(assets), 'incomplete already-public release')
+        if predecessor is not None and release.get('body') != expected['body']:
+            identifier = validate_empty_predecessor(provider, release, predecessor)
+        else:
+            identifier = (validate_continued_release(release, expected, predecessor)
+                          if predecessor is not None else validate_release(release, expected))
+            found = verified_assets(provider, identifier, assets)
+            require(release['draft'] or found == set(assets), 'incomplete already-public release')
     rebind()
     return {'release_id':identifier, 'existing_assets':len(found),
             'missing_assets':[name for name in assets if name not in found], 'mutation_attempted':False}
@@ -164,7 +266,7 @@ class GitHub:
         # Do not inherit proxy environment or an arbitrary redirect policy.
         self.transport = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
 
-    def request(self, method, url, data=None, binary=False, auth=True, limit=4*1024*1024):
+    def request(self, method, url, data=None, binary=False, auth=True, limit=4*1024*1024, binary_body=False):
         parsed = urllib.parse.urlsplit(url)
         require(parsed.scheme == "https" and not parsed.username and not parsed.password and not parsed.fragment, "unsafe provider URL")
         if auth:
@@ -176,7 +278,7 @@ class GitHub:
             headers["Authorization"] = "Bearer " + self.token
             headers["X-GitHub-Api-Version"] = "2022-11-28"
         if data is not None:
-            headers["Content-Type"] = "application/octet-stream" if binary else "application/json"
+            headers["Content-Type"] = "application/octet-stream" if binary_body else "application/json"
         request = urllib.request.Request(url, data=data, method=method, headers=headers)
         try:
             response = self.transport.open(request, timeout=60)
@@ -184,6 +286,8 @@ class GitHub:
             response = error
         with response:
             payload = response.read(limit + 1)
+            if len(payload) > limit and binary_body and response.status != 201:
+                raise GitHubUploadError(response.status, payload, response.headers, truncated=True)
             require(len(payload) <= limit, "provider response exceeded size limit")
             return response.status, payload, response.headers
 
@@ -234,13 +338,23 @@ class GitHub:
 
     def upload(self, identifier, name, data):
         url = UPLOADS + f"/releases/{identifier}/assets?name=" + urllib.parse.quote(name, safe="")
-        status, response, _ = self.request("POST", url, data, binary=True)
-        require(status == 201, "asset upload failed or unknown; do not retry blindly")
+        # The body is raw bytes; the response is JSON asset metadata.
+        status, response, headers = self.request("POST", url, data, binary_body=True)
+        if status != 201:
+            raise GitHubUploadError(status, response, headers)
         result = self.parser(response, "uploaded asset")
         require(result.get("name") == name and result.get("size") == len(data), "uploaded asset identity differs")
 
     def publish(self, identifier):
         return self.json("PATCH", f"/releases/{identifier}", {"draft":False, "make_latest":"true"})
+
+    def update_body(self, identifier, body):
+        require(identifier == 400420101 and type(body) is str, 'invalid transition target')
+        data = json.dumps({'body':body}, separators=(',', ':')).encode()
+        status, raw, headers = self.request('PATCH', API + '/releases/400420101', data)
+        if status != 200:
+            raise GitHubUploadError(status, raw, headers, operation='release body transition')
+        return self.parser(raw, 'transition response')
 
 
 def release_metadata(manifest, publications, sha, ref):
@@ -299,6 +413,106 @@ def retained_release_metadata(manifest, publications, record, sha, ref, *, polic
         expected['body'] += ('\nMetadata policy SHA-256: `' + validator.RETAINED_METADATA_POLICY_SHA256 + '`. '
                              + disclosure + '\n')
     return receipt, expected
+
+
+def fixed_empty_predecessor(manifest, publications, record, policy):
+    _, old = retained_release_metadata(manifest, publications, record,
+        'b5871abd548d427cacab27e748b49e75897a5f66',
+        'refs/tags/v0.2.7-recover.4', policy=policy)
+    require(hashlib.sha256(old['body'].encode()).hexdigest() ==
+            '27ec3297363af0b6d50246237d9eb1bde7084893953505f674058bebeb27da1d',
+            'canonical predecessor body pin differs')
+    return {**old, 'id':400420101, 'draft':True, 'prerelease':False,
+            'published_at':None, 'updated_at':'2026-09-30T20:40:08Z',
+            'created_at':'2026-09-17T18:17:09Z',
+            'node_id':'RE_kwDOQovC3s4X3e0F', 'immutable':False,
+            'url':API+'/releases/400420101',
+            'upload_url':UPLOADS+'/releases/400420101/assets{?name,label}', 'assets':[]}
+
+
+def authenticate_failed_predecessor(transport, custody, importer, evidence, manifest,
+                                    publications, record, policy):
+    """Authenticate the single failed historical attempt from its live artifact."""
+    require(policy is not None, 'historical predecessor requires retained-404 policy')
+    predecessor = fixed_empty_predecessor(manifest, publications, record, policy)
+    endpoint = importer.API + '/artifacts/11124850978'
+    metadata = None
+    for phase in ('before', 'after'):
+        path = evidence / ('historical-failure-metadata-' + phase + '.json')
+        transport.get(endpoint, path, importer.JSON_LIMIT)
+        observed = custody.load_json(path, 'historical failure artifact metadata')
+        require(type(observed) is dict and set(observed) == {
+                'id','node_id','name','size_in_bytes','url','archive_download_url',
+                'digest','expired','created_at','updated_at','expires_at','workflow_run'} and
+                type(observed.get('id')) is int and observed['id'] == 11124850978 and
+                observed.get('node_id') == 'MDg6QXJ0aWZhY3QxMTEyNDg1MDk3OA==' and
+                observed.get('name') == 'exochain-027-retained-github-receipts' and
+                type(observed.get('size_in_bytes')) is int and observed['size_in_bytes'] == 603 and
+                observed.get('digest') == 'sha256:'+HISTORICAL_ARCHIVE_SHA256 and
+                observed.get('url') == endpoint and observed.get('archive_download_url') == endpoint+'/zip' and
+                observed.get('created_at') == '2026-09-30T20:41:02Z' and
+                observed.get('updated_at') == '2026-09-30T20:41:02Z' and
+                observed.get('expires_at') == '2026-10-30T20:41:01Z' and
+                observed.get('expired') is False, 'historical failure metadata differs')
+        run = observed.get('workflow_run')
+        require(type(run) is dict and set(run) == {
+                'id','repository_id','head_repository_id','head_sha','head_branch'} and
+                type(run.get('id')) is int and run['id'] == 36653810772 and
+                type(run.get('repository_id')) is int and run['repository_id'] == 1116455646 and
+                type(run.get('head_repository_id')) is int and run['head_repository_id'] == 1116455646 and
+                run.get('head_sha') == 'b5871abd548d427cacab27e748b49e75897a5f66' and
+                run.get('head_branch') == 'v0.2.7-recover.4',
+                'historical failure workflow identity differs')
+        now = custody.timestamp(importer.utc_now(), 'historical failure observation')
+        require(custody.timestamp(observed['created_at'], 'historical failure creation') <= now <
+                custody.timestamp(observed['expires_at'], 'historical failure expiry'),
+                'historical failure artifact expired or not yet created')
+        if metadata is None:
+            metadata = observed
+            archive = evidence / 'historical-failure.zip'
+            transport.receipt_archive(metadata, archive)
+            raw = custody.read_regular(archive, 603, 'historical failure archive')
+            require(len(raw) == 603 and hashlib.sha256(raw).hexdigest() == HISTORICAL_ARCHIVE_SHA256,
+                    'historical failure archive differs')
+            try:
+                with zipfile.ZipFile(io.BytesIO(raw)) as bundle:
+                    members = bundle.infolist()
+                    require(len(members) == 1 and members[0].filename == HISTORICAL_MEMBER and
+                            members[0].file_size == 1473 and not members[0].is_dir() and
+                            (members[0].external_attr >> 16 == 0 or
+                             stat.S_ISREG(members[0].external_attr >> 16)),
+                            'historical failure member inventory differs')
+                    with bundle.open(members[0]) as member:
+                        journal_bytes = member.read(1474)
+            except (zipfile.BadZipFile, RuntimeError, OSError) as error:
+                raise ValueError('historical failure ZIP is malformed') from error
+            require(len(journal_bytes) == 1473 and
+                    hashlib.sha256(journal_bytes).hexdigest() == HISTORICAL_MEMBER_SHA256,
+                    'historical failure journal differs')
+            try:
+                rows = [json.loads(line) for line in journal_bytes.splitlines()]
+            except (UnicodeError, ValueError, TypeError) as error:
+                raise ValueError('historical failure journal is malformed') from error
+            require(len(rows) == 4 and
+                    [(row.get('operation'), row.get('outcome')) for row in rows] == [
+                        ('create_draft','intent'),('create_draft','response_received_not_yet_accepted'),
+                        ('upload_asset','intent'),('upload_asset','unknown')],
+                    'historical failure journal sequence differs')
+            for row in rows:
+                require(type(row) is dict and row.get('controller_sha') ==
+                        'b5871abd548d427cacab27e748b49e75897a5f66' and
+                        row.get('controller_ref') == 'refs/tags/v0.2.7-recover.4' and
+                        row.get('run_id') == 36653810772 and row.get('run_attempt') == 1 and
+                        row.get('original_source') == PRODUCT_SHA,
+                        'historical failure journal identity differs')
+            require(rows[2].get('release_id') == 400420101 and
+                    rows[3].get('release_id') == 400420101 and
+                    type(rows[2].get('asset')) is str and rows[2]['asset'].endswith('.cdx.json') and
+                    rows[3].get('asset') == rows[2]['asset'],
+                    'historical failure upload intent differs')
+        else:
+            require(observed == metadata, 'historical failure metadata changed during download')
+    return predecessor
 
 
 def release_assets(custody, manifest, directory, receipt):
@@ -502,7 +716,7 @@ def check_retained_rebind(custody, importer, manifest, record, policy, transport
 
 
 def complete_retained(provider, expected, assets, rebind, receipt_gate, public_gate, journal=None,
-                      *, prepare_gate=None, acquire_gate=None, final_gate=None):
+                      *, prepare_gate=None, acquire_gate=None, final_gate=None, transition_gate=None):
     if prepare_gate is not None:
         require(acquire_gate is not None and final_gate is not None, 'incomplete staged writer gates')
         prepare_gate()
@@ -511,7 +725,68 @@ def complete_retained(provider, expected, assets, rebind, receipt_gate, public_g
     public_gate()
     if final_gate is not None:
         final_gate()
-    return recover(provider,expected,assets,rebind,journal)
+    required_release_id = None
+    require_empty_at_start = False
+    release_guard = None
+    if transition_gate is not None:
+        require(final_gate is not None and prepare_gate is not None,
+                'transition requires complete retained final gates')
+        required_release_id, require_empty_at_start, release_guard = transition_gate()
+        require(required_release_id == 400420101, 'transition did not preserve pinned draft ID')
+        require(type(require_empty_at_start) is bool, 'invalid transition handoff')
+        require(callable(release_guard), 'transition release guard absent')
+    return recover(provider,expected,assets,rebind,journal,
+        required_release_id=required_release_id,require_empty_at_start=require_empty_at_start,
+        release_guard=release_guard)
+
+
+def validate_transitioned_release(provider, release, expected, predecessor):
+    identifier = validate_release(release, expected)
+    require(identifier == 400420101 and release['draft'] is True and
+            release.get('assets') == [] and provider.list_assets(identifier) == [],
+            'transitioned draft is not the same empty unpublished release')
+    for field in PRESERVED_RELEASE_FIELDS:
+        require(field in release and type(release[field]) is type(predecessor[field]) and
+                release[field] == predecessor[field], 'transition changed release ' + field)
+    updated = release.get('updated_at')
+    require(type(updated) is str and re.fullmatch(r'20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z',updated)
+            is not None and updated >= predecessor['updated_at'], 'transition timestamp regressed')
+    return updated
+
+
+def transition_empty_draft(provider, expected, predecessor, rebind, journal):
+    """Single body-only mutation; an uncertain result stops this attempt."""
+    rebind()
+    current = provider.lookup()
+    identifier = validate_empty_predecessor(provider, current, predecessor)
+    event = {'operation':'transition_controller_body', 'product_tag':'v0.2.7',
+             'release_id':identifier,
+             'historical_run_id':36653810772, 'historical_run_attempt':1,
+             'historical_writer_job_id':109921191171,
+             'historical_artifact_id':11124850978,
+             'historical_archive_sha256':HISTORICAL_ARCHIVE_SHA256,
+             'historical_member_sha256':HISTORICAL_MEMBER_SHA256,
+             'old_body_sha256':hashlib.sha256(predecessor['body'].encode()).hexdigest(),
+             'new_body_sha256':hashlib.sha256(expected['body'].encode()).hexdigest()}
+    if journal is not None:
+        journal({**event, 'outcome':'intent'})
+    try:
+        changed = provider.update_body(identifier, expected['body'])
+        response_updated = validate_transitioned_release(provider,changed,expected,predecessor)
+        if journal is not None:
+            journal({**event, 'outcome':'response_received_not_yet_accepted'})
+        rebind()
+        observed = provider.lookup()
+        readback_updated = validate_transitioned_release(provider,observed,expected,predecessor)
+        require(readback_updated == response_updated, 'transition changed after response')
+    except Exception as error:
+        if journal is not None:
+            diagnostics = {'http_diagnostics':error.diagnostics} if isinstance(error, GitHubUploadError) else {}
+            journal({**event, 'outcome':'unknown', 'error_type':type(error).__name__, **diagnostics})
+        raise
+    if journal is not None:
+        journal({**event, 'outcome':'accepted'})
+    return identifier
 
 
 def retained_main():
@@ -628,13 +903,25 @@ def retained_main():
         directory.mkdir(mode=0o700)
         state['public_final'] = check_retained_rebind(custody,importer,manifest,record,policy,
             transport,directory,historical,workflow,state['origin'],state['observer'],candidate,identities)
+    def transition_gate():
+        predecessor = authenticate_failed_predecessor(transport,custody,importer,evidence,
+            manifest,publications,record,policy)
+        rebind()
+        current = provider.lookup()
+        if current is not None and current.get('body') == expected['body']:
+            require(validate_continued_release(current,expected,predecessor) == 400420101,
+                    'already-transitioned release ID differs')
+            return 400420101, False, lambda release:validate_continued_release(release,expected,predecessor)
+        identifier = transition_empty_draft(provider,expected,predecessor,rebind,journal)
+        return identifier, True, lambda release:validate_continued_release(release,expected,predecessor)
     journal = Journal(capture/'mutation-journal.jsonl',{'controller_sha':sha,'controller_ref':ref,
         'run_id':handoff[0]['run_id'],'run_attempt':handoff[0]['run_attempt'],'original_source':PRODUCT_SHA})
     print('GitHub retained mutation journal: '+str(journal.path),flush=True)
     result = complete_retained(provider,expected,assets,rebind,receipt_gate,public_gate,journal,
         prepare_gate=prepare_gate if policy is not None else None,
         acquire_gate=acquire_gate if policy is not None else None,
-        final_gate=final_gate if policy is not None else None)
+        final_gate=final_gate if policy is not None else None,
+        transition_gate=transition_gate if policy is not None else None)
     importer.dump(evidence/'release-result.json',result)
     print(json.dumps(result,sort_keys=True))
 

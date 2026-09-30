@@ -386,3 +386,15 @@ belong in the preserved execution ledger and self-contained PR handoff. A
 source correction after that candidate requires fresh complete validation.
 No new maintenance tag, protected dry/live run, publication, provider/35-asset
 readback or issue 822 retirement is claimed at this checkpoint.
+
+## September 30 transition validation requirements
+
+The [approved empty-draft exception](EMPTY-DRAFT-CONTROLLER-TRANSITION.md)
+requires new regression evidence for exact predecessor/history authentication,
+body-only mutation, current gate ordering, stale receipts, observable races and
+uncertain responses with no subsequent writes. Preserve the HTTP repair's
+transport-level and bounded-diagnostic regressions. New full final-source gate
+logs and independent review must identify their exact source; older local passes
+cannot be relabeled as this candidate's results. Hosted platform/coverage gates,
+genuine reviews, protected execution and actual final-byte acceptance remain
+distinct. The old failed writer's HTTP cause stays unknown.

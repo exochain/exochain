@@ -8,6 +8,7 @@ import copy
 import argparse
 from contextlib import ExitStack
 import gzip
+import hashlib
 import importlib.util
 import io
 import json
@@ -24,6 +25,7 @@ import threading
 import time
 import types
 import unittest
+import zipfile
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -512,7 +514,9 @@ class ImportTests(unittest.TestCase):
         events=[]
         policy=self.custody.load_retained_metadata_policy(self.manifest,record,POLICY)
         class Provider:
-            def lookup(self): events.append('lookup'); return None
+            def __init__(self,release): self.release=release
+            def lookup(self): events.append('lookup'); return self.release
+            def list_assets(self,identifier): return []
             def create(self,*args): raise AssertionError('preflight create')
             def upload(self,*args): raise AssertionError('preflight upload')
             def publish(self,*args): raise AssertionError('preflight publish')
@@ -521,11 +525,13 @@ class ImportTests(unittest.TestCase):
             evidence=self.root/('github-v2' if selected else 'github-v1');evidence.mkdir()
             expected_values=[]
             original_preflight=helper.preflight
-            def recorded_preflight(provider,expected,assets,rebind):
+            def recorded_preflight(provider,expected,assets,rebind,*,predecessor=None):
                 expected_values.append(expected)
-                return original_preflight(provider,expected,assets,rebind)
-            with patch.object(self.i,'load_module',return_value=helper),patch.object(helper,'GitHub',return_value=Provider()), \
+                return original_preflight(provider,expected,assets,rebind,predecessor=predecessor)
+            predecessor=helper.fixed_empty_predecessor(self.manifest,publications,record,policy) if selected else None
+            with patch.object(self.i,'load_module',return_value=helper),patch.object(helper,'GitHub',return_value=Provider(predecessor)), \
                  patch.object(helper,'release_assets',return_value={'fixture':b'x'}), \
+                 patch.object(helper,'authenticate_failed_predecessor',return_value=predecessor), \
                  patch.object(helper,'preflight',side_effect=recorded_preflight), \
                  patch.object(self.custody,'verify_files',side_effect=lambda *args:events.append('files')), \
                  patch.dict(self.i.os.environ,{'GITHUB_SHA':'a'*40,'GITHUB_REF':'refs/tags/v0.2.7-recover.3','RELEASE_GITHUB_TOKEN':'fixture'},clear=True):
@@ -536,6 +542,82 @@ class ImportTests(unittest.TestCase):
             if selected:
                 self.assertIn(self.custody.RETAINED_METADATA_POLICY_SHA256,expected_values[0]['body'])
                 self.assertIn('Selected original artifact metadata may be unavailable',expected_values[0]['body'])
+                self.assertEqual(json.loads((evidence/'github-preflight.json').read_text())['release_id'],400420101)
+
+    def test_retained_producer_authenticates_fixed_archive_before_eligible_draft(self):
+        helper=module_file('producer_authenticating_github',ROOT/'tools/recover_github_release_027.py')
+        record=self.custody.load_retained_record(self.manifest,ROOT/'governance/releases/v0.2.7/RETAINED-CUSTODY.json')
+        publications=self.custody.load_publications(self.manifest,ROOT/'governance/releases/v0.2.7/PUBLICATION-IDENTITIES.json')
+        policy=self.custody.load_retained_metadata_policy(self.manifest,record,POLICY)
+        predecessor=helper.fixed_empty_predecessor(self.manifest,publications,record,policy)
+        context={'controller_sha':'b5871abd548d427cacab27e748b49e75897a5f66',
+            'controller_ref':'refs/tags/v0.2.7-recover.4','run_id':36653810772,
+            'run_attempt':1,'original_source':helper.PRODUCT_SHA}
+        rows=[{**context,'operation':operation,'outcome':outcome,
+               **({'release_id':400420101,'asset':'first.cdx.json'} if operation=='upload_asset' else {})}
+              for operation,outcome in (('create_draft','intent'),
+                ('create_draft','response_received_not_yet_accepted'),
+                ('upload_asset','intent'),('upload_asset','unknown'))]
+        journal='\n'.join(json.dumps(row,separators=(',',':')) for row in rows)
+        journal=(journal+' '*(1473-len(journal)-1)+'\n').encode()
+        output=io.BytesIO()
+        with zipfile.ZipFile(output,'w',compression=zipfile.ZIP_DEFLATED) as bundle:
+            info=zipfile.ZipInfo(helper.HISTORICAL_MEMBER)
+            info.compress_type=zipfile.ZIP_DEFLATED
+            info.external_attr=0o100600<<16
+            bundle.writestr(info,journal)
+        with zipfile.ZipFile(output,'a') as bundle:
+            bundle.comment=b'x'*(603-len(output.getvalue()))
+        archive=output.getvalue()
+        self.assertEqual(len(archive),603)
+        endpoint=self.i.API+'/artifacts/11124850978'
+        metadata={'id':11124850978,'node_id':'MDg6QXJ0aWZhY3QxMTEyNDg1MDk3OA==',
+            'name':'exochain-027-retained-github-receipts','size_in_bytes':603,
+            'url':endpoint,'archive_download_url':endpoint+'/zip',
+            'digest':'sha256:'+hashlib.sha256(archive).hexdigest(),
+            'created_at':'2026-09-30T20:41:02Z','updated_at':'2026-09-30T20:41:02Z',
+            'expires_at':'2026-10-30T20:41:01Z','expired':False,
+            'workflow_run':{'id':36653810772,'repository_id':1116455646,
+                'head_repository_id':1116455646,'head_sha':context['controller_sha'],
+                'head_branch':'v0.2.7-recover.4'}}
+        calls=[]
+        def get(transport,url,path,limit,authenticated,**kwargs):
+            calls.append((url,limit,authenticated))
+            path.write_bytes(archive if url.endswith('/zip') else json.dumps(metadata).encode())
+            return 200,[]
+        class Provider:
+            def __init__(self,release): self.release=release
+            def lookup(self): return self.release
+            def list_assets(self,identifier): return []
+            def create(self,*args): raise AssertionError('producer write')
+            def upload(self,*args): raise AssertionError('producer write')
+            def publish(self,*args): raise AssertionError('producer write')
+            def update_body(self,*args): raise AssertionError('producer write')
+        for state,release in (('eligible',predecessor),('missing',None),
+                              ('wrong-id',{**predecessor,'id':400420102})):
+            with self.subTest(state=state):
+                evidence=self.root/state;evidence.mkdir()
+                calls.clear()
+                with patch.object(self.i,'load_module',return_value=helper),\
+                     patch.object(helper,'GitHub',return_value=Provider(release)),\
+                     patch.object(helper,'release_assets',return_value={'fixture':b'x'}),\
+                     patch.object(self.i.Transport,'_get',get),\
+                     patch.object(self.i,'utc_now',return_value='2026-09-30T20:42:00Z'),\
+                     patch.object(helper,'HISTORICAL_ARCHIVE_SHA256',hashlib.sha256(archive).hexdigest()),\
+                     patch.object(helper,'HISTORICAL_MEMBER_SHA256',hashlib.sha256(journal).hexdigest()),\
+                     patch.object(self.custody,'verify_files'),\
+                     patch.dict(self.i.os.environ,{'GITHUB_SHA':'a'*40,
+                         'GITHUB_REF':'refs/tags/v0.2.7-recover.3','RELEASE_GITHUB_TOKEN':'fixture'},clear=True):
+                    if state=='eligible':
+                        self.i.retained_github_preflight(self.root,self.custody,self.manifest,
+                            publications,record,self.root,evidence,policy=policy)
+                        self.assertEqual(json.loads((evidence/'github-preflight.json').read_text())['release_id'],400420101)
+                    else:
+                        with self.assertRaises(ValueError):
+                            self.i.retained_github_preflight(self.root,self.custody,self.manifest,
+                                publications,record,self.root,evidence,policy=policy)
+                self.assertEqual(calls,[(endpoint,self.i.JSON_LIMIT,True),
+                    (endpoint+'/zip',603,True),(endpoint,self.i.JSON_LIMIT,True)])
 
     def test_retained_acquisition_rechecks_metadata_and_never_exposes_bad_bytes(self):
         record, origin = self.retained_fixture().origin_fixture()

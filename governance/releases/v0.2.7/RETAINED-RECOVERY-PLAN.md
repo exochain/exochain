@@ -332,6 +332,13 @@ tag move or switch to a different controller's custody asset. Retirement of 31
 old 0.2.3 versions remains a separate approved workflow **after** full 0.2.7
 acceptance; this proposal does not execute or change it.
 
+The September 30 [explicitly approved empty-draft exception](EMPTY-DRAFT-CONTROLLER-TRANSITION.md)
+supersedes the no-controller-switch rule only for unpublished, zero-asset draft
+`400420101` with the exact pinned predecessor and authenticated failure history.
+It permits a guarded body-only transition after all current protected writer
+gates. It does not permit replacing any custody asset, changing package
+provenance, retrying an unknown mutation automatically or relaxing expiry.
+
 ## 6. Review focus
 
 Human review should decide the actual policy change: whether the specifically
