@@ -8,6 +8,7 @@ import copy
 import argparse
 from contextlib import ExitStack
 import gzip
+import hashlib
 import importlib.util
 import io
 import json
@@ -24,12 +25,14 @@ import threading
 import time
 import types
 import unittest
+import zipfile
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "tools/import_release_recovery_027.sh"
 MANIFEST = ROOT / "governance/releases/v0.2.7/RECOVERY-MANIFEST.json"
 POLICY = ROOT / "governance/releases/v0.2.7/RETAINED-METADATA-POLICY.json"
+PRESERVED = ROOT / "governance/releases/v0.2.7/PRESERVED-PAYLOAD-TRANSPORT.json"
 
 
 def module_file(name, path):
@@ -48,6 +51,91 @@ def importer_module():
 
 
 class ImportTests(unittest.TestCase):
+    def test_writer_budget_clamps_curl_and_native_children_without_changing_legacy_defaults(self):
+        writer=module_file('import_budget_writer',ROOT/'tools/recover_github_release_027.py')
+        clock=types.SimpleNamespace(now=1790812800.,mono=0.)
+        def sleep(seconds):clock.now+=seconds;clock.mono+=seconds
+        budget=writer.ProviderBudget(wall=lambda:clock.now,monotonic=lambda:clock.mono,sleeper=sleep)
+        budget.dependency(clock.now+10)
+        client=writer.GitHub('fixture',self.custody.parse_json,budget=budget)
+        rate={'X-RateLimit-Limit':'1000','X-RateLimit-Remaining':'1000','X-RateLimit-Used':'0',
+              'X-RateLimit-Reset':str(int(clock.now)+3600),'X-RateLimit-Resource':'core'}
+        def response(request,timeout):
+            result=io.BytesIO(b'{}');result.status=200;result.headers=rate;return result
+        client.transport=types.SimpleNamespace(open=response)
+        budget.admit(client,'children')
+        transport=self.i.Transport(self.root,'fixture',self.manifest,budget=budget)
+        calls=[]
+        _,proof=self.attestation()
+        def process(argv,**kwargs):
+            calls.append((argv,kwargs))
+            self.assertGreater(kwargs['timeout'],0);self.assertLessEqual(kwargs['timeout'],10)
+            if argv[0]=='/usr/bin/curl':
+                self.assertLessEqual(float(argv[argv.index('--max-time')+1]),10)
+                Path(argv[argv.index('--output')+1]).write_bytes(b'{}')
+                rate['X-RateLimit-Remaining']='999';rate['X-RateLimit-Used']='1'
+                Path(argv[argv.index('--dump-header')+1]).write_bytes(('HTTP/2 200\r\n'+
+                    ''.join(k+': '+v+'\r\n' for k,v in rate.items())+'\r\n').encode())
+                return subprocess.CompletedProcess(argv,0,b'200',b'')
+            return subprocess.CompletedProcess(argv,0,json.dumps(proof).encode(),b'')
+        with patch.object(self.i.subprocess,'run',side_effect=process):
+            transport.get(transport.endpoints['run'],self.root/'budget.json',1024)
+            artifact=next(a for a in self.manifest['artifacts'] if a['lane']=='native-x86_64')
+            self.i.verify_attestation(self.manifest,artifact,self.root/'archive',self.root,
+                                     'fixture',self.custody,budget=budget)
+        self.assertEqual(budget.requests,1)
+        self.assertEqual(len(calls),2)
+        with self.assertRaises(self.i.ImportFailure):
+            transport.get('https://api.github.com/orgs/exochain',self.root/'forbidden',1024)
+        budget.dependency(clock.now+0.5)
+        with patch.object(self.i.time,'sleep') as unbounded_sleep, \
+             patch.object(transport,'get',side_effect=ValueError('deadline')):
+            with self.assertRaises(ValueError):self.i.fetch_rust(self.manifest,self.custody,transport,self.root)
+            self.assertEqual(unbounded_sleep.call_count,0,'registry pacing bypassed writer expiry')
+
+    def test_writer_source_capture_children_obey_remaining_deadline(self):
+        self.assertIn('budget',__import__('inspect').signature(self.i.assert_captured_inputs).parameters)
+        writer=module_file('source_budget_writer',ROOT/'tools/recover_github_release_027.py')
+        budget=writer.ProviderBudget()
+        budget.dependency(time.time()+5)
+        calls=[]
+        def process(argv,**kwargs):
+            calls.append(argv)
+            self.assertGreater(kwargs['timeout'],0);self.assertLessEqual(kwargs['timeout'],5)
+            return subprocess.CompletedProcess(argv,0,b'fixed',b'')
+        with patch.dict(os.environ,{'GITHUB_WORKSPACE':str(ROOT),'GITHUB_SHA':'a'*40}), \
+             patch.object(self.i.subprocess,'run',side_effect=process), \
+             patch.object(self.custody,'read_regular',return_value=b'fixed'):
+            self.i.assert_captured_inputs(self.root,self.custody,budget=budget)
+        self.assertEqual(len(calls),14)
+
+    def test_current_attempt_job_pagination_bound_used_by_writer_admission(self):
+        for total in (250,251):
+            with self.subTest(total=total):
+                transport=self.i.Transport(self.root,'fixture',self.manifest)
+                run=self.i.API+'/runs/123/attempts/1'
+                endpoints={'run':run,'jobs':[run+f'/jobs?per_page=100&page={page}' for page in range(1,11)]}
+                transport.authenticated.update([run,*endpoints['jobs']])
+                calls=[]
+                def process(argv,**kwargs):
+                    url=argv[-1];calls.append(url)
+                    if url==run:value={'id':123}
+                    else:
+                        page=int(url.rsplit('=',1)[1]);start=(page-1)*100
+                        value={'total_count':total,'jobs':[{'id':n} for n in range(start,min(start+100,total))]}
+                    Path(argv[argv.index('--output')+1]).write_bytes(json.dumps(value).encode())
+                    Path(argv[argv.index('--dump-header')+1]).write_bytes(b'HTTP/2 200\r\n\r\n')
+                    return subprocess.CompletedProcess(argv,0,b'200',b'')
+                with patch.object(self.i.subprocess,'run',side_effect=process):
+                    if total==250:
+                        _,jobs=self.i.fetch_run_jobs(self.custody,transport,self.root/f'jobs-{total}',endpoints,None)
+                        self.assertEqual(len(jobs['jobs']),250)
+                        self.assertEqual(calls,[run,*endpoints['jobs'][:3]])
+                    else:
+                        with self.assertRaisesRegex(self.i.ImportFailure,'unbounded'):
+                            self.i.fetch_run_jobs(self.custody,transport,self.root/f'jobs-{total}',endpoints,None)
+                        self.assertEqual(calls,[run,endpoints['jobs'][0]])
+
     @classmethod
     def setUpClass(cls):
         cls.importer = None
@@ -71,6 +159,419 @@ class ImportTests(unittest.TestCase):
     def reject(self, function, *args):
         with self.assertRaises((self.i.ImportFailure, self.custody.RecoveryError)):
             function(*args)
+
+    def preserved_transport(self):
+        record = self.custody.load_retained_record(self.manifest, POLICY.with_name('RETAINED-CUSTODY.json'))
+        policy = self.custody.load_retained_metadata_policy(self.manifest, record, POLICY)
+        preserved = self.custody.load_preserved_payload_policy(self.manifest, record, policy, PRESERVED)
+        self.assertIn('preserved', __import__('inspect').signature(self.i.Transport).parameters,
+                      'canonical transport has no preserved acquisition mode')
+        return record, policy, preserved, self.i.Transport(self.root, 'private-test-token', self.manifest,
+                                                          record, policy=policy, preserved=preserved)
+
+    def test_preserved_transport_binary_accept_bounds_and_no_old_endpoint(self):
+        record, policy, preserved, transport = self.preserved_transport()
+        old = self.i.API + '/artifacts/10779404529'
+        self.assertNotIn(old, transport.authenticated)
+        self.assertNotIn(old + '/zip', transport.authenticated)
+        self.assertIn(self.i.API + '/artifacts/10780480598', transport.authenticated)
+        self.assertIn(self.i.API + '/artifacts/11124850978', transport.authenticated)
+        # Small independent byte fixture exercises real transport hash and bounds;
+        # actual historical ZIP verification is covered by the custody suite.
+        payload = b'preserved byte transport fixture'
+        transport.preserved = copy.deepcopy(preserved)
+        transport.preserved['asset'].update(size=len(payload), digest='sha256:' + hashlib.sha256(payload).hexdigest())
+        storage = 'https://release-assets.githubusercontent.com' + preserved['storage']['path'] + '?sig=private-query'
+        for redirect in (False, True):
+            destination = self.root / ('redirect.zip' if redirect else 'direct.zip')
+            calls = []
+            def curl(argv, **kwargs):
+                calls.append((argv[-1], kwargs['input']))
+                first = len(calls) == 1
+                status = 302 if redirect and first else 200
+                Path(argv[argv.index('--output')+1]).write_bytes(b'' if status == 302 else payload)
+                Path(argv[argv.index('--dump-header')+1]).write_bytes(
+                    (f'HTTP/2 {status}\r\n' + (f'Location: {storage}\r\n' if status == 302 else '') + '\r\n').encode())
+                self.assertEqual(argv[argv.index('--max-filesize')+1], str(len(payload)))
+                return subprocess.CompletedProcess(argv, 0, str(status).encode(), b'')
+            with patch.object(self.i.subprocess, 'run', side_effect=curl):
+                transport.preserved_archive(destination)
+            self.assertEqual(destination.read_bytes(), payload)
+            self.assertIn(b'Accept: application/octet-stream', calls[0][1])
+            self.assertIn(b'Authorization: Bearer private-test-token', calls[0][1])
+            if redirect:
+                self.assertEqual(len(calls), 2)
+                self.assertNotIn(b'Authorization', calls[1][1])
+                self.assertNotIn(b'private-test-token', calls[1][1])
+        with self.assertRaises(self.i.ImportFailure):
+            transport.get(old, self.root/'old.json', self.i.JSON_LIMIT)
+        with self.assertRaises(self.i.ImportFailure):
+            transport._get('https://attacker.invalid', self.root/'large', 147126946, False)
+
+    def test_preserved_transport_rejects_hostile_redirect_truncation_hash_and_leaks(self):
+        _, _, preserved, transport = self.preserved_transport()
+        payload = b'bounded fixture'
+        transport.preserved = copy.deepcopy(preserved)
+        transport.preserved['asset'].update(size=len(payload), digest='sha256:' + hashlib.sha256(payload).hexdigest())
+        path = preserved['storage']['path']
+        for fault in ('host', 'userinfo', 'port', 'http', 'path', 'fragment', 'duplicate', 'again',
+                      'short', 'long', 'hash', 'failure', 'metadata-redirect'):
+            with self.subTest(fault=fault):
+                destination = self.root / (fault + '.zip')
+                calls=[]
+                location='https://release-assets.githubusercontent.com'+path+'?sig=private-query'
+                location={'host':'https://attacker.invalid'+path, 'userinfo':'https://token@release-assets.githubusercontent.com'+path,
+                    'port':'https://release-assets.githubusercontent.com:443'+path, 'http':'http://release-assets.githubusercontent.com'+path,
+                    'path':'https://release-assets.githubusercontent.com/other', 'fragment':location+'#secret'}.get(fault,location)
+                def curl(argv, **kwargs):
+                    calls.append(argv[-1])
+                    status=302 if fault in ('host','userinfo','port','http','path','fragment','duplicate','again','metadata-redirect') else 200
+                    body=payload[:-1] if fault=='short' else payload+b'x' if fault=='long' else b'x'*len(payload) if fault=='hash' else payload
+                    Path(argv[argv.index('--output')+1]).write_bytes(body)
+                    headers=f'HTTP/2 {status}\r\n'
+                    if status==302: headers+=f'Location: {location}\r\n'
+                    if fault=='duplicate': headers+=f'Location: {location}\r\n'
+                    Path(argv[argv.index('--dump-header')+1]).write_bytes((headers+'\r\n').encode())
+                    return subprocess.CompletedProcess(argv, 1 if fault=='failure' else 0, str(status).encode(),
+                                                       b'private-test-token private-query')
+                with patch.object(self.i.subprocess,'run',side_effect=curl):
+                    with self.assertRaises(self.i.ImportFailure) as caught:
+                        if fault=='metadata-redirect': transport.get(preserved['asset']['url'],destination,self.i.JSON_LIMIT)
+                        else: transport.preserved_archive(destination)
+                self.assertNotIn('private-',str(caught.exception))
+                self.assertLessEqual(len(calls),2 if fault=='again' else 1)
+                if fault!='metadata-redirect': self.assertFalse(destination.exists())
+
+    def test_preserved_raw_observation_uses_eight_actual_requests(self):
+        _, _, preserved, transport = self.preserved_transport()
+        fixture = self.retained_fixture().preserved_observation_fixture()
+        calls=[]
+        clocks=iter([r[k] for r in fixture['requests'] for k in ('request_started_at','request_finished_at')])
+        def curl(argv, **kwargs):
+            index=len(calls);calls.append(argv[-1])
+            self.assertIn(b'Accept: application/vnd.github+json',kwargs['input'])
+            Path(argv[argv.index('--output')+1]).write_text(json.dumps(fixture['requests'][index]['data']))
+            Path(argv[argv.index('--dump-header')+1]).write_bytes(b'HTTP/2 200\r\n\r\n')
+            return subprocess.CompletedProcess(argv,0,b'200',b'')
+        with patch.object(self.i.subprocess,'run',side_effect=curl), patch.object(self.i,'utc_now',side_effect=lambda:next(clocks)):
+            observation=transport.preserved_observation(self.custody,self.root/'observations')
+        self.assertEqual(observation,fixture)
+        base='https://api.github.com/repos/exochain/exochain'
+        self.assertEqual(calls,[base,base+'/git/ref/tags/v0.2.7-custody.1',
+            base+'/git/tags/0214fdc29d7285c4557a317592149563810bf35e',base+'/releases/400603306',
+            base+'/releases/400603306/assets?per_page=100&page=1',base+'/releases/400603306/assets?per_page=100&page=2',
+            base+'/releases/assets/602278328',base+'/releases/latest'])
+        self.assertEqual(self.custody.verify_preserved_payload_observation(preserved,observation)['asset']['id'],602278328)
+
+    def test_preserved_actual_byte_bound_and_fixed_historical_zip_profile(self):
+        _,_,preserved,transport=self.preserved_transport()
+        recorded=[]
+        def curl(argv,**kwargs):
+            recorded.append(argv[argv.index('--max-filesize')+1])
+            Path(argv[argv.index('--output')+1]).write_bytes(b'truncated')
+            Path(argv[argv.index('--dump-header')+1]).write_bytes(b'HTTP/2 200\r\n\r\n')
+            return subprocess.CompletedProcess(argv,0,b'200',b'')
+        with patch.object(self.i.subprocess,'run',side_effect=curl):
+            with self.assertRaisesRegex(self.i.ImportFailure,'size or file identity'):
+                transport.preserved_archive(self.root/'truncated-actual-bound.zip')
+        self.assertEqual(recorded,['147126946'])
+        audit=os.environ.get('EXO_RETAINED_AUDIT_DIR')
+        if audit:
+            actual=Path(audit)/'10779404529.zip'
+            def actual_curl(argv,**kwargs):
+                recorded.append(argv[argv.index('--max-filesize')+1])
+                shutil.copyfile(actual,argv[argv.index('--output')+1])
+                Path(argv[argv.index('--dump-header')+1]).write_bytes(b'HTTP/2 200\r\n\r\n')
+                return subprocess.CompletedProcess(argv,0,b'200',b'')
+            destination=self.root/'10779404529.zip'
+            with patch.object(self.i.subprocess,'run',side_effect=actual_curl): transport.preserved_archive(destination)
+            record=self.custody.load_retained_record(self.manifest,POLICY.with_name('RETAINED-CUSTODY.json'))
+            checked=self.custody.verify_retained_zip(destination,self.custody.retained_profile(self.manifest,record,'payload'))
+            self.assertEqual(checked,{'files_verified':40,'zip_sha256':'eb4138638b9305b406fb50f5e49e205982611af6bcba9aedf92bb34dd7d06b5a'})
+
+    def test_preserved_hashing_remains_bounded_if_file_grows(self):
+        _,_,preserved,transport=self.preserved_transport()
+        payload=b'bounded fixture'
+        transport.preserved=copy.deepcopy(preserved)
+        transport.preserved['asset'].update(size=len(payload),digest='sha256:'+hashlib.sha256(payload).hexdigest())
+        def curl(argv,**kwargs):
+            Path(argv[argv.index('--output')+1]).write_bytes(payload)
+            Path(argv[argv.index('--dump-header')+1]).write_bytes(b'HTTP/2 200\r\n\r\n')
+            return subprocess.CompletedProcess(argv,0,b'200',b'')
+        class GrowingStream:
+            def __enter__(self): return self
+            def __exit__(self,*args): return False
+            def read(self,size):
+                self.calls=getattr(self,'calls',0)+1
+                if self.calls>1: raise AssertionError('hashing read beyond pinned byte bound')
+                return payload+b'x'
+        with patch.object(self.i.subprocess,'run',side_effect=curl),patch.object(self.i.os,'fdopen',return_value=GrowingStream()):
+            with self.assertRaises(self.i.ImportFailure): transport.preserved_archive(self.root/'growing.zip')
+        self.assertFalse((self.root/'growing.zip').exists())
+
+    def test_preserved_modes_reject_credentials_and_stage_before_bootstrap(self):
+        for script,args in (('run_release_recovery_027.sh',['retained-acceptance']),
+                            ('import_release_recovery_027.sh',['retained-acceptance']),
+                            ('recover_release_python_027.sh',['accept']),
+                            ('verify_release_recovery_027.sh',[])):
+            for credential in ('NODE_AUTH_TOKEN','NPM_TOKEN','CARGO_REGISTRY_TOKEN','TWINE_PASSWORD',
+                               'PYPI_TOKEN','PYPI_API_TOKEN','ACTIONS_ID_TOKEN_REQUEST_TOKEN','ACTIONS_ID_TOKEN_REQUEST_URL'):
+                result=subprocess.run(['/bin/bash',str(ROOT/'tools'/script),*args],env={
+                    'RELEASE_OPERATION':'recover-0.2.7-preserved','RELEASE_WORKFLOW_DRY_RUN':'true',credential:'secret'},
+                    capture_output=True,text=True)
+                self.assertNotEqual(result.returncode,0)
+                self.assertIn('credential',result.stderr,(script,credential,result.stderr))
+                self.assertNotIn('secret',result.stderr)
+        result=subprocess.run(['/bin/bash',str(ROOT/'tools/verify_release_recovery_027.sh')],env={
+            'RELEASE_OPERATION':'recover-0.2.7-preserved','RELEASE_RECOVERY_PYTHON_PHASE':'staged'},capture_output=True,text=True)
+        self.assertIn('forbids stage exemptions',result.stderr)
+
+    def test_preserved_acquisition_finalizer_and_custody_fail_closed(self):
+        fixture=self.retained_fixture()
+        record, expected=fixture.origin_v3_fixture()
+        policy=self.custody.load_retained_metadata_policy(self.manifest,record,POLICY)
+        preserved=fixture.preserved_fixture()
+        self.assertIn('preserved', __import__('inspect').signature(self.i.acquire_retained).parameters,
+                      'canonical acquisition cannot create V3 origin')
+        for fault in (None,'custody-expired','asset-changed','fifth-404'):
+            with self.subTest(fault=fault):
+                root=self.root/str(fault);root.mkdir()
+                evidence=root/'evidence';evidence.mkdir()
+                archives=root/'archives';archives.mkdir()
+                transport=self.i.Transport(root,'fixture',self.manifest,record,policy=policy,preserved=preserved)
+                calls=[]; clock=['2026-10-01T22:00:00Z']; pass_index=[0]
+                original={r['id']:r for r in expected['observations']['before']['records']}
+                controls=expected['controls_before']
+                responses={transport.endpoints['run']:controls['original_run'],transport.endpoints['jobs'][0]:controls['original_jobs'],
+                           transport.endpoints['retaining_run']:controls['retaining_run'],transport.endpoints['retaining_jobs'][0]:controls['retaining_jobs'],
+                           record['custody']['metadata']['url']:copy.deepcopy(record['custody']['metadata'])}
+                if fault=='custody-expired': responses[record['custody']['metadata']['url']]['expired']=True
+                def curl(argv,**kwargs):
+                    url=argv[-1];calls.append(url); status=200
+                    if url in responses: value=responses[url]
+                    elif url in dict(transport.endpoints['preserved']).values():
+                        role=next(role for role, endpoint in transport.endpoints['preserved'] if endpoint==url)
+                        if role=='repository':
+                            phase=pass_index[0];pass_index[0]+=1
+                        else: phase=pass_index[0]-1
+                        observation=fixture.preserved_observation_fixture(('00','02','04')[phase])
+                        item=copy.deepcopy(next(r for r in observation['requests'] if r['endpoint_role']==role))
+                        value=item['data'];clock[0]=item['request_finished_at']
+                        if fault=='asset-changed' and phase==1 and role=='asset': value['id']+=1
+                    else:
+                        identifier=int(url.rsplit('/',1)[1]);item=original[identifier]
+                        status=item['status'];value=item.get('metadata',{'message':'Not Found'})
+                        if fault=='fifth-404' and identifier not in {r['id'] for r in policy['unavailable_originals']}:
+                            status=404
+                    Path(argv[argv.index('--output')+1]).write_text(json.dumps(value))
+                    Path(argv[argv.index('--dump-header')+1]).write_bytes(f'HTTP/2 {status}\r\n\r\n'.encode())
+                    return subprocess.CompletedProcess(argv,0,str(status).encode(),b'')
+                # Explicit byte/crypto boundary doubles; HTTP metadata, origin,
+                # chronology, endpoint selection, original404 policy stay real.
+                def download(path):
+                    calls.append('preserved-bytes');path.write_bytes(b'fixture ZIP boundary')
+                    clock[0]='2026-10-01T22:01:30Z'
+                def custody_download(metadata,path):
+                    self.assertEqual(metadata['id'],10780480598)
+                    calls.append('custody-bytes');path.write_bytes(b'fixture custody boundary')
+                def now():
+                    # Start each request inside the next ordered phase, and
+                    # place original reads strictly after initial controls.
+                    if calls and calls[-1]==dict(transport.endpoints['preserved'])['latest']:
+                        return clock[0]
+                    return clock[0]
+                original_method=transport.original_metadata
+                original_pass=[0]
+                def original_read(identifier,path):
+                    clock[0]='2026-10-01T22:01:20Z' if original_pass[0]<9 else '2026-10-01T22:01:40Z' if original_pass[0]<18 else '2026-10-01T22:03:20Z'
+                    original_pass[0]+=1
+                    return original_method(identifier,path)
+                transport.original_metadata=original_read
+                # Clock start must advance before each metadata request.
+                real_get=transport.get
+                def get(url,path,limit):
+                    if url==dict(transport.endpoints['preserved'])['repository']:
+                        clock[0]=f"2026-10-01T22:{('00','02','04')[pass_index[0]]}:00Z"
+                    return real_get(url,path,limit)
+                transport.get=get
+                with patch.object(self.i.subprocess,'run',side_effect=curl),patch.object(self.i,'utc_now',side_effect=now), \
+                     patch.object(transport,'preserved_archive',side_effect=download),patch.object(transport,'archive',side_effect=custody_download), \
+                     patch.object(self.custody,'verify_retained_transport',return_value={'retained_archives_verified':2}):
+                    if fault:
+                        with self.assertRaises((self.i.ImportFailure,self.custody.RecoveryError)):
+                            self.i.acquire_retained(self.manifest,record,self.custody,transport,evidence,archives,root/'candidate',root/'workflow',
+                                policy=policy,observer=expected['observations']['observer'],preserved=preserved)
+                        self.assertFalse((evidence/'acquisition-origin-input.json').exists())
+                    else:
+                        result,_=self.i.acquire_retained(self.manifest,record,self.custody,transport,evidence,archives,root/'candidate',root/'workflow',
+                            policy=policy,observer=expected['observations']['observer'],preserved=preserved)
+                        self.assertEqual(result['schema'],'exochain-retained-origin-result-027/v3')
+                        initial=self.custody.load_json(evidence/'acquisition-origin-input.json','origin')
+                        final=self.i.finalize_retained_observations(self.manifest,record,policy,self.custody,transport,evidence,
+                            archives/'10780480598.zip',root/'workflow',observer=expected['observations']['observer'],
+                            initial_input=initial,phase='producer-final',preserved=preserved)
+                        self.assertNotIn('retained_metadata',final['controls_after'])
+                        self.assertEqual(len(final['observations']['after']['records']),9)
+                        self.assertEqual(calls.count(record['custody']['metadata']['url']),3)
+                self.assertNotIn(self.i.API+'/artifacts/10779404529',calls)
+                self.assertNotIn(self.i.API+'/artifacts/10779404529/zip',calls)
+
+    def test_preserved_receipts_bind_transport_raw_passes_and_anchor_signature(self):
+        fixture=self.retained_fixture()
+        record,publications,policy,preserved,envelope,expected=fixture.v3_receipt_fixture()
+        _,producer=fixture.origin_v3_fixture()
+        origin=self.custody.verify_retained_origin(self.manifest,record,producer,'fixture','fixture',policy=policy,preserved=preserved)
+        self.assertIn('preserved',__import__('inspect').signature(self.i.create_retained_receipts).parameters,
+                      'producer cannot bind preserved receipts')
+        summary={'origin':origin,'origin_input':producer,'rust':{'version':'0.2.7','crates_verified':32},'files':{'files_verified':40},
+            'retained_transport':{'retained_archives_verified':2,'payload_files_verified':40,'original_zip_envelopes_verified':0},
+            'packages':{},'native_attestations':[]}
+        for artifact in self.manifest['artifacts']:
+            if artifact['lane'].startswith('native-'):
+                summary['packages'][artifact['lane']]={'libraries':29,'executables':0}
+                summary['native_attestations'].append({'lane':artifact['lane'],'verified_attestations':1,
+                    'original_invocation':self.manifest['origin']['native_attestation_invocation']})
+        for signed in (False,True):
+            evidence=self.root/('receipts-'+str(signed));evidence.mkdir()
+            identity={key:True for key in ('controller_signature_verified','product_signature_verified','retaining_signature_verified')}
+            identity['preserved_signature_verified']=signed
+            (evidence/'identity-after.json').write_text(json.dumps(identity))
+            if not signed:
+                with self.assertRaises(self.i.ImportFailure):
+                    self.i.create_retained_receipts(self.custody,self.manifest,record,envelope['context'],summary,
+                        expected['acceptance-receipt.json']['results']['publications'],evidence,policy=policy,preserved=preserved)
+                self.assertFalse((evidence/'current-receipts').exists())
+            else:
+                self.i.create_retained_receipts(self.custody,self.manifest,record,envelope['context'],summary,
+                    expected['acceptance-receipt.json']['results']['publications'],evidence,policy=policy,preserved=preserved)
+                for name,receipt in expected.items():
+                    self.assertEqual(self.custody.load_json(evidence/'current-receipts'/name,'receipt'),receipt)
+
+    def test_preserved_source_capture_rechecks_descriptor(self):
+        self.assertIn('preserved',__import__('inspect').signature(self.i.assert_captured_inputs).parameters,
+                      'descriptor capture is not rebound to actual controller source')
+        paths=[]
+        descriptor=PRESERVED.read_bytes()
+        def read(path,*args): return descriptor if path.name==PRESERVED.name else b'fixed fixture'
+        def git(argv,**kwargs):
+            paths.append(argv[-1]);data=descriptor if argv[-1].endswith(PRESERVED.name) else b'fixed fixture'
+            return subprocess.CompletedProcess(argv,0,data,b'')
+        with patch.dict(self.i.os.environ,{'GITHUB_WORKSPACE':str(self.root),'GITHUB_SHA':'a'*40},clear=True), \
+             patch.object(self.i.subprocess,'run',side_effect=git),patch.object(self.custody,'read_regular',side_effect=read):
+            self.i.assert_captured_inputs(self.root,self.custody,policy={},preserved={})
+        self.assertIn('a'*40+':governance/releases/v0.2.7/PRESERVED-PAYLOAD-TRANSPORT.json',paths)
+        with patch.dict(self.i.os.environ,{'GITHUB_WORKSPACE':str(self.root),'GITHUB_SHA':'a'*40},clear=True), \
+             patch.object(self.i.subprocess,'run',side_effect=git),patch.object(self.custody,'read_regular',return_value=b'fixed fixture'):
+            with self.assertRaises(self.i.ImportFailure):
+                self.i.assert_captured_inputs(self.root,self.custody,policy={},preserved={})
+
+    def test_preserved_identity_wrapper_authenticates_exact_anchor_and_recaptures(self):
+        # Execute the full wrapper with fixture Git, signer, and runtime-identity
+        # process boundaries. All Python validation is delegated unchanged to
+        # the suite interpreter; only the external version probe is simulated.
+        # This proves orchestration, not actual GPG or runtime acceptance.
+        fixture=self.root/'identity-fixtures';fixture.mkdir()
+        for name in ('RECOVERY-MANIFEST.json','PUBLICATION-IDENTITIES.json','RETAINED-CUSTODY.json',
+                     'RETAINED-METADATA-POLICY.json','PRESERVED-PAYLOAD-TRANSPORT.json'):
+            shutil.copyfile(MANIFEST.with_name(name),fixture/name)
+        shutil.copyfile(ROOT/'tools/verify_release_recovery_027.py',fixture/'verify_release_recovery_027.py')
+        for name in ('verify_release_source.sh','verify_release_tag.sh'):
+            (fixture/name).write_text('#!/bin/bash\nexit 0\n')
+        events=self.root/'signature-events'
+        fault_path=self.root/'fault'
+        runtime_probes=self.root/'runtime-probes'
+        runtime=self.root/'identity-python'
+        version_probe=['-I','-B','-c','import sys; print(".".join(map(str, sys.version_info[:3])))']
+        runtime.write_text(f'''#!{sys.executable}
+import os,pathlib,sys
+if sys.argv[1:]=={version_probe!r}:
+    fault=pathlib.Path({str(fault_path)!r}).read_text()
+    pathlib.Path({str(runtime_probes)!r}).write_text('version-probe')
+    print('3.13.3' if fault=='runtime' else '3.13.7')
+else:
+    os.execv({sys.executable!r}, [{sys.executable!r}, *sys.argv[1:]])
+''')
+        runtime.chmod(0o700)
+        (fixture/'verify_release_tag_signer.sh').write_text('''#!/bin/bash
+set -eu
+[ "$GITHUB_SHA" = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ] || exit 91
+[ "$EXOCHAIN_RELEASE_SIGNING_FINGERPRINT" = 96B889DAE73CD7C511CCDE28897119B7198789EC ] || exit 92
+printf '%s\\n' "$RELEASE_TAG" >> '''+shlex.quote(str(events))+'''
+if [ "$RELEASE_TAG" = v0.2.7-custody.1 ]; then
+  fault="$(/bin/cat '''+shlex.quote(str(fault_path))+''')"
+  [ "$fault" != signature ] || exit 93
+  if [ "$fault" = capture ]; then
+    /bin/chmod 600 "$(dirname "$0")/PRESERVED-PAYLOAD-TRANSPORT.json"
+    printf ' ' >> "$(dirname "$0")/PRESERVED-PAYLOAD-TRANSPORT.json"
+  fi
+fi
+''')
+        git=self.root/'identity-git'
+        git.write_text(f'''#!{sys.executable}
+import pathlib,sys
+args=sys.argv[1:]; fault=pathlib.Path({str(fault_path)!r}).read_text()
+refs={{'refs/tags/v0.2.7-recover.3':('b'*40,'a'*40),
+      'refs/tags/v0.2.7':('be47589ec7dbefe821ada35ed0a89dedc9751953','666c578f719d1e54fce95d6831a3af92ea80df93'),
+      'refs/tags/v0.2.7-recover.2':('cab642330dfc34099cddbe3721b376e26a67c722','2198e4ef610e9ef6d04adf726f7f4b3e156a3bc1'),
+      'refs/tags/v0.2.7-custody.1':('0214fdc29d7285c4557a317592149563810bf35e','b5871abd548d427cacab27e748b49e75897a5f66')}}
+if 'show' in args:
+    name=pathlib.Path(args[-1].split(':',1)[1]).name
+    data=(pathlib.Path({str(fixture)!r})/name).read_bytes()
+    if name=='PRESERVED-PAYLOAD-TRANSPORT.json' and fault=='policy': data=data.replace(b'602278328',b'602278329')
+    sys.stdout.buffer.write(data)
+elif 'rev-parse' in args:
+    ref=args[-1]
+    if ref=='HEAD^{{commit}}': print('a'*40)
+    else:
+        peeled=ref.endswith('^{{commit}}');ref=ref.removesuffix('^{{commit}}')
+        print('f'*40 if fault==('peel' if peeled else 'object') and ref.endswith('custody.1') else refs[ref][int(peeled)])
+elif 'ls-remote' in args:
+    ref=args[-2]
+    obj,commit=refs[ref]
+    if fault=='remote' and ref.endswith('custody.1'): commit='f'*40
+    print(obj+'\\t'+ref+'\\n'+commit+'\\t'+ref+'^{{}}')
+elif 'fsck' not in args: raise SystemExit(94)
+''')
+        git.chmod(0o700)
+        wrapper=self.root/'identity-wrapper.sh'
+        wrapper.write_text((ROOT/'tools/verify_release_recovery_027.sh').read_text().replace('/usr/bin/git',str(git))
+                           .replace('/usr/bin/realpath',shutil.which('realpath')))
+        workspace=self.root/'workspace';workspace.mkdir()
+        signer_tags=['v0.2.7-recover.3','v0.2.7','v0.2.7-recover.2','v0.2.7-custody.1']
+        for fault in ('none','object','peel','remote','signature','capture','policy','runtime'):
+            with self.subTest(fault=fault):
+                fault_path.write_text(fault);events.unlink(missing_ok=True)
+                runtime_probes.unlink(missing_ok=True)
+                scratch=self.root/('identity-'+fault);scratch.mkdir()
+                env={'RELEASE_OPERATION':'recover-0.2.7-preserved','GITHUB_SHA':'a'*40,'GITHUB_REF':'refs/tags/v0.2.7-recover.3',
+                    'RELEASE_TAG':'v0.2.7-recover.3','EXPECTED_COMMIT_SHA':'a'*40,'TRUSTED_RELEASE_REF':'a'*40,
+                    'EXPECTED_TAG_COMMIT_SHA':'a'*40,'EXPECTED_TAG_OBJECT_SHA':'b'*40,'GITHUB_ACTIONS':'true',
+                    'GITHUB_SERVER_URL':'https://github.com','GITHUB_REPOSITORY':'exochain/exochain',
+                    'GITHUB_WORKSPACE':str(workspace),'RUNNER_TEMP':str(scratch),'RELEASE_PYTHON':str(runtime),
+                    'RELEASE_TRUSTED_PYTHON_ROOT':str(self.root),'RELEASE_TRUSTED_PYTHON_VERSION':'3.13.7',
+                    'EXOCHAIN_RELEASE_SIGNING_FINGERPRINT':'96B889DAE73CD7C511CCDE28897119B7198789EC'}
+                result=subprocess.run(['/bin/bash','--noprofile','--norc','-p',str(wrapper)],env=env,capture_output=True,text=True)
+                self.assertTrue(runtime_probes.is_file(),result.stderr)
+                self.assertEqual(runtime_probes.read_text(),'version-probe')
+                actual_tags=events.read_text().splitlines() if events.exists() else []
+                count={'runtime':0,'policy':2,'object':3,'peel':3}.get(fault,4)
+                self.assertEqual(actual_tags,signer_tags[:count],result.stderr)
+                if fault=='none':
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    identity=json.loads(result.stdout)
+                    self.assertIs(identity.get('preserved_signature_verified'),True)
+                else:
+                    self.assertEqual(result.returncode,93 if fault=='signature' else 1,(fault,result.stderr))
+                    self.assertEqual(result.stdout,'')
+                    if fault=='runtime':
+                        self.assertIn('Python differs from the pinned runtime',result.stderr)
+                    else:
+                        self.assertNotIn('Python differs from the pinned runtime',result.stderr)
+                        reason={'object':'preserved anchor local identity or configured signer differs',
+                                'peel':'preserved anchor local identity or configured signer differs',
+                                'remote':'AssertionError','capture':'preserved policy capture changed',
+                                'policy':'reviewed preserved payload policy digest'}.get(fault)
+                        if reason is not None: self.assertIn(reason,result.stderr)
 
     def test_retained_dispatcher_rejects_credentials_before_bootstrap(self):
         for credential in ("NODE_AUTH_TOKEN", "NPM_TOKEN", "PYPI_API_TOKEN", "PYPI_TOKEN",
@@ -97,9 +598,10 @@ class ImportTests(unittest.TestCase):
         tool_view = self.root / "view"; tool_view.mkdir()
         (tool_view / ".release-tool-identity").write_text("fixture-closure\n")
         (fixtures / "verify_release_recovery_027.sh").write_text(
-            "#!/bin/bash\n[ \"$DRY_RUN\" = false ] && [[ \"$RELEASE_OPERATION\" = recover-0.2.7-retained || \"$RELEASE_OPERATION\" = recover-0.2.7-retained-404 ]]\n")
+            "#!/bin/bash\n[ \"$DRY_RUN\" = false ] && [[ \"$RELEASE_OPERATION\" = recover-0.2.7-retained || \"$RELEASE_OPERATION\" = recover-0.2.7-retained-404 || \"$RELEASE_OPERATION\" = recover-0.2.7-preserved ]]\n")
         (fixtures / 'verify_release_recovery_027.py').write_text('# fixture captured validator\n')
         shutil.copyfile(POLICY,fixtures/'RETAINED-METADATA-POLICY.json')
+        shutil.copyfile(PRESERVED,fixtures/'PRESERVED-PAYLOAD-TRANSPORT.json')
         (fixtures / "resolve_release_tool_path.sh").write_text(
             "#!/bin/bash\nif [ \"$1\" = --identity ]; then printf fixture-closure; else printf '%s' " + shlex.quote(str(tool_view)) + "; fi\n")
         (fixtures / "import_release_recovery_027.sh").write_text(
@@ -167,6 +669,16 @@ class ImportTests(unittest.TestCase):
             env=env,capture_output=True,text=True)
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertEqual(json.loads(result.stdout)['RELEASE_OPERATION'],'recover-0.2.7-retained-404')
+        env['RELEASE_OPERATION']='recover-0.2.7-preserved'
+        result = subprocess.run(['/bin/bash','--noprofile','--norc','-p',str(dispatcher),'retained-github'],
+            env=env,capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(json.loads(result.stdout)['RELEASE_OPERATION'],'recover-0.2.7-preserved')
+        (fixtures/'PRESERVED-PAYLOAD-TRANSPORT.json').unlink()
+        result = subprocess.run(['/bin/bash','--noprofile','--norc','-p',str(dispatcher),'retained-github'],
+            env=env,capture_output=True,text=True)
+        self.assertNotEqual(result.returncode,0,'dispatcher omitted descriptor capture')
+        shutil.copyfile(PRESERVED,fixtures/'PRESERVED-PAYLOAD-TRANSPORT.json')
         (fixtures/'RETAINED-METADATA-POLICY.json').unlink()
         result = subprocess.run(['/bin/bash','--noprofile','--norc','-p',str(dispatcher),'retained-github'],
             env=env,capture_output=True,text=True)
@@ -512,7 +1024,9 @@ class ImportTests(unittest.TestCase):
         events=[]
         policy=self.custody.load_retained_metadata_policy(self.manifest,record,POLICY)
         class Provider:
-            def lookup(self): events.append('lookup'); return None
+            def __init__(self,release): self.release=release
+            def lookup(self): events.append('lookup'); return self.release
+            def list_assets(self,identifier): return []
             def create(self,*args): raise AssertionError('preflight create')
             def upload(self,*args): raise AssertionError('preflight upload')
             def publish(self,*args): raise AssertionError('preflight publish')
@@ -521,11 +1035,13 @@ class ImportTests(unittest.TestCase):
             evidence=self.root/('github-v2' if selected else 'github-v1');evidence.mkdir()
             expected_values=[]
             original_preflight=helper.preflight
-            def recorded_preflight(provider,expected,assets,rebind):
+            def recorded_preflight(provider,expected,assets,rebind,*,predecessor=None):
                 expected_values.append(expected)
-                return original_preflight(provider,expected,assets,rebind)
-            with patch.object(self.i,'load_module',return_value=helper),patch.object(helper,'GitHub',return_value=Provider()), \
+                return original_preflight(provider,expected,assets,rebind,predecessor=predecessor)
+            predecessor=helper.fixed_empty_predecessor(self.manifest,publications,record,policy) if selected else None
+            with patch.object(self.i,'load_module',return_value=helper),patch.object(helper,'GitHub',return_value=Provider(predecessor)), \
                  patch.object(helper,'release_assets',return_value={'fixture':b'x'}), \
+                 patch.object(helper,'authenticate_failed_predecessor',return_value=predecessor), \
                  patch.object(helper,'preflight',side_effect=recorded_preflight), \
                  patch.object(self.custody,'verify_files',side_effect=lambda *args:events.append('files')), \
                  patch.dict(self.i.os.environ,{'GITHUB_SHA':'a'*40,'GITHUB_REF':'refs/tags/v0.2.7-recover.3','RELEASE_GITHUB_TOKEN':'fixture'},clear=True):
@@ -536,6 +1052,82 @@ class ImportTests(unittest.TestCase):
             if selected:
                 self.assertIn(self.custody.RETAINED_METADATA_POLICY_SHA256,expected_values[0]['body'])
                 self.assertIn('Selected original artifact metadata may be unavailable',expected_values[0]['body'])
+                self.assertEqual(json.loads((evidence/'github-preflight.json').read_text())['release_id'],400420101)
+
+    def test_retained_producer_authenticates_fixed_archive_before_eligible_draft(self):
+        helper=module_file('producer_authenticating_github',ROOT/'tools/recover_github_release_027.py')
+        record=self.custody.load_retained_record(self.manifest,ROOT/'governance/releases/v0.2.7/RETAINED-CUSTODY.json')
+        publications=self.custody.load_publications(self.manifest,ROOT/'governance/releases/v0.2.7/PUBLICATION-IDENTITIES.json')
+        policy=self.custody.load_retained_metadata_policy(self.manifest,record,POLICY)
+        predecessor=helper.fixed_empty_predecessor(self.manifest,publications,record,policy)
+        context={'controller_sha':'b5871abd548d427cacab27e748b49e75897a5f66',
+            'controller_ref':'refs/tags/v0.2.7-recover.4','run_id':36653810772,
+            'run_attempt':1,'original_source':helper.PRODUCT_SHA}
+        rows=[{**context,'operation':operation,'outcome':outcome,
+               **({'release_id':400420101,'asset':'first.cdx.json'} if operation=='upload_asset' else {})}
+              for operation,outcome in (('create_draft','intent'),
+                ('create_draft','response_received_not_yet_accepted'),
+                ('upload_asset','intent'),('upload_asset','unknown'))]
+        journal='\n'.join(json.dumps(row,separators=(',',':')) for row in rows)
+        journal=(journal+' '*(1473-len(journal)-1)+'\n').encode()
+        output=io.BytesIO()
+        with zipfile.ZipFile(output,'w',compression=zipfile.ZIP_DEFLATED) as bundle:
+            info=zipfile.ZipInfo(helper.HISTORICAL_MEMBER)
+            info.compress_type=zipfile.ZIP_DEFLATED
+            info.external_attr=0o100600<<16
+            bundle.writestr(info,journal)
+        with zipfile.ZipFile(output,'a') as bundle:
+            bundle.comment=b'x'*(603-len(output.getvalue()))
+        archive=output.getvalue()
+        self.assertEqual(len(archive),603)
+        endpoint=self.i.API+'/artifacts/11124850978'
+        metadata={'id':11124850978,'node_id':'MDg6QXJ0aWZhY3QxMTEyNDg1MDk3OA==',
+            'name':'exochain-027-retained-github-receipts','size_in_bytes':603,
+            'url':endpoint,'archive_download_url':endpoint+'/zip',
+            'digest':'sha256:'+hashlib.sha256(archive).hexdigest(),
+            'created_at':'2026-09-30T20:41:02Z','updated_at':'2026-09-30T20:41:02Z',
+            'expires_at':'2026-10-30T20:41:01Z','expired':False,
+            'workflow_run':{'id':36653810772,'repository_id':1116455646,
+                'head_repository_id':1116455646,'head_sha':context['controller_sha'],
+                'head_branch':'v0.2.7-recover.4'}}
+        calls=[]
+        def get(transport,url,path,limit,authenticated,**kwargs):
+            calls.append((url,limit,authenticated))
+            path.write_bytes(archive if url.endswith('/zip') else json.dumps(metadata).encode())
+            return 200,[]
+        class Provider:
+            def __init__(self,release): self.release=release
+            def lookup(self): return self.release
+            def list_assets(self,identifier): return []
+            def create(self,*args): raise AssertionError('producer write')
+            def upload(self,*args): raise AssertionError('producer write')
+            def publish(self,*args): raise AssertionError('producer write')
+            def update_body(self,*args): raise AssertionError('producer write')
+        for state,release in (('eligible',predecessor),('missing',None),
+                              ('wrong-id',{**predecessor,'id':400420102})):
+            with self.subTest(state=state):
+                evidence=self.root/state;evidence.mkdir()
+                calls.clear()
+                with patch.object(self.i,'load_module',return_value=helper),\
+                     patch.object(helper,'GitHub',return_value=Provider(release)),\
+                     patch.object(helper,'release_assets',return_value={'fixture':b'x'}),\
+                     patch.object(self.i.Transport,'_get',get),\
+                     patch.object(self.i,'utc_now',return_value='2026-09-30T20:42:00Z'),\
+                     patch.object(helper,'HISTORICAL_ARCHIVE_SHA256',hashlib.sha256(archive).hexdigest()),\
+                     patch.object(helper,'HISTORICAL_MEMBER_SHA256',hashlib.sha256(journal).hexdigest()),\
+                     patch.object(self.custody,'verify_files'),\
+                     patch.dict(self.i.os.environ,{'GITHUB_SHA':'a'*40,
+                         'GITHUB_REF':'refs/tags/v0.2.7-recover.3','RELEASE_GITHUB_TOKEN':'fixture'},clear=True):
+                    if state=='eligible':
+                        self.i.retained_github_preflight(self.root,self.custody,self.manifest,
+                            publications,record,self.root,evidence,policy=policy)
+                        self.assertEqual(json.loads((evidence/'github-preflight.json').read_text())['release_id'],400420101)
+                    else:
+                        with self.assertRaises(ValueError):
+                            self.i.retained_github_preflight(self.root,self.custody,self.manifest,
+                                publications,record,self.root,evidence,policy=policy)
+                self.assertEqual(calls,[(endpoint,self.i.JSON_LIMIT,True),
+                    (endpoint+'/zip',603,True),(endpoint,self.i.JSON_LIMIT,True)])
 
     def test_retained_acquisition_rechecks_metadata_and_never_exposes_bad_bytes(self):
         record, origin = self.retained_fixture().origin_fixture()
@@ -1140,10 +1732,22 @@ class ImportTests(unittest.TestCase):
                 self.assertIn(argv[4], ("origin", "artifacts"))
 
     def test_v2_producer_late_failures_and_output_transaction_never_expose_acceptance(self):
+        self.producer_output_transaction(False)
+
+    def test_v3_producer_late_failures_and_output_transaction_never_expose_acceptance(self):
+        self.producer_output_transaction(True)
+
+    def producer_output_transaction(self, preserved_mode):
         fixture=self.retained_fixture()
-        record,origin=fixture.origin_v2_fixture((10518086890,))
+        record,origin=fixture.origin_v3_fixture() if preserved_mode else fixture.origin_v2_fixture((10518086890,))
         policy=self.custody.load_retained_metadata_policy(self.manifest,record,POLICY)
         later=fixture.observation_fixture((10518086890,),offset_seconds=60)['after']
+        final_controls={**origin['controls_after'],'observed_at':'2026-09-25T22:03:00Z'}
+        if preserved_mode:
+            _,_,_,preserved,envelope,_=fixture.v3_receipt_fixture()
+            later=json.loads(json.dumps(later).replace('2026-09-25','2026-10-01').replace('22:02','22:03'))
+            final_controls={**origin['controls_after'],'observed_at':'2026-10-01T22:04:16Z',
+                'preserved_observation':fixture.preserved_observation_fixture('04')}
         publications=self.custody.load_publications(self.manifest,
             ROOT/'governance/releases/v0.2.7/PUBLICATION-IDENTITIES.json')
         for fault in ('crypto','final-transition','source','files','short-write','fsync','replace',
@@ -1155,6 +1759,7 @@ class ImportTests(unittest.TestCase):
                 (ROOT/'governance/releases/v0.2.7/PUBLICATION-IDENTITIES.json','PUBLICATION-IDENTITIES.json'),
                 (ROOT/'tools/verify_release_recovery_027.py','verify_release_recovery_027.py')):
                 shutil.copyfile(source,capture/name)
+            if preserved_mode: shutil.copyfile(PRESERVED,capture/PRESERVED.name)
             (capture/'identity-before.json').write_text(json.dumps({'controller_sha':'a'*40,
                 'controller_ref':'refs/tags/v0.2.7-recover.3','product_commit':self.i.PRODUCT_SHA,
                 'product_tag_object':'be47589ec7dbefe821ada35ed0a89dedc9751953'}))
@@ -1162,15 +1767,14 @@ class ImportTests(unittest.TestCase):
             output=runner/'github-output';output.write_bytes(b'pre-existing-output\n');output.chmod(0o640)
             events=[]
             diagnostics=[]
-            controls=iter((origin['controls_before'],origin['controls_after'],
-                           {**origin['controls_after'],'observed_at':'2026-09-25T22:03:00Z'}))
+            controls=iter((origin['controls_before'],origin['controls_after'],final_controls))
             final=copy.deepcopy(later)
             if fault=='final-transition':
                 item=next(value for value in final['records'] if value['id']==10518086890)
                 historical=self.custody.read_historical_custody(self.manifest,record,'fixture')['metadata']
                 item.update(status=200,variant='present',metadata=dict(next(value for value in historical if value['id']==10518086890),expired=True))
             passes=iter((origin['observations']['before'],origin['observations']['after'],final))
-            def control(*args,phase):
+            def control(*args,phase,**kwargs):
                 events.append('controls-'+phase)
                 return copy.deepcopy(next(controls))
             def observation(*args,phase):
@@ -1178,7 +1782,7 @@ class ImportTests(unittest.TestCase):
                 return copy.deepcopy(next(passes))
             def archive(metadata,path):
                 path.write_bytes(b'fixture archive boundary')
-            transport=types.SimpleNamespace(archive=archive)
+            transport=types.SimpleNamespace(archive=archive,preserved_archive=lambda path:path.write_bytes(b'fixture preserved ZIP boundary'))
             def source_check(*args,**kwargs):
                 events.append('source')
                 if fault=='source' and events.count('source')==2:
@@ -1198,22 +1802,25 @@ class ImportTests(unittest.TestCase):
                     'controller_ref':'refs/tags/v0.2.7-recover.3','product_commit':self.i.PRODUCT_SHA,
                     'product_tag_object':'be47589ec7dbefe821ada35ed0a89dedc9751953',
                     'controller_signature_verified':True,'product_signature_verified':True,
-                    'retaining_signature_verified':True}).encode())
+                    'retaining_signature_verified':True,'preserved_signature_verified':preserved_mode}).encode())
                 return subprocess.CompletedProcess(argv,0,b'',b'')
             def verified_transport(manifest,record,archives,destination):
                 destination.mkdir(mode=0o700)
                 return {'retained_archives_verified':2,'payload_files_verified':40,'original_zip_envelopes_verified':0}
             def checked_context(*args,**kwargs):
                 events.append('checked-at')
+                if preserved_mode: return {**envelope['context'],'checked_at':'2026-10-01T22:05:00Z'}
                 return {'producer_job_id':110000000000}
+            real_receipts=self.i.create_retained_receipts
             def receipts(*args,**kwargs):
                 events.append('receipt-output')
+                if preserved_mode: return real_receipts(*args,**kwargs)
                 directory=args[-1]/'current-receipts';directory.mkdir()
                 return [{'path':'custody-receipt.json','size':1,'sha256':'a'*64},
                         {'path':'acceptance-receipt.json','size':1,'sha256':'b'*64}]
             environment={'RUNNER_TEMP':str(runner),'RELEASE_RECOVERY_DIRECTORY':str(runner/'exochain-recovery-artifacts'),
                 'RELEASE_GITHUB_TOKEN':'fixture','RELEASE_PYTHON':sys.executable,'RELEASE_NODE':sys.executable,
-                'GITHUB_OUTPUT':str(output),'RELEASE_OPERATION':'recover-0.2.7-retained-404'}
+                'GITHUB_OUTPUT':str(output),'RELEASE_OPERATION':'recover-0.2.7-preserved' if preserved_mode else 'recover-0.2.7-retained-404'}
             with ExitStack() as stack:
                 stack.enter_context(patch.dict(self.i.os.environ,environment,clear=True))
                 stack.enter_context(patch.object(self.i.sys,'argv',['importer',str(capture)]))
@@ -1225,7 +1832,8 @@ class ImportTests(unittest.TestCase):
                     ('fetch_original_observation_pass',{'side_effect':observation}),
                     ('assert_captured_inputs',{'side_effect':source_check}),
                     ('fetch_rust',{'return_value':{'version':'0.2.7','crates_verified':32}}),
-                    ('validate_packages',{'return_value':{}}),
+                    ('validate_packages',{'return_value':{artifact['lane']:{'libraries':29,'executables':0}
+                        for artifact in self.manifest['artifacts'] if artifact['lane'].startswith('native-')}}),
                     ('verify_attestation',{'side_effect':attestation}),
                     ('accept_publications',{'return_value':[self.i.publication_result(p) for p in publications['publications']]}),
                     ('retained_github_preflight',{}),
@@ -1293,6 +1901,11 @@ class ImportTests(unittest.TestCase):
                 self.assertTrue(output.read_bytes().startswith(b'pre-existing-output\n'))
                 self.assertIn(b'receipt_directory=',output.read_bytes())
                 self.assertEqual(output.stat().st_mode & 0o777,0o640)
+                if preserved_mode:
+                    receipt=self.custody.load_json(runner/'exochain-recovery-evidence/current-receipts/custody-receipt.json','receipt')
+                    self.assertEqual(receipt['schema'],'exochain-retained-custody-receipt-027/v3')
+                    self.assertEqual(receipt['preserved_transport']['asset']['id'],602278328)
+                    self.assertEqual(receipt['preserved_observations']['after'],final_controls['preserved_observation'])
                 if fault is None:
                     self.assertEqual(len(diagnostics),1)
                     self.assertEqual(json.loads(diagnostics[0]),{

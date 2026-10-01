@@ -80,7 +80,7 @@ printf '%s\\n' "$acceptance_only" "$provenance_commit" "$provenance_ref"
 
     def test_retained_all_profiles_are_credential_free_before_bootstrap(self):
         self.env["RELEASE_NPM_MODE"] = "retained-accept"
-        for operation in ('recover-0.2.7-retained','recover-0.2.7-retained-404'):
+        for operation in ('recover-0.2.7-retained','recover-0.2.7-retained-404','recover-0.2.7-preserved'):
             self.env['RELEASE_OPERATION'] = operation
             for dry in ("true", "false"):
                 self.env["RELEASE_WORKFLOW_DRY_RUN"] = dry
@@ -113,7 +113,7 @@ printf '%s\\n' "$acceptance_only" "$provenance_commit" "$provenance_ref"
 
     def test_retained_dry_and_live_all_profiles_never_enter_upload(self):
         self.env['RELEASE_NPM_MODE'] = 'retained-accept'
-        for operation in ('recover-0.2.7-retained','recover-0.2.7-retained-404'):
+        for operation in ('recover-0.2.7-retained','recover-0.2.7-retained-404','recover-0.2.7-preserved'):
             self.env['RELEASE_OPERATION'] = operation
             for dry in ("true","false"):
                 self.env["RELEASE_WORKFLOW_DRY_RUN"] = dry
@@ -136,10 +136,11 @@ printf '%s\\n' "$acceptance_only" "$provenance_commit" "$provenance_ref"
                             self.assertFalse((self.receipt_path / "intent.json").exists())
 
     def test_authenticated_boundary_itself_rejects_retained(self):
-        self.env["RELEASE_OPERATION"] = "recover-0.2.7-retained"
-        result = self.run_shell(function("run_authenticated_npm")+"\nacceptance_only=true; run_authenticated_npm publish")
-        self.assertNotEqual(result.returncode,0)
-        self.assertIn("authenticated npm is forbidden",result.stderr)
+        for operation in ('recover-0.2.7-retained','recover-0.2.7-retained-404','recover-0.2.7-preserved'):
+            self.env["RELEASE_OPERATION"] = operation
+            result = self.run_shell(function("run_authenticated_npm")+"\nacceptance_only=false; run_authenticated_npm publish")
+            self.assertNotEqual(result.returncode,0)
+            self.assertIn("authenticated npm is forbidden",result.stderr)
 
     def test_public_install_can_be_reused_without_crypto_or_upload(self):
         body = function("install_public_npm_for_acceptance") + f"""

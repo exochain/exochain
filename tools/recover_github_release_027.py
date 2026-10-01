@@ -3,28 +3,254 @@
 # SPDX-License-Identifier: Apache-2.0
 """Complete only the fixed original release; never replace a release asset."""
 import hashlib
+from contextlib import contextmanager, nullcontext
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
 import re
+import signal
 import stat
 import subprocess
 import sys
 import tempfile
+import time
 import types
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 
 API = "https://api.github.com/repos/exochain/exochain"
 UPLOADS = "https://uploads.github.com/repos/exochain/exochain"
 PRODUCT_SHA = "666c578f719d1e54fce95d6831a3af92ea80df93"
+HISTORICAL_ARCHIVE_SHA256 = '29f4c3a4e9075aabd725ad4c4ab7225f8e98be5aca3df67309c3e0e0ff0ae09d'
+HISTORICAL_MEMBER_SHA256 = '0c248f93130119592d029253f6f7e370651713054228dae551338690b2157d01'
+HISTORICAL_MEMBER = 'exochain-retained-github.5gehyybi/mutation-journal.jsonl'
+PRESERVED_RELEASE_FIELDS = ('id','node_id','tag_name','target_commitish','name',
+    'draft','prerelease','published_at','created_at','immutable','url','upload_url')
+RATE_URL = 'https://api.github.com/rate_limit'
 
 
 def require(condition, message):
     if not condition:
         raise ValueError(message)
+
+
+class ProviderBudget:
+    """Writer-local admission, never a provider reservation or HTTP retry policy."""
+    def __init__(self, *, wall=time.time, monotonic=time.monotonic, sleeper=time.sleep,
+                 evidence=None, started=None):
+        self.wall, self.monotonic, self.sleeper = wall, monotonic, sleeper
+        self.last_wall, self.last_mono = wall(), monotonic()
+        self.deadline = (self.last_mono if started is None else started) + 230 * 60
+        self.expiry = None
+        self.remaining = self.reset = None
+        self.phase = 0
+        self.phase_requests = 0
+        self.requests = 0
+        self.admission_requests = 0
+        self.waits = 0
+        self.wait_seconds = 0
+        self.last_get = self.last_mutation = None
+        self.active = self.inflight = self.admitting = self.stopped = False
+        self.evidence = evidence
+
+    def check(self):
+        require(not self.stopped, 'provider budget stopped')
+        wall, mono = self.wall(), self.monotonic()
+        require(wall >= self.last_wall and mono >= self.last_mono and
+                abs((wall-self.last_wall)-(mono-self.last_mono)) <= 5,
+                'provider budget clock anomaly')
+        self.last_wall, self.last_mono = wall, mono
+        remaining = self.deadline-mono
+        if self.expiry is not None:
+            remaining = min(remaining,self.expiry-wall)
+        require(remaining > 0, 'provider budget deadline or dependency expiry exhausted')
+        return remaining
+
+    def timeout(self, ceiling):
+        return min(ceiling,self.check())
+
+    @contextmanager
+    def request_deadline(self, ceiling):
+        """Bound the whole serial urllib exchange, including a trickling body."""
+        timeout = self.timeout(ceiling)
+        previous_handler = signal.getsignal(signal.SIGALRM)
+        previous_timer = signal.getitimer(signal.ITIMER_REAL)
+        started = time.monotonic()
+        def expired(signum, frame):
+            if previous_timer[0] and time.monotonic()-started >= previous_timer[0] and callable(previous_handler):
+                previous_handler(signum,frame)
+            raise TimeoutError('bounded provider request deadline exhausted')
+        signal.signal(signal.SIGALRM,expired)
+        try:
+            signal.setitimer(signal.ITIMER_REAL,min(timeout,previous_timer[0]) if previous_timer[0] else timeout)
+            yield
+            self.check()
+        finally:
+            signal.setitimer(signal.ITIMER_REAL,0)
+            signal.signal(signal.SIGALRM,previous_handler)
+            if previous_timer[0]:
+                signal.setitimer(signal.ITIMER_REAL,max(0.000001,previous_timer[0]-(time.monotonic()-started)),
+                                previous_timer[1])
+
+    def dependency(self, expires):
+        require(type(expires) in (int,float) and expires > self.wall(), 'provider dependency expired')
+        self.expiry = expires if self.expiry is None else min(self.expiry,expires)
+        self.check()
+
+    def sleep(self, seconds):
+        require(0 <= seconds <= self.check(), 'provider wait exceeds deadline or dependency expiry')
+        end = self.monotonic()+seconds
+        while self.monotonic() < end:
+            delay = min(60,end-self.monotonic())
+            require(delay < self.check(), 'provider wait exhausts deadline or dependency expiry')
+            before = self.monotonic()
+            self.sleeper(delay)
+            self.check()
+            require(self.monotonic() > before, 'provider sleeper made no progress')
+
+    def record(self, outcome):
+        if self.evidence is not None:
+            self.evidence({'phase':self.phase,'outcome':outcome,'requests':self.requests,
+                'admission_requests':self.admission_requests,
+                'authenticated_requests':self.requests+self.admission_requests,
+                'phase_requests':self.phase_requests,'waits':self.waits,
+                'wait_seconds':self.wait_seconds,'remaining':self.remaining,'reset':self.reset,
+                'elapsed_seconds':self.last_mono-(self.deadline-230*60)})
+
+    def begin(self, method, authenticated, *, admission=False):
+        self.check()
+        require(not self.inflight, 'provider requests must be serial')
+        if authenticated:
+            require(admission == self.admitting, 'provider admission boundary differs')
+            if not admission:
+                require(self.active and self.phase_requests < 128, 'provider phase request bound exhausted')
+                require(self.remaining is not None and self.remaining > 0, 'provider allowance exhausted inside phase')
+            if method == 'GET':
+                if self.last_get is not None:
+                    self.sleep(max(0,1-(self.monotonic()-self.last_get)))
+                self.last_get = self.monotonic()
+            else:
+                require(not admission and (self.last_mutation is None or
+                        self.monotonic()-self.last_mutation >= 1), 'mutation spacing not admitted')
+                self.last_mutation = self.monotonic()
+            if not admission:
+                self.phase_requests += 1
+                self.requests += 1
+                self.remaining -= 1
+            else:
+                self.admission_requests += 1
+        self.inflight = True
+
+    def finish(self, headers, status, authenticated):
+        self.inflight = False
+        self.check()
+        if not authenticated:
+            return
+        try:
+            values = {}
+            items = list(headers.items())
+            require(len(items) <= 100 and all(type(key) is str and type(value) is str for key,value in items)
+                    and sum(len(key)+len(value) for key,value in items) <= 65536,
+                    'provider rate response headers exceeded bound')
+            for key,value in items:
+                key = key.lower()
+                if key.startswith('x-ratelimit-'):
+                    require(key not in values and type(value) is str and len(value) <= 32,
+                            'duplicate or malformed rate header')
+                    values[key] = value
+            require(values.get('x-ratelimit-resource') == 'core', 'unexpected rate resource')
+            numbers = []
+            for name in ('limit','remaining','used','reset'):
+                value = values.get('x-ratelimit-'+name)
+                require(type(value) is str and re.fullmatch(r'[0-9]{1,12}',value) is not None,
+                        'missing or malformed rate header')
+                numbers.append(int(value))
+            limit,remaining,used,reset = numbers
+            require(0 < limit <= 10**7 and remaining <= limit and used <= limit and
+                    remaining+used == limit, 'inconsistent rate counters')
+            require(self.wall() <= reset <= self.wall()+3660, 'rate reset outside bounded future')
+            if self.reset is None or self.wall() >= self.reset:
+                self.remaining,self.reset = remaining,reset
+            else:
+                # Regions and other callers can disagree: never restore allowance
+                # until the latest previously observed window has actually ended.
+                self.remaining = min(self.remaining,remaining)
+                self.reset = max(self.reset,reset)
+            require(status not in (403,429), 'provider denied request; no retry')
+        except Exception:
+            self.stopped = True
+            self.record(0)
+            raise
+
+    def failed(self):
+        self.inflight = False
+        self.stopped = True
+        self.record(0)
+
+    def admit(self, provider, phase):
+        require(type(phase) is str and phase, 'missing provider phase')
+        self.check()
+        require(not self.inflight, 'cannot admit an active request')
+        self.active = False
+        self.phase += 1
+        self.phase_requests = 0
+        waited = False
+        while True:
+            self.admitting = True
+            try:
+                status,_,_ = provider.request('GET',RATE_URL)
+                require(status == 200, 'rate admission request rejected')
+            finally:
+                self.admitting = False
+            if self.remaining >= 128:
+                break
+            require(self.waits < 2, 'provider primary reset wait count exhausted')
+            delay = self.reset-self.wall()+1
+            require(0 < delay <= 3660 and self.wait_seconds+delay <= 7320,
+                    'provider primary reset wait bound exhausted')
+            self.waits += 1
+            self.wait_seconds += delay
+            self.record(1)
+            self.sleep(delay)
+            waited = True
+        if self.last_mutation is not None:
+            self.sleep(max(0,1-(self.monotonic()-self.last_mutation)))
+        self.active = True
+        self.record(2)
+        return waited
+
+
+class GitHubUploadError(ValueError):
+    """A returned upload failure, with bounded diagnostics but no response text."""
+    def __init__(self, status, response, headers, *, truncated=False, operation='asset upload'):
+        require(type(status) is int and 100 <= status <= 599, "invalid upload HTTP status")
+        request_id = headers.get("X-GitHub-Request-Id")
+        if type(request_id) is not str or re.fullmatch(r"[0-9A-Fa-f:]{1,128}", request_id) is None:
+            request_id = None
+        content_type = headers.get("Content-Type", "")
+        if type(content_type) is str and len(content_type) <= 128:
+            content_type = content_type.split(";", 1)[0].strip().lower()
+        if content_type not in ("application/json", "application/octet-stream", "text/html", "text/plain"):
+            content_type = "other"
+        self.diagnostics = {
+            "http_status":status, "github_request_id":request_id,
+            "response_content_type":content_type, "response_size":len(response),
+            "response_sha256":hashlib.sha256(response).hexdigest(),
+        }
+        if truncated:
+            # The bounded read is only a prefix, never a whole-response digest.
+            self.diagnostics.update({
+                "response_truncated":True, "response_size":None, "response_sha256":None,
+                "response_prefix_size":len(response),
+                "response_prefix_sha256":hashlib.sha256(response).hexdigest(),
+            })
+        super().__init__(operation + " failed or unknown with HTTP " + str(status)
+                         + "; do not retry blindly; diagnostics="
+                         + json.dumps(self.diagnostics, sort_keys=True, separators=(",", ":")))
 
 
 class Journal:
@@ -88,7 +314,8 @@ def verified_assets(provider, release_id, expected, verified=None):
     return found
 
 
-def recover(provider, expected, assets, rebind, journal=None):
+def recover(provider, expected, assets, rebind, journal=None, *, required_release_id=None,
+            require_empty_at_start=False, release_guard=None, final_acceptance_gate=None):
     def mutate(operation, details, callback):
         event = {"operation":operation, "product_tag":"v0.2.7", **details}
         if journal is not None:
@@ -97,7 +324,8 @@ def recover(provider, expected, assets, rebind, journal=None):
             result = callback()
         except Exception as error:
             if journal is not None:
-                journal({**event, "outcome":"unknown", "error_type":type(error).__name__})
+                diagnostics = {"http_diagnostics":error.diagnostics} if isinstance(error, GitHubUploadError) else {}
+                journal({**event, "outcome":"unknown", "error_type":type(error).__name__, **diagnostics})
             raise
         if journal is not None:
             journal({**event, "outcome":"response_received_not_yet_accepted"})
@@ -105,10 +333,22 @@ def recover(provider, expected, assets, rebind, journal=None):
 
     rebind()
     release = provider.lookup()
+    if required_release_id is not None:
+        require(required_release_id == 400420101 and release is not None and
+                type(release.get('id')) is int and release['id'] == required_release_id,
+                'transitioned draft disappeared or changed identity')
     if release is None:
         rebind()
         release = mutate("create_draft", {}, lambda:provider.create(expected))
+    if release_guard is not None:
+        release_guard(release)
     identifier = validate_release(release, expected)
+    if required_release_id is not None:
+        require(identifier == required_release_id, 'transitioned draft changed identity')
+        if require_empty_at_start:
+            require(release['draft'] is True and release.get('published_at') is None and
+                    release.get('assets') == [] and provider.list_assets(identifier) == [],
+                    'transitioned draft changed before first upload')
     proof_cache = set()
     found = verified_assets(provider, identifier, assets, proof_cache)
     missing = [name for name in assets if name not in found]
@@ -117,6 +357,8 @@ def recover(provider, expected, assets, rebind, journal=None):
         rebind()
         # Check for a concurrent release/asset change immediately before write.
         current = provider.lookup()
+        if release_guard is not None:
+            release_guard(current)
         require(validate_release(current, expected) == identifier and current["draft"], "draft changed during recovery")
         current_assets = verified_assets(provider, identifier, assets, proof_cache)
         if name not in current_assets:
@@ -124,29 +366,81 @@ def recover(provider, expected, assets, rebind, journal=None):
     require(verified_assets(provider, identifier, assets, proof_cache) == set(assets), "final release asset inventory incomplete")
     rebind()
     current = provider.lookup()
+    if release_guard is not None:
+        release_guard(current)
     require(validate_release(current, expected) == identifier, "release identity changed")
     if current["draft"]:
         mutate("publish_release", {"release_id":identifier}, lambda:provider.publish(identifier))
         rebind()
     final = provider.lookup()
+    if release_guard is not None:
+        release_guard(final)
     require(validate_release(final, expected) == identifier and final["draft"] is False, "release publication not confirmed")
     require(verified_assets(provider, identifier, assets) == set(assets), "published release asset inventory differs")
     rebind()
+    if final_acceptance_gate is not None:
+        final_acceptance_gate()
     if journal is not None:
         journal({"operation":"final_readback", "outcome":"accepted", "release_id":identifier, "asset_count":len(assets), "product_tag":"v0.2.7"})
     return {"tag":"v0.2.7", "release_id":identifier, "asset_count":len(assets), "published":True}
 
 
-def preflight(provider, expected, assets, rebind):
+def validate_empty_predecessor(provider, release, predecessor):
+    require(type(predecessor) is dict and type(release) is dict, 'missing fixed predecessor')
+    for field in (*PRESERVED_RELEASE_FIELDS,'body','updated_at'):
+        require(field in release and field in predecessor, 'missing predecessor ' + field)
+        wanted = predecessor[field]
+        require(type(release[field]) is type(wanted) and release[field] == wanted,
+                'conflicting predecessor ' + field)
+    require(predecessor['id'] == 400420101 and predecessor['draft'] is True and
+            predecessor['prerelease'] is False and predecessor['published_at'] is None and
+            predecessor['updated_at'] == '2026-09-30T20:40:08Z' and
+            predecessor['created_at'] == '2026-09-17T18:17:09Z' and
+            predecessor['node_id'] == 'RE_kwDOQovC3s4X3e0F' and
+            predecessor['immutable'] is False and
+            predecessor['target_commitish'] == PRODUCT_SHA and
+            predecessor['tag_name'] == 'v0.2.7' and predecessor['name'] == 'EXOCHAIN v0.2.7' and
+            hashlib.sha256(predecessor['body'].encode()).hexdigest() ==
+            '27ec3297363af0b6d50246237d9eb1bde7084893953505f674058bebeb27da1d',
+            'invalid predecessor pin')
+    require(type(release.get('assets')) is list and release['assets'] == [],
+            'embedded predecessor assets are not empty')
+    require(provider.list_assets(400420101) == [], 'listed predecessor assets are not empty')
+    return 400420101
+
+
+def validate_continued_release(release, expected, predecessor):
+    identifier = validate_release(release, expected)
+    require(identifier == 400420101, 'transitioned release ID differs')
+    for field in PRESERVED_RELEASE_FIELDS:
+        if field in ('draft', 'published_at'):
+            continue
+        require(field in release and type(release[field]) is type(predecessor[field]) and
+                release[field] == predecessor[field], 'transitioned release metadata differs: ' + field)
+    require('published_at' in release and
+            ((release['draft'] is True and release['published_at'] is None) or
+             (release['draft'] is False and type(release['published_at']) is str)),
+            'transitioned release publication state differs')
+    return identifier
+
+
+def preflight(provider, expected, assets, rebind, *, predecessor=None):
     """Read the full draft/public inventory without entering any mutation path."""
     rebind()
     release = provider.lookup()
     found = set()
     identifier = None
+    if predecessor is not None:
+        require(type(release) is dict and type(release.get('id')) is int and
+                release['id'] == 400420101, 'pinned retained draft is missing or replaced')
     if release is not None:
-        identifier = validate_release(release, expected)
-        found = verified_assets(provider, identifier, assets)
-        require(release['draft'] or found == set(assets), 'incomplete already-public release')
+        if predecessor is not None and release.get('body') != expected['body']:
+            identifier = validate_empty_predecessor(provider, release, predecessor)
+        else:
+            identifier = (validate_continued_release(release, expected, predecessor)
+                          if predecessor is not None else validate_release(release, expected))
+            found = verified_assets(provider, identifier, assets)
+            require(release['draft'] or found == set(assets), 'incomplete already-public release')
     rebind()
     return {'release_id':identifier, 'existing_assets':len(found),
             'missing_assets':[name for name in assets if name not in found], 'mutation_attempted':False}
@@ -158,17 +452,19 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class GitHub:
-    def __init__(self, token, parser):
+    def __init__(self, token, parser, *, budget=None):
         self.token = token
         self.parser = parser
+        self.budget = budget
         # Do not inherit proxy environment or an arbitrary redirect policy.
         self.transport = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
 
-    def request(self, method, url, data=None, binary=False, auth=True, limit=4*1024*1024):
+    def request(self, method, url, data=None, binary=False, auth=True, limit=4*1024*1024, binary_body=False):
         parsed = urllib.parse.urlsplit(url)
         require(parsed.scheme == "https" and not parsed.username and not parsed.password and not parsed.fragment, "unsafe provider URL")
         if auth:
-            require(parsed.netloc in ("api.github.com", "uploads.github.com") and parsed.path.startswith("/repos/exochain/exochain/"), "credential destination forbidden")
+            require((parsed.netloc in ("api.github.com", "uploads.github.com") and parsed.path.startswith("/repos/exochain/exochain/")) or
+                    (self.budget is not None and method == 'GET' and url == RATE_URL and self.budget.admitting), "credential destination forbidden")
         else:
             require(method == "GET" and parsed.netloc in ("release-assets.githubusercontent.com", "crates.io"), "public destination forbidden")
         headers = {"User-Agent":"exochain-027-release-recovery", "Accept":"application/octet-stream" if binary else "application/vnd.github+json"}
@@ -176,24 +472,64 @@ class GitHub:
             headers["Authorization"] = "Bearer " + self.token
             headers["X-GitHub-Api-Version"] = "2022-11-28"
         if data is not None:
-            headers["Content-Type"] = "application/octet-stream" if binary else "application/json"
+            headers["Content-Type"] = "application/octet-stream" if binary_body else "application/json"
         request = urllib.request.Request(url, data=data, method=method, headers=headers)
+        if self.budget is not None:
+            self.budget.begin(method,auth,admission=url == RATE_URL)
         try:
-            response = self.transport.open(request, timeout=60)
+            with self.budget.request_deadline(60) if self.budget is not None else nullcontext():
+                return self._response(request,method,auth,limit,binary_body)
+        except Exception:
+            if self.budget is not None:self.budget.failed()
+            raise
+
+    def _response(self, request, method, auth, limit, binary_body):
+        try:
+            response = self.transport.open(request, timeout=60 if self.budget is None else self.budget.timeout(60))
         except urllib.error.HTTPError as error:
             response = error
+        except Exception:
+            if self.budget is not None:self.budget.failed()
+            raise
         with response:
-            payload = response.read(limit + 1)
+            try:
+                payload = response.read(limit + 1)
+            except Exception:
+                if self.budget is not None:self.budget.failed()
+                if self.budget is not None and method != 'GET':
+                    raise GitHubUploadError(response.status,b'',response.headers,
+                        truncated=True,operation='release mutation response read') from None
+                raise ValueError('bounded provider response failed or unknown') from None
+            if self.budget is not None:
+                try:
+                    self.budget.finish(response.headers,response.status,auth)
+                except Exception:
+                    if method != 'GET':
+                        raise GitHubUploadError(response.status,payload,response.headers,
+                            truncated=len(payload)>limit,operation='release mutation') from None
+                    raise
+                if method != 'GET' and (response.status not in (200,201) or len(payload)>limit):
+                    self.budget.failed()
+                    raise GitHubUploadError(response.status,payload,response.headers,
+                        truncated=len(payload)>limit,operation='release mutation')
+            if len(payload) > limit and binary_body and response.status != 201:
+                raise GitHubUploadError(response.status, payload, response.headers, truncated=True)
             require(len(payload) <= limit, "provider response exceeded size limit")
             return response.status, payload, response.headers
 
     def json(self, method, suffix, payload=None, allow_absent=False):
         data = None if payload is None else json.dumps(payload, separators=(",", ":")).encode()
-        status, raw, _ = self.request(method, API + suffix, data)
+        status, raw, headers = self.request(method, API + suffix, data)
         if allow_absent and status == 404:
             return None
         require(status in (200, 201), "GitHub API request failed with HTTP " + str(status))
-        return self.parser(raw, "GitHub response")
+        try:
+            return self.parser(raw, "GitHub response")
+        except Exception:
+            if self.budget is not None and method != 'GET':
+                self.budget.failed()
+                raise GitHubUploadError(status,raw,headers,operation='release mutation response') from None
+            raise
 
     def lookup(self):
         # The by-tag endpoint is documented for published releases. List with
@@ -234,13 +570,35 @@ class GitHub:
 
     def upload(self, identifier, name, data):
         url = UPLOADS + f"/releases/{identifier}/assets?name=" + urllib.parse.quote(name, safe="")
-        status, response, _ = self.request("POST", url, data, binary=True)
-        require(status == 201, "asset upload failed or unknown; do not retry blindly")
-        result = self.parser(response, "uploaded asset")
-        require(result.get("name") == name and result.get("size") == len(data), "uploaded asset identity differs")
+        # The body is raw bytes; the response is JSON asset metadata.
+        status, response, headers = self.request("POST", url, data, binary_body=True)
+        if status != 201:
+            raise GitHubUploadError(status, response, headers)
+        try:
+            result = self.parser(response, "uploaded asset")
+            require(result.get("name") == name and result.get("size") == len(data), "uploaded asset identity differs")
+        except Exception:
+            if self.budget is not None:
+                self.budget.failed()
+                raise GitHubUploadError(status,response,headers,operation='asset upload response') from None
+            raise
 
     def publish(self, identifier):
         return self.json("PATCH", f"/releases/{identifier}", {"draft":False, "make_latest":"true"})
+
+    def update_body(self, identifier, body):
+        require(identifier == 400420101 and type(body) is str, 'invalid transition target')
+        data = json.dumps({'body':body}, separators=(',', ':')).encode()
+        status, raw, headers = self.request('PATCH', API + '/releases/400420101', data)
+        if status != 200:
+            raise GitHubUploadError(status, raw, headers, operation='release body transition')
+        try:
+            return self.parser(raw, 'transition response')
+        except Exception:
+            if self.budget is not None:
+                self.budget.failed()
+                raise GitHubUploadError(status,raw,headers,operation='release body response') from None
+            raise
 
 
 def release_metadata(manifest, publications, sha, ref):
@@ -264,7 +622,7 @@ def release_metadata(manifest, publications, sha, ref):
     return receipt, {"tag_name": "v0.2.7", "target_commitish": PRODUCT_SHA, "name": "EXOCHAIN v0.2.7", "body": body}
 
 
-def retained_release_metadata(manifest, publications, record, sha, ref, *, policy=None):
+def retained_release_metadata(manifest, publications, record, sha, ref, *, policy=None, preserved=None):
     """Stable public custody; execution observations belong only in run evidence."""
     receipt, expected = release_metadata(manifest, publications, sha, ref)
     receipt['schema'] = 'exochain-release-retained-custody/v1'
@@ -298,7 +656,138 @@ def retained_release_metadata(manifest, publications, record, sha, ref, *, polic
         receipt['original_metadata_disclosure'] = disclosure
         expected['body'] += ('\nMetadata policy SHA-256: `' + validator.RETAINED_METADATA_POLICY_SHA256 + '`. '
                              + disclosure + '\n')
+    if preserved is not None:
+        require(policy is not None, 'preserved public custody requires original metadata policy')
+        validator.validate_preserved_payload_policy(manifest,record,policy,preserved)
+        original = preserved['historical_payload']
+        asset = preserved['asset']
+        receipt['schema'] = 'exochain-release-retained-custody/v3'
+        receipt['preserved_payload'] = {
+            'transport_policy_sha256':validator.PRESERVED_PAYLOAD_POLICY_SHA256,
+            'historical_actions_artifact_id':original['id'],
+            'historical_actions_expiry':original['expires_at'],
+            'historical_metadata_disposition':original['metadata_disposition'],
+            'continuous_hosted_custody_proven':False,
+            'custody_release_id':preserved['release']['id'],
+            'custody_anchor_ref':preserved['anchor']['ref'],
+            'custody_anchor_commit':preserved['anchor']['commit'],
+            'custody_asset_id':asset['id'],
+            'custody_asset_name':asset['name'],
+            'size':asset['size'], 'sha256':asset['digest'].removeprefix('sha256:'),
+            'transport_method':preserved['provisioning']['method'],
+            'product_acceptance_controller':{'sha':sha,'ref':ref},
+        }
+        receipt['attestation_scope'] += (' The historical Actions payload expired and later metadata returned 404. '
+            'The matching preserved ZIP was rehosted by an authorized local configured CLI upload to a custody-only '
+            'prerelease. This proves fresh acquisition of exact bytes, not continuous hosted custody, a new build, '
+            'or an Actions producer upload. The present controller accepts the product release separately.')
+        expected['body'] += ('\nPreserved payload transport policy SHA-256: `'
+            + validator.PRESERVED_PAYLOAD_POLICY_SHA256 + '`. The historical Actions payload expired and its metadata '
+            'returned 404. An authorized local upload rehosted exact preserved bytes in custody-only prerelease '
+            + str(preserved['release']['id']) + ', asset ' + str(asset['id']) + '. This is not a new build or proof '
+            'of uninterrupted hosted custody. Original production, historical import, custody rehosting and this '
+            'product acceptance controller are distinct events.\n')
     return receipt, expected
+
+
+def fixed_empty_predecessor(manifest, publications, record, policy):
+    _, old = retained_release_metadata(manifest, publications, record,
+        'b5871abd548d427cacab27e748b49e75897a5f66',
+        'refs/tags/v0.2.7-recover.4', policy=policy)
+    require(hashlib.sha256(old['body'].encode()).hexdigest() ==
+            '27ec3297363af0b6d50246237d9eb1bde7084893953505f674058bebeb27da1d',
+            'canonical predecessor body pin differs')
+    return {**old, 'id':400420101, 'draft':True, 'prerelease':False,
+            'published_at':None, 'updated_at':'2026-09-30T20:40:08Z',
+            'created_at':'2026-09-17T18:17:09Z',
+            'node_id':'RE_kwDOQovC3s4X3e0F', 'immutable':False,
+            'url':API+'/releases/400420101',
+            'upload_url':UPLOADS+'/releases/400420101/assets{?name,label}', 'assets':[]}
+
+
+def authenticate_failed_predecessor(transport, custody, importer, evidence, manifest,
+                                    publications, record, policy):
+    """Authenticate the single failed historical attempt from its live artifact."""
+    require(policy is not None, 'historical predecessor requires retained-404 policy')
+    predecessor = fixed_empty_predecessor(manifest, publications, record, policy)
+    endpoint = importer.API + '/artifacts/11124850978'
+    metadata = None
+    for phase in ('before', 'after'):
+        path = evidence / ('historical-failure-metadata-' + phase + '.json')
+        transport.get(endpoint, path, importer.JSON_LIMIT)
+        observed = custody.load_json(path, 'historical failure artifact metadata')
+        require(type(observed) is dict and set(observed) == {
+                'id','node_id','name','size_in_bytes','url','archive_download_url',
+                'digest','expired','created_at','updated_at','expires_at','workflow_run'} and
+                type(observed.get('id')) is int and observed['id'] == 11124850978 and
+                observed.get('node_id') == 'MDg6QXJ0aWZhY3QxMTEyNDg1MDk3OA==' and
+                observed.get('name') == 'exochain-027-retained-github-receipts' and
+                type(observed.get('size_in_bytes')) is int and observed['size_in_bytes'] == 603 and
+                observed.get('digest') == 'sha256:'+HISTORICAL_ARCHIVE_SHA256 and
+                observed.get('url') == endpoint and observed.get('archive_download_url') == endpoint+'/zip' and
+                observed.get('created_at') == '2026-09-30T20:41:02Z' and
+                observed.get('updated_at') == '2026-09-30T20:41:02Z' and
+                observed.get('expires_at') == '2026-10-30T20:41:01Z' and
+                observed.get('expired') is False, 'historical failure metadata differs')
+        run = observed.get('workflow_run')
+        require(type(run) is dict and set(run) == {
+                'id','repository_id','head_repository_id','head_sha','head_branch'} and
+                type(run.get('id')) is int and run['id'] == 36653810772 and
+                type(run.get('repository_id')) is int and run['repository_id'] == 1116455646 and
+                type(run.get('head_repository_id')) is int and run['head_repository_id'] == 1116455646 and
+                run.get('head_sha') == 'b5871abd548d427cacab27e748b49e75897a5f66' and
+                run.get('head_branch') == 'v0.2.7-recover.4',
+                'historical failure workflow identity differs')
+        now = custody.timestamp(importer.utc_now(), 'historical failure observation')
+        require(custody.timestamp(observed['created_at'], 'historical failure creation') <= now <
+                custody.timestamp(observed['expires_at'], 'historical failure expiry'),
+                'historical failure artifact expired or not yet created')
+        if metadata is None:
+            metadata = observed
+            archive = evidence / 'historical-failure.zip'
+            transport.receipt_archive(metadata, archive)
+            raw = custody.read_regular(archive, 603, 'historical failure archive')
+            require(len(raw) == 603 and hashlib.sha256(raw).hexdigest() == HISTORICAL_ARCHIVE_SHA256,
+                    'historical failure archive differs')
+            try:
+                with zipfile.ZipFile(io.BytesIO(raw)) as bundle:
+                    members = bundle.infolist()
+                    require(len(members) == 1 and members[0].filename == HISTORICAL_MEMBER and
+                            members[0].file_size == 1473 and not members[0].is_dir() and
+                            (members[0].external_attr >> 16 == 0 or
+                             stat.S_ISREG(members[0].external_attr >> 16)),
+                            'historical failure member inventory differs')
+                    with bundle.open(members[0]) as member:
+                        journal_bytes = member.read(1474)
+            except (zipfile.BadZipFile, RuntimeError, OSError) as error:
+                raise ValueError('historical failure ZIP is malformed') from error
+            require(len(journal_bytes) == 1473 and
+                    hashlib.sha256(journal_bytes).hexdigest() == HISTORICAL_MEMBER_SHA256,
+                    'historical failure journal differs')
+            try:
+                rows = [json.loads(line) for line in journal_bytes.splitlines()]
+            except (UnicodeError, ValueError, TypeError) as error:
+                raise ValueError('historical failure journal is malformed') from error
+            require(len(rows) == 4 and
+                    [(row.get('operation'), row.get('outcome')) for row in rows] == [
+                        ('create_draft','intent'),('create_draft','response_received_not_yet_accepted'),
+                        ('upload_asset','intent'),('upload_asset','unknown')],
+                    'historical failure journal sequence differs')
+            for row in rows:
+                require(type(row) is dict and row.get('controller_sha') ==
+                        'b5871abd548d427cacab27e748b49e75897a5f66' and
+                        row.get('controller_ref') == 'refs/tags/v0.2.7-recover.4' and
+                        row.get('run_id') == 36653810772 and row.get('run_attempt') == 1 and
+                        row.get('original_source') == PRODUCT_SHA,
+                        'historical failure journal identity differs')
+            require(rows[2].get('release_id') == 400420101 and
+                    rows[3].get('release_id') == 400420101 and
+                    type(rows[2].get('asset')) is str and rows[2]['asset'].endswith('.cdx.json') and
+                    rows[3].get('asset') == rows[2]['asset'],
+                    'historical failure upload intent differs')
+        else:
+            require(observed == metadata, 'historical failure metadata changed during download')
+    return predecessor
 
 
 def release_assets(custody, manifest, directory, receipt):
@@ -370,11 +859,14 @@ def _require_running_writer(custody, jobs, context, observed_at, observer=None):
     return writer
 
 
-def prepare_current_receipt(custody, importer, manifest, record, policy, transport, evidence, handoff):
+def prepare_current_receipt(custody, importer, manifest, record, policy, transport, evidence, handoff, *, preserved=None):
     """Authenticate current direct receipt provenance before canonical acquisition."""
-    require(os.environ.get('RELEASE_OPERATION') == custody.RETAINED_METADATA_OPERATION and
+    operation = custody.PRESERVED_OPERATION if preserved is not None else custody.RETAINED_METADATA_OPERATION
+    require(os.environ.get('RELEASE_OPERATION') == operation and
             os.environ.get('GITHUB_JOB') == 'retained-github', 'actual staged writer operation required')
     custody.validate_retained_metadata_policy(manifest, record, policy)
+    if preserved is not None:
+        custody.validate_preserved_payload_policy(manifest, record, policy, preserved)
     context, members, outputs = handoff
     for field, actual in (('run_id',os.environ.get('GITHUB_RUN_ID')),
                           ('run_attempt',os.environ.get('GITHUB_RUN_ATTEMPT'))):
@@ -388,26 +880,30 @@ def prepare_current_receipt(custody, importer, manifest, record, policy, transpo
     run, jobs = importer.fetch_run_jobs(custody,transport,evidence/'preliminary-current-attempt',endpoints,None)
     path = evidence/'preliminary-receipt-metadata.json'
     transport.get(url,path,importer.JSON_LIMIT)
-    prepared = {'schema':'exochain-retained-receipts-input-027/v2',
-        'operation':custody.RETAINED_METADATA_OPERATION,'policy_sha256':custody.RETAINED_METADATA_POLICY_SHA256,
+    prepared = {'schema':'exochain-retained-receipts-input-027/' + ('v3' if preserved is not None else 'v2'),
+        'operation':operation,'policy_sha256':custody.RETAINED_METADATA_POLICY_SHA256,
         'observed_at':importer.utc_now(),'context':context,'current_run':run,'current_jobs':jobs,
         'upload_outputs':outputs,'metadata_before':custody.load_json(path,'preliminary current receipt metadata'),
         'members':members}
+    if preserved is not None:
+        prepared['preserved_policy_sha256'] = custody.PRESERVED_PAYLOAD_POLICY_SHA256
     _require_running_writer(custody,jobs,context,prepared['observed_at'])
-    custody.retained_receipt_provenance(manifest,record,policy,prepared)
+    custody.retained_receipt_provenance(manifest,record,policy,prepared,preserved=preserved)
     importer.dump(evidence/'preliminary-receipt-input.json',prepared)
     return prepared
 
 
 def receive_current_receipts(custody, importer, manifest, record, publications, transport,
-                            evidence, historical, workflow, origin, handoff, *, policy=None, prepared=None):
+                            evidence, historical, workflow, origin, handoff, *, policy=None, prepared=None,
+                            preserved=None):
     context, members, outputs = handoff
     url, endpoints = _receipt_endpoints(importer,context,outputs,transport)
     if policy is not None:
         require(type(prepared) is dict, 'preliminary receipt provenance required')
-        require(os.environ.get('RELEASE_OPERATION') == custody.RETAINED_METADATA_OPERATION,
+        operation = custody.PRESERVED_OPERATION if preserved is not None else custody.RETAINED_METADATA_OPERATION
+        require(os.environ.get('RELEASE_OPERATION') == operation,
                 'actual staged writer operation required')
-        custody.retained_receipt_provenance(manifest,record,policy,prepared)
+        custody.retained_receipt_provenance(manifest,record,policy,prepared,preserved=preserved)
         require(prepared['context'] == context and prepared['members'] == members and
                 prepared['upload_outputs'] == outputs, 'direct receipt handoff changed after preliminary proof')
         run,jobs = importer.fetch_run_jobs(custody,transport,evidence/'current-attempt-before',endpoints,None)
@@ -415,13 +911,16 @@ def receive_current_receipts(custody, importer, manifest, record, publications, 
         transport.get(url,before_path,importer.JSON_LIMIT)
         metadata_before = custody.load_json(before_path,'fresh receipt metadata before download')
         custody.exact(metadata_before,prepared['metadata_before'],'receipt metadata changed after preliminary proof')
-        envelope = {'schema':'exochain-retained-receipts-input-027/v2',
-            'operation':custody.RETAINED_METADATA_OPERATION,'policy_sha256':custody.RETAINED_METADATA_POLICY_SHA256,
+        envelope = {'schema':'exochain-retained-receipts-input-027/' + ('v3' if preserved is not None else 'v2'),
+            'operation':operation,'policy_sha256':custody.RETAINED_METADATA_POLICY_SHA256,
             'observed_at':importer.utc_now(),'origin':origin,'context':context,
             'current_run':run,'current_jobs':jobs,'upload_outputs':outputs,
             'metadata_before':metadata_before,'members':members}
+        if preserved is not None:
+            envelope['preserved_policy_sha256'] = custody.PRESERVED_PAYLOAD_POLICY_SHA256
         _require_running_writer(custody,jobs,context,envelope['observed_at'],origin['observations']['observer'])
-        custody.retained_receipt_profile(manifest,record,publications,envelope,historical,workflow,policy=policy)
+        custody.retained_receipt_profile(manifest,record,publications,envelope,historical,workflow,
+                                         policy=policy,preserved=preserved)
         receipt = evidence/'current-receipts.zip'
         transport.receipt_archive(metadata_before,receipt)
         after_path = evidence/'receipt-metadata-after.json'
@@ -435,7 +934,7 @@ def receive_current_receipts(custody, importer, manifest, record, publications, 
                 custody.timestamp(prepared['observed_at'],'preliminary receipt observation'),
                 'final receipt observation precedes preliminary proof')
         result = custody.verify_retained_receipts(manifest,record,publications,envelope,historical,
-                                                  workflow,receipt,policy=policy)
+                                                  workflow,receipt,policy=policy,preserved=preserved)
         importer.dump(evidence/'receipt-input.json',envelope)
         importer.dump(evidence/'receipt-result.json',result)
         return result
@@ -456,7 +955,7 @@ def receive_current_receipts(custody, importer, manifest, record, publications, 
     return result
 
 
-def readback_publications(importer, publications, candidate, capture, evidence):
+def readback_publications(importer, publications, candidate, capture, evidence, *, budget=None):
     """Fresh canonical public reads, with producer result generation disabled."""
     environment = dict(os.environ,RELEASE_RECOVERY_DIRECTORY=str(candidate))
     for profile in ('wasm','llm','sdk'):
@@ -467,21 +966,64 @@ def readback_publications(importer, publications, candidate, capture, evidence):
             RELEASE_NPM_TARBALL=str(candidate/publication['lane']/publication['file']['path']),
             RELEASE_EXPECTED_TARBALL_SHA256=publication['file']['sha256'])
         importer.command(['/bin/bash','--noprofile','--norc','-p',str(capture/'publish_release_npm_package.sh'),profile,'retained-readback'],
-            evidence/f'npm-{profile}-readback.txt',child,timeout=1200,bounded=True)
+            evidence/f'npm-{profile}-readback.txt',child,timeout=1200,bounded=True,budget=budget)
     importer.command(['/bin/bash','--noprofile','--norc','-p',str(capture/'recover_release_python_027.sh'),'retained-readback'],
-        evidence/'python-readback.txt',environment,timeout=1200,bounded=True)
+        evidence/'python-readback.txt',environment,timeout=1200,bounded=True,budget=budget)
     require(not os.path.lexists(Path(environment['RUNNER_TEMP'])/'exochain-recovery-receipts'),
             'readback cannot mint producer acceptance receipts')
 
 
+def writer_public_checks(importer, custody, manifest, publications, candidate, capture,
+                         evidence, python, node, token, *, transport, preserved=False, budget=None):
+    """The LIVE public gate owns independent native crypto, not producer claims."""
+    importer.validate_packages(manifest,candidate,capture,evidence,python,node,budget=budget)
+    if preserved:
+        outcomes = []
+        accepted = False
+        try:
+            for lane in ('native-x86_64','native-aarch64'):
+                artifact, = [a for a in manifest['artifacts'] if a['lane'] == lane]
+                outcomes.append(importer.verify_attestation(manifest,artifact,
+                    candidate/lane/artifact['files'][0]['path'],evidence,token,custody,budget=budget))
+            accepted = True
+        finally:
+            importer.dump(evidence/'writer-native-outcome.json',{
+                'independent_crypto_verification_succeeded':accepted,
+                'verified_lanes':outcomes})
+    importer.fetch_rust(manifest,custody,transport,evidence)
+    readback_publications(importer,publications,candidate,capture,evidence,budget=budget)
+
+
+def admit_preserved_phase(budget, provider, phase, custody, importer, manifest, record,
+                          policy, transport, evidence, handoff, preserved, state):
+    """A reset wait invalidates receipt freshness before the caller's rebind."""
+    if budget is None:
+        return
+    waited = budget.admit(provider,phase)
+    if waited and 'prepared' in state:
+        directory = evidence/f'after-wait-{budget.waits}-phase-{budget.phase}'
+        directory.mkdir(mode=0o700)
+        current = prepare_current_receipt(custody,importer,manifest,record,policy,transport,
+            directory,handoff,preserved=preserved)
+        custody.exact(current['metadata_before'],state['prepared']['metadata_before'],
+                      'receipt changed while waiting')
+        if 'observer' in state:
+            _require_running_writer(custody,current['current_jobs'],handoff[0],
+                current['observed_at'],state['observer'])
+        state['prepared'] = current
+        budget.dependency(custody.timestamp(current['metadata_before']['expires_at'],'receipt expiry').timestamp())
+
+
 def check_retained_rebind(custody, importer, manifest, record, policy, transport, evidence,
-                          historical, workflow, initial_input, observer, candidate, source_gate):
+                          historical, workflow, initial_input, observer, candidate, source_gate, *,
+                          preserved=None, phase='writer-final'):
     """Revalidate source, exact files, retained controls and the original Vector."""
     try:
         source_gate()
         custody.verify_files(manifest,candidate)
         return importer.finalize_retained_observations(manifest,record,policy,custody,transport,evidence,
-            historical,workflow,observer=observer,initial_input=initial_input,phase='writer-final')
+            historical,workflow,observer=observer,initial_input=initial_input,phase=phase,
+            preserved=preserved)
     except Exception as failure:
         # A failed safety check never authorizes the pending write. The bounded
         # original/retaining read is diagnostic evidence, not a retry of it.
@@ -501,8 +1043,16 @@ def check_retained_rebind(custody, importer, manifest, record, policy, transport
         raise
 
 
+def verify_fresh_preserved_payload(custody, transport, manifest, record, directory):
+    """Reacquire and check every original member after public asset byte acceptance."""
+    fresh = directory/f"{record['payload']['metadata']['id']}.zip"
+    transport.preserved_archive(fresh)
+    return custody.verify_retained_zip(fresh,custody.retained_profile(manifest,record,'payload'))
+
+
 def complete_retained(provider, expected, assets, rebind, receipt_gate, public_gate, journal=None,
-                      *, prepare_gate=None, acquire_gate=None, final_gate=None):
+                      *, prepare_gate=None, acquire_gate=None, final_gate=None, transition_gate=None,
+                      readback_gate=None):
     if prepare_gate is not None:
         require(acquire_gate is not None and final_gate is not None, 'incomplete staged writer gates')
         prepare_gate()
@@ -511,13 +1061,92 @@ def complete_retained(provider, expected, assets, rebind, receipt_gate, public_g
     public_gate()
     if final_gate is not None:
         final_gate()
-    return recover(provider,expected,assets,rebind,journal)
+    required_release_id = None
+    require_empty_at_start = False
+    release_guard = None
+    if transition_gate is not None:
+        require(final_gate is not None and prepare_gate is not None,
+                'transition requires complete retained final gates')
+        required_release_id, require_empty_at_start, release_guard = transition_gate()
+        require(required_release_id == 400420101, 'transition did not preserve pinned draft ID')
+        require(type(require_empty_at_start) is bool, 'invalid transition handoff')
+        require(callable(release_guard), 'transition release guard absent')
+    return recover(provider,expected,assets,rebind,journal,
+        required_release_id=required_release_id,require_empty_at_start=require_empty_at_start,
+        release_guard=release_guard,final_acceptance_gate=readback_gate)
+
+
+def validate_transitioned_release(provider, release, expected, predecessor):
+    identifier = validate_release(release, expected)
+    require(identifier == 400420101 and release['draft'] is True and
+            release.get('assets') == [] and provider.list_assets(identifier) == [],
+            'transitioned draft is not the same empty unpublished release')
+    for field in PRESERVED_RELEASE_FIELDS:
+        require(field in release and type(release[field]) is type(predecessor[field]) and
+                release[field] == predecessor[field], 'transition changed release ' + field)
+    updated = release.get('updated_at')
+    require(type(updated) is str and re.fullmatch(r'20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z',updated)
+            is not None and updated >= predecessor['updated_at'], 'transition timestamp regressed')
+    return updated
+
+
+def transition_empty_draft(provider, expected, predecessor, rebind, journal):
+    """Single body-only mutation; an uncertain result stops this attempt."""
+    rebind()
+    current = provider.lookup()
+    identifier = validate_empty_predecessor(provider, current, predecessor)
+    event = {'operation':'transition_controller_body', 'product_tag':'v0.2.7',
+             'release_id':identifier,
+             'historical_run_id':36653810772, 'historical_run_attempt':1,
+             'historical_writer_job_id':109921191171,
+             'historical_artifact_id':11124850978,
+             'historical_archive_sha256':HISTORICAL_ARCHIVE_SHA256,
+             'historical_member_sha256':HISTORICAL_MEMBER_SHA256,
+             'old_body_sha256':hashlib.sha256(predecessor['body'].encode()).hexdigest(),
+             'new_body_sha256':hashlib.sha256(expected['body'].encode()).hexdigest()}
+    if journal is not None:
+        journal({**event, 'outcome':'intent'})
+    try:
+        changed = provider.update_body(identifier, expected['body'])
+        response_updated = validate_transitioned_release(provider,changed,expected,predecessor)
+        if journal is not None:
+            journal({**event, 'outcome':'response_received_not_yet_accepted'})
+        rebind()
+        observed = provider.lookup()
+        readback_updated = validate_transitioned_release(provider,observed,expected,predecessor)
+        require(readback_updated == response_updated, 'transition changed after response')
+    except Exception as error:
+        if journal is not None:
+            diagnostics = {'http_diagnostics':error.diagnostics} if isinstance(error, GitHubUploadError) else {}
+            journal({**event, 'outcome':'unknown', 'error_type':type(error).__name__, **diagnostics})
+        raise
+    if journal is not None:
+        journal({**event, 'outcome':'accepted'})
+    return identifier
+
+
+def retained_capture_paths(operation):
+    require(operation in ('recover-0.2.7-retained','recover-0.2.7-retained-404',
+                          'recover-0.2.7-preserved'), 'wrong retained operation')
+    paths = {'tools/'+name:name for name in ('verify_release_recovery_027.sh','verify_release_recovery_027.py',
+        'import_release_recovery_027.sh','recover_github_release_027.py','publish_release_npm_package.sh',
+        'recover_release_python_027.sh','verify_npm_release_tarball.py','verify_npm_release_package.mjs',
+        'verify_python_release_package.py','verify_release_sbom.py','transport_release_build_output.py')}
+    paths.update({'governance/releases/v0.2.7/'+name:name for name in
+                  ('RECOVERY-MANIFEST.json','PUBLICATION-IDENTITIES.json','RETAINED-CUSTODY.json')})
+    if operation in ('recover-0.2.7-retained-404','recover-0.2.7-preserved'):
+        paths['governance/releases/v0.2.7/RETAINED-METADATA-POLICY.json'] = 'RETAINED-METADATA-POLICY.json'
+    if operation == 'recover-0.2.7-preserved':
+        paths['governance/releases/v0.2.7/PRESERVED-PAYLOAD-TRANSPORT.json'] = 'PRESERVED-PAYLOAD-TRANSPORT.json'
+    return paths
 
 
 def retained_main():
+    started = time.monotonic()
+    budget = None
     env = os.environ
     operation = env.get('RELEASE_OPERATION')
-    require(operation in ('recover-0.2.7-retained', 'recover-0.2.7-retained-404') and
+    require(operation in ('recover-0.2.7-retained', 'recover-0.2.7-retained-404', 'recover-0.2.7-preserved') and
             env.get('RELEASE_VERSION') == '0.2.7', 'wrong retained operation')
     require(env.get('GITHUB_JOB') == 'retained-github' and env.get('RELEASE_WORKFLOW_DRY_RUN') == 'false', 'actual live retained writer job required')
     require(env.get('GITHUB_ACTIONS') == 'true' and env.get('GITHUB_EVENT_NAME') == 'workflow_dispatch'
@@ -532,17 +1161,11 @@ def retained_main():
     require(temporary.is_absolute() and temporary.is_dir() and not temporary.is_symlink(), 'invalid temporary root')
     capture = Path(tempfile.mkdtemp(prefix='exochain-retained-github.',dir=temporary))
     git_env = {'PATH':'/usr/bin:/bin','GIT_CONFIG_GLOBAL':'/dev/null','GIT_CONFIG_NOSYSTEM':'1','GIT_NO_REPLACE_OBJECTS':'1'}
-    paths = {'tools/'+name:name for name in ('verify_release_recovery_027.sh','verify_release_recovery_027.py',
-        'import_release_recovery_027.sh','recover_github_release_027.py','publish_release_npm_package.sh',
-        'recover_release_python_027.sh','verify_npm_release_tarball.py','verify_npm_release_package.mjs',
-        'verify_python_release_package.py','verify_release_sbom.py','transport_release_build_output.py')}
-    paths.update({'governance/releases/v0.2.7/'+name:name for name in
-                  ('RECOVERY-MANIFEST.json','PUBLICATION-IDENTITIES.json','RETAINED-CUSTODY.json')})
-    if operation == 'recover-0.2.7-retained-404':
-        paths['governance/releases/v0.2.7/RETAINED-METADATA-POLICY.json'] = 'RETAINED-METADATA-POLICY.json'
+    paths = retained_capture_paths(operation)
     def source(path, commit=sha):
         return subprocess.check_output(['/usr/bin/git','--no-replace-objects','-c','core.fsmonitor=false',
-            '-C',str(workspace),'show',commit+':'+path],env=git_env,timeout=30)
+            '-C',str(workspace),'show',commit+':'+path],env=git_env,
+            timeout=30 if budget is None else budget.timeout(30))
     for path,name in paths.items():
         data = source(path)
         require(len(data) <= 4*1024*1024, 'captured source exceeds bound')
@@ -561,7 +1184,9 @@ def retained_main():
     publications = custody.load_publications(manifest,capture/'PUBLICATION-IDENTITIES.json')
     record = custody.load_retained_record(manifest,capture/'RETAINED-CUSTODY.json')
     policy = (custody.load_retained_metadata_policy(manifest,record,capture/'RETAINED-METADATA-POLICY.json')
-              if operation == 'recover-0.2.7-retained-404' else None)
+              if operation in ('recover-0.2.7-retained-404','recover-0.2.7-preserved') else None)
+    preserved = (custody.load_preserved_payload_policy(manifest,record,policy,capture/'PRESERVED-PAYLOAD-TRANSPORT.json')
+                 if operation == 'recover-0.2.7-preserved' else None)
     workflow = capture/'retaining-workflow.yml'
     with workflow.open('xb') as output: output.write(source('.github/workflows/release.yml',record['retaining']['controller_sha']))
     workflow.chmod(0o400)
@@ -570,15 +1195,27 @@ def retained_main():
     evidence = capture/'evidence'; evidence.mkdir(mode=0o700)
     archives = capture/'archives'; archives.mkdir(mode=0o700)
     candidate = capture/'artifacts'
-    transport = importer.Transport(capture,env.get('RELEASE_GITHUB_TOKEN',''),manifest,record,policy=policy)
+    if preserved is not None:
+        budget = ProviderBudget(started=started,evidence=Journal(evidence/'provider-budget.jsonl'))
+        budget.dependency(custody.timestamp(record['custody']['metadata']['expires_at'],'custody expiry').timestamp())
+        budget.dependency(custody.timestamp('2026-10-30T20:41:01Z','failed evidence expiry').timestamp())
+    transport = importer.Transport(capture,env.get('RELEASE_GITHUB_TOKEN',''),manifest,record,
+                                   policy=policy,preserved=preserved,budget=budget)
+    provider = GitHub(env['RELEASE_GITHUB_TOKEN'],custody.parse_json,budget=budget)
     def identities():
-        importer.assert_captured_inputs(capture,custody,policy=policy)
+        if budget is not None:budget.check()
+        importer.assert_captured_inputs(capture,custody,policy=policy,preserved=preserved,budget=budget)
         require(source('tools/recover_github_release_027.py') == custody.read_regular(capture/'recover_github_release_027.py',4*1024*1024,'writer'), 'writer source changed')
         subprocess.run(['/bin/bash','--noprofile','--norc','-p',str(capture/'verify_release_recovery_027.sh')],
-            env=dict(env),stdout=subprocess.DEVNULL,timeout=240,check=True)
-    identities()
-    provider = GitHub(env['RELEASE_GITHUB_TOKEN'],custody.parse_json)
+            env=dict(env),stdout=subprocess.DEVNULL,
+            timeout=240 if budget is None else budget.timeout(240),check=True)
+        if budget is not None:budget.check()
     expected, assets, state = {}, {}, {}
+    def admit(phase):
+        admit_preserved_phase(budget,provider,phase,custody,importer,manifest,record,policy,
+            transport,evidence,handoff,preserved,state)
+    admit('initial-source')
+    identities()
     historical = archives/f"{record['custody']['metadata']['id']}.zip"
     if policy is None:
         importer.acquire_retained(manifest,record,custody,transport,evidence,archives,candidate,workflow)
@@ -589,12 +1226,14 @@ def retained_main():
     rebind_count = 0
     def rebind():
         nonlocal rebind_count
+        admit('canonical-rebind')
         rebind_count += 1
         if policy is not None:
             directory = evidence/f'rebind-{rebind_count}'
             directory.mkdir(mode=0o700)
             check_retained_rebind(custody,importer,manifest,record,policy,transport,directory,
-                historical,workflow,state['origin'],state['observer'],candidate,identities)
+                historical,workflow,state['origin'],state['observer'],candidate,identities,
+                preserved=preserved)
         else:
             identities()
             custody.verify_files(manifest,candidate)
@@ -605,43 +1244,86 @@ def retained_main():
                 custody.exact(custody.semantic_digest(observed),custody.semantic_digest(pinned),'fresh retained availability')
                 require(custody.timestamp(importer.utc_now(),'observation') < custody.timestamp(pinned['expires_at'],'expiry'), 'retained artifact expired')
     def prepare_gate():
-        state['prepared'] = prepare_current_receipt(custody,importer,manifest,record,policy,transport,evidence,handoff)
+        admit('preliminary-receipt-observer')
+        identities()
+        state['prepared'] = prepare_current_receipt(custody,importer,manifest,record,policy,transport,
+                                                    evidence,handoff,preserved=preserved)
+        if budget is not None:
+            budget.dependency(custody.timestamp(state['prepared']['metadata_before']['expires_at'],'receipt expiry').timestamp())
         state['observer'] = importer.capture_observer(custody,transport,capture,evidence,'retained-github')
     def acquire_gate():
+        admit('independent-acquisition')
+        identities()
         importer.acquire_retained(manifest,record,custody,transport,evidence,archives,candidate,workflow,
-                                  policy=policy,observer=state['observer'])
+                                  policy=policy,observer=state['observer'],preserved=preserved)
         state['origin'] = custody.load_json(evidence/'acquisition-origin-input.json','fresh acquisition origin')
-        receipt, public = retained_release_metadata(manifest,publications,record,sha,ref,policy=policy)
+        receipt, public = retained_release_metadata(manifest,publications,record,sha,ref,
+                                                    policy=policy,preserved=preserved)
         expected.update(public)
         assets.update(release_assets(custody,manifest,candidate,receipt))
     def receipt_gate():
+        admit('full-current-receipt')
+        identities()
         state['receipt'] = receive_current_receipts(custody,importer,manifest,record,publications,
             transport,evidence,historical,workflow,state['origin'],handoff,policy=policy,
-            prepared=state.get('prepared'))
+            prepared=state.get('prepared'),preserved=preserved)
     def public_gate():
-        importer.validate_packages(manifest,candidate,capture,evidence,env['RELEASE_PYTHON'],env['RELEASE_NODE'])
-        importer.fetch_rust(manifest,custody,transport,evidence)
-        readback_publications(importer,publications,candidate,capture,evidence)
+        admit('native-public-verification')
+        identities()
+        writer_public_checks(importer,custody,manifest,publications,candidate,capture,evidence,
+            env['RELEASE_PYTHON'],env['RELEASE_NODE'],env['RELEASE_GITHUB_TOKEN'],
+            transport=transport,preserved=preserved is not None,budget=budget)
+        # Opaque gh calls used the configured token: admission reads authoritative
+        # current headers before any further writer observations or mutations.
         rebind()
     def final_gate():
+        admit('post-public-final')
         directory = evidence/'post-public-final'
         directory.mkdir(mode=0o700)
         state['public_final'] = check_retained_rebind(custody,importer,manifest,record,policy,
-            transport,directory,historical,workflow,state['origin'],state['observer'],candidate,identities)
+            transport,directory,historical,workflow,state['origin'],state['observer'],candidate,identities,
+            preserved=preserved)
+    def readback_gate():
+        admit('final-published-transport')
+        identities()
+        custody.verify_files(manifest,candidate)
+        directory = evidence/'writer-readback'
+        directory.mkdir(mode=0o700)
+        state['fresh_payload'] = verify_fresh_preserved_payload(custody,transport,manifest,record,directory)
+        (directory/'controls').mkdir(mode=0o700)
+        state['readback_final'] = check_retained_rebind(custody,importer,manifest,record,policy,
+            transport,directory/'controls',historical,workflow,state['origin'],state['observer'],candidate,
+            identities,preserved=preserved,phase='writer-readback')
+    def transition_gate():
+        admit('failed-predecessor')
+        identities()
+        predecessor = authenticate_failed_predecessor(transport,custody,importer,evidence,
+            manifest,publications,record,policy)
+        rebind()
+        current = provider.lookup()
+        if current is not None and current.get('body') == expected['body']:
+            require(validate_continued_release(current,expected,predecessor) == 400420101,
+                    'already-transitioned release ID differs')
+            return 400420101, False, lambda release:validate_continued_release(release,expected,predecessor)
+        identifier = transition_empty_draft(provider,expected,predecessor,rebind,journal)
+        return identifier, True, lambda release:validate_continued_release(release,expected,predecessor)
     journal = Journal(capture/'mutation-journal.jsonl',{'controller_sha':sha,'controller_ref':ref,
         'run_id':handoff[0]['run_id'],'run_attempt':handoff[0]['run_attempt'],'original_source':PRODUCT_SHA})
     print('GitHub retained mutation journal: '+str(journal.path),flush=True)
     result = complete_retained(provider,expected,assets,rebind,receipt_gate,public_gate,journal,
         prepare_gate=prepare_gate if policy is not None else None,
         acquire_gate=acquire_gate if policy is not None else None,
-        final_gate=final_gate if policy is not None else None)
+        final_gate=final_gate if policy is not None else None,
+        transition_gate=transition_gate if policy is not None else None,
+        readback_gate=readback_gate if preserved is not None else None)
     importer.dump(evidence/'release-result.json',result)
     print(json.dumps(result,sort_keys=True))
 
 
 def main():
     env = os.environ
-    if env.get('RELEASE_OPERATION') in ('recover-0.2.7-retained', 'recover-0.2.7-retained-404'):
+    if env.get('RELEASE_OPERATION') in ('recover-0.2.7-retained', 'recover-0.2.7-retained-404',
+                                        'recover-0.2.7-preserved'):
         require(sys.argv[1:] == ['retained-github'], 'explicit retained writer operation required')
         return retained_main()
     require(env.get("RELEASE_OPERATION") == "recover-0.2.7" and env.get("RELEASE_VERSION") == "0.2.7", "wrong recovery operation")

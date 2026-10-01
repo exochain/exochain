@@ -1,5 +1,17 @@
 # Retained Missing-Metadata Recovery Implementation Plan
 
+> **Later explicit scope — October 1:** The
+> [preserved-byte implementation/execution plan](PRESERVED-PAYLOAD-RECOVERY-PLAN.md)
+> is now separately authorized by Bob's direct instruction. This document's
+> planning-only and no-new-transport statements describe its September25–26
+> scope; they do not reopen approval or prohibit the explicit new
+> `recover-0.2.7-preserved` mode. That mode pins custody release400603306 /
+> asset602278328 and unchanged payload bytes through a new owned policy.
+> Its v3 controls/receipts never synthesize fresh old-payload metadata.
+> All older operations and this immutable original404 policy remain strict;
+> current custody/failure evidence, human reviews and protected gates remain
+> mandatory. Do not restart this completed historical implementation plan.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Execution approval:** Bob directly said “plan approved with subagents” on September 26, 2026. This approves the reviewed plan at SHA-256 `862d93aabc22c9895e9b77946a02017170601cf86af32ef3c77433ce3595b38d` for subagent-driven implementation and reviewed PR preparation. The prior planning-only wording below is historical and superseded for that scope only. No release tag, dispatch, live publication or retirement authority is granted. Execution ledger: `.superpowers/sdd/RETAINED-METADATA-IMPLEMENTATION-PLAN/progress.md`; prior planning and release evidence stays preserved in its original ledger.

@@ -1,0 +1,68 @@
+{
+  "schema": "exochain-preserved-payload-027/v1",
+  "operation": "recover-0.2.7-preserved",
+  "manifest_sha256": "17c77eafa0ea34fa7437cbc0d6988f561d686e330bee8c17cfe0e6a354e1bec4",
+  "publications_sha256": "4596c339d2af34ce3aeff5f2dd4a6be95fbb044250e934a27221170b97902ca7",
+  "retained_sha256": "7f2eac05d0fea00a29a1ea3ebf7605eee7ab66905a40d8e016ef50510c2c038a",
+  "metadata_policy_sha256": "bf9968454e1fb95fde2b2c435f61940a39cc25e6fb45a28ff9523a82f755c244",
+  "repository": {
+    "name": "exochain/exochain",
+    "id": 1116455646,
+    "owner_id": 129763194
+  },
+  "historical_payload": {
+    "id": 10779404529,
+    "size": 147126946,
+    "digest": "sha256:eb4138638b9305b406fb50f5e49e205982611af6bcba9aedf92bb34dd7d06b5a",
+    "expires_at": "2026-09-30T22:33:27Z",
+    "metadata_disposition": "expired_then_404",
+    "continuous_hosted_custody_proven": false
+  },
+  "provisioning": {
+    "method": "authorized_local_configured_cli_upload_of_preserved_bytes",
+    "actions_upload_claimed": false,
+    "product_release_accepted": false,
+    "make_latest": "false",
+    "generate_release_notes": false
+  },
+  "anchor": {
+    "ref": "refs/tags/v0.2.7-custody.1",
+    "object": "0214fdc29d7285c4557a317592149563810bf35e",
+    "commit": "b5871abd548d427cacab27e748b49e75897a5f66",
+    "signer_fingerprint": "96B889DAE73CD7C511CCDE28897119B7198789EC",
+    "signed_payload": "object b5871abd548d427cacab27e748b49e75897a5f66\ntype commit\ntag v0.2.7-custody.1\ntagger Bob Stewart <bob@bobstewart.com> 1790822073 -0400\n\nCustody-only anchor for unchanged preserved 0.2.7 payload ZIP; not a product build or release acceptance\n",
+    "signature": "-----BEGIN PGP SIGNATURE-----\n\niJEEABYKADkWIQSWuIna5zzXxRHM3iiJcRm3GYeJ7AUCar3GuRsUgAAAAAAEAA5t\nYW51MiwyLjUrMS4xMiwwLDMACgkQiXEZtxmHiex9ogEAu+c+cWZhjtxU/yep8BlA\nn/20SwsPpMk0swl+KS5yLMUA/32UYjzPrCF9/2c6rVHc7KXXk4M7rpB12lridN4C\nM6sE\n=tMDs\n-----END PGP SIGNATURE-----\n"
+  },
+  "release": {
+    "body_sha256": "794c166ca0d6001f2cd2211c8809d2982c80fc1b3867f525d3e5d45dfc220a05",
+    "created_at": "2026-10-01T02:34:33Z",
+    "draft": false,
+    "html_url": "https://github.com/exochain/exochain/releases/tag/v0.2.7-custody.1",
+    "id": 400603306,
+    "name": "EXOCHAIN 0.2.7 preserved-byte custody transport",
+    "prerelease": true,
+    "published_at": "2026-10-01T02:39:15Z",
+    "tag_name": "v0.2.7-custody.1",
+    "updated_at": "2026-10-01T02:39:15Z"
+  },
+  "asset": {
+    "browser_download_url": "https://github.com/exochain/exochain/releases/download/v0.2.7-custody.1/exochain-027-preserved-original-files-10779404529.zip",
+    "content_type": "application/octet-stream",
+    "created_at": "2026-10-01T02:35:39Z",
+    "digest": "sha256:eb4138638b9305b406fb50f5e49e205982611af6bcba9aedf92bb34dd7d06b5a",
+    "id": 602278328,
+    "name": "exochain-027-preserved-original-files-10779404529.zip",
+    "size": 147126946,
+    "state": "uploaded",
+    "updated_at": "2026-10-01T02:36:33Z",
+    "url": "https://api.github.com/repos/exochain/exochain/releases/assets/602278328"
+  },
+  "asset_ids": [
+    602278328
+  ],
+  "storage": {
+    "host": "release-assets.githubusercontent.com",
+    "path": "/github-production-release-asset/1116455646/acc05d3c-d8b2-40c9-a24e-7976441c5674"
+  },
+  "disclosure": "Custody transport only — not the EXOCHAIN 0.2.7 product release.\n\nThis prerelease hosts the unchanged preserved original payload ZIP from historical Actions artifact 10779404529. Exact ZIP size: 147126946 bytes. SHA-256: eb4138638b9305b406fb50f5e49e205982611af6bcba9aedf92bb34dd7d06b5a.\n\nThe old Actions payload expired at 2026-09-30T22:33:27Z and its metadata subsequently returned 404. This is authorized rehosting of hash-matching saved bytes, not a new build, renewed old artifact, or proof of uninterrupted hosted custody. The custody anchor tag identifies reviewed historical source, not code that produced this upload.\n\nNo package version is rebuilt or republished. Product release v0.2.7, draft 400420101, remains separate and requires reviewed recovery code, genuine protected approvals, fresh cryptographic verification, and independent final publication acceptance. This transport publication makes no product-release or constitutional-readiness claim.\n"
+}

@@ -1,5 +1,17 @@
 # Preserved original 0.2.7 payload recovery — approved design and implementation plan
 
+> **Later explicit scope — October 1:** Bob authorized the separate
+> [preserved-byte recovery design](PRESERVED-PAYLOAD-RECOVERY-DESIGN.md) and
+> [implementation/execution plan](PRESERVED-PAYLOAD-RECOVERY-PLAN.md). Only
+> `recover-0.2.7-preserved` uses the new pinned custody-only release asset
+> `602278328` in release `400603306`, carrying the exact unchanged saved ZIP.
+> This supersedes this document's no-new-transport restriction for that explicit
+> new mode only. Old retained modes still require their fixed Actions payload;
+> they never fall back. The September24 status and authority statements below
+> remain dated history, not a request to repeat already-given authorization.
+> No product rebuild/repack/republication, arbitrary local fallback, unrelated
+> expiry waiver or human-protection bypass is permitted.
+
 > **Status at September 24, 2026:** Bob approved the bounded design. The
 > retained record, importer, read-only package acceptance, workflow, receipts
 > and GitHub completion source through signed commit
@@ -332,6 +344,13 @@ tag move or switch to a different controller's custody asset. Retirement of 31
 old 0.2.3 versions remains a separate approved workflow **after** full 0.2.7
 acceptance; this proposal does not execute or change it.
 
+The September 30 [explicitly approved empty-draft exception](EMPTY-DRAFT-CONTROLLER-TRANSITION.md)
+supersedes the no-controller-switch rule only for unpublished, zero-asset draft
+`400420101` with the exact pinned predecessor and authenticated failure history.
+It permits a guarded body-only transition after all current protected writer
+gates. It does not permit replacing any custody asset, changing package
+provenance, retrying an unknown mutation automatically or relaxing expiry.
+
 ## 6. Review focus
 
 Human review should decide the actual policy change: whether the specifically
@@ -596,3 +615,16 @@ in the preserved execution ledger and self-contained PR handoff after the
 complete signed candidate is frozen; a later source correction requires full
 validation again. No new protected run, live completion, provider/35-asset
 readback or issue 822 retirement is claimed here.
+
+## Preserved-mode relationship to this historical plan
+
+`RETAINED-CUSTODY.json` remains unchanged: it authenticates the historical
+retaining import, metadata and strict40/60 ZIP profiles. Preserved mode does not
+pretend Actions artifact10779404529 is current or extend its expiry. It uses
+the separately pinned release asset and explicit v3 controls/receipts, while
+current custody10780480598 and failed predecessor11124850978 remain exact and
+nonexpired. All nine original observations and the fixed-four404 policy,
+genuine crypto/public checks, source/signatures, direct current receipt handoff,
+same empty product draft, no-overwrite35assets and final independent byte
+acceptance are retained. See the linked new design/plan for the current path;
+this historical checklist is not a second implementation to restart.

@@ -1,5 +1,11 @@
 # Fixed 0.2.7 publication recovery validation
 
+**Reading dated evidence:** Earlier results below describe their stated source
+and operation. The October 1
+[preserved-byte extension](PRESERVED-PAYLOAD-RECOVERY-DESIGN.md) has separate
+exact-candidate validation and v3 receipt requirements. No prior local/hosted
+pass is relabeled as proof of the new controller or of release completion.
+
 ## Scope and identities
 
 This is publication-tooling repair, not a product rebuild or a new product
@@ -386,3 +392,91 @@ belong in the preserved execution ledger and self-contained PR handoff. A
 source correction after that candidate requires fresh complete validation.
 No new maintenance tag, protected dry/live run, publication, provider/35-asset
 readback or issue 822 retirement is claimed at this checkpoint.
+
+## September 30 transition validation requirements
+
+The [approved empty-draft exception](EMPTY-DRAFT-CONTROLLER-TRANSITION.md)
+requires new regression evidence for exact predecessor/history authentication,
+body-only mutation, current gate ordering, stale receipts, observable races and
+uncertain responses with no subsequent writes. Preserve the HTTP repair's
+transport-level and bounded-diagnostic regressions. New full final-source gate
+logs and independent review must identify their exact source; older local passes
+cannot be relabeled as this candidate's results. Hosted platform/coverage gates,
+genuine reviews, protected execution and actual final-byte acceptance remain
+distinct. The old failed writer's HTTP cause stays unknown.
+
+## October 1 preserved-byte validation boundaries
+
+The dedicated custody prerelease `400603306` / asset `602278328` was published
+as transport-only at `2026-10-01T02:39:15Z`. Main and an independent read-only
+auditor separately downloaded the unchanged 147126946-byte ZIP, verified its
+SHA-256 `eb4138638b9305b406fb50f5e49e205982611af6bcba9aedf92bb34dd7d06b5a`
+and all 40 strict members, and compared repository/tag/release/asset/inventory
+before and after. A separate credential-free API-entry observation returned
+one redirect to the exact official storage host/path pinned in the new policy.
+These are actual provisioning readbacks, not a hosted read-only-token contract,
+fresh native/public cryptographic acceptance, or product publication proof.
+
+Task1's new policy/origin/v3 receipt tests first failed before implementation.
+Independent review reproduced a completed-writer chronology defect; its new
+regressions failed before the bounded correction and passed afterward, including
+valid completed-writer and exact300/over300-second observation cases. Main's
+subsequent Python3.13.7 custody suite ran56 tests:55 passed and one explicitly
+named historical-provider replay remained unavailable. Both actual ZIP tests
+ran successfully. Fixtures and this replay limitation do not constitute fresh
+hosted producer or writer evidence. These results belong only to Task1 source.
+
+Task2's read-only transport and producer integration was independently reviewed
+and signed as `3ad975f4fc5bb9a5f36c385141be471164f6bd9f`. Its review found a
+test-fixture runtime mismatch with unpinned CI Python; the test-only repair
+preserved production's exact runtime gate and passed scoped independent review.
+The focused signature fixture passed on actual Python3.13.3 and3.13.7, including
+wrong-runtime rejection. Main then ran the full importer suite on3.13.3:57 tests
+passed, including the actual saved ZIP/hash/strict40 case. The full release
+ref-binding guard passed with all five Cargo resource limits; its two tiny test
+package uploads were explicitly aborted as dry runs. Earlier failed fixture
+attempts remain retained failures. These are Task2 tests, not hosted token,
+fresh provider/native cryptographic, final writer, or whole-candidate acceptance.
+
+Final-candidate acceptance separately requires transport direct200/single302,
+hostile redirect and credential rejection, source/policy capture, no old payload
+endpoint, strict current custody, original four404 policy, independent v3
+producer/writer receipts and chronology, per-write source/transport/file rebind,
+exact empty-draft transition, uncertainty stop and final35-byte tests. The full
+local command inventory must be derived from the final CI source, run with all
+resource/source guards and independently audited. Fresh native2/public5/Rust32
+verification and configured signatures remain separate from fixture tests.
+Exact-head hosted CI, two genuine human reviews, protected DRY/LIVE, actual
+same-attempt receipts and independent final provider bytes are still required.
+No final full-suite, hosted execution or release acceptance is claimed here.
+
+### Final-review I1/I2 correction validation plan
+
+The preserved writer now independently invokes the canonical native verifier for
+both lanes and shares bounded provider admission across its existing HTTP clients.
+The regression plan exercises the production `retained_main` public-gate closure,
+actual canonical native result validation and retained JSON, either-lane rejection
+with zero writes, and unchanged legacy defaults. External HTTP and `gh` are
+substituted in local tests; these are not hosted cryptographic proof.
+
+Budget regressions count 1,325 authenticated requests through both real client
+boundaries with the 1,000/hour default, including initially depleted allowance
+and two reset waits; they also cover 15,000, prior usage, regional counter
+disagreement and concurrent reduction. Real canonical rebinds, worst permitted
+release pagination and all 35 initial/final asset downloads prove bounded phase
+consumption. Wait tests reject changed receipt identity/expiry, completed or
+changed writer, source/file/custody/original-vector/transport drift before writes.
+Header, clock, reset-count, cumulative-wait, deadline and expiry fault cases must
+fail closed. Upload/body/publication 403/429/500, timeout, truncation and malformed
+JSON retain one mutation attempt and an unknown journal; status diagnostics must
+exclude raw provider data. Request/child expiry clamping and parsed workflow
+timeout, permission, human gate and publisher-exclusion checks are included.
+
+Run the complete writer, importer, custody and workflow Python suites against the
+final source, including the explicitly configured actual saved archive tests and
+portable runs without those inputs. Keep the single unavailable historical
+provider-origin replay named. Relevant non-Cargo shell guards, independent scoped
+review and a newly frozen full gate run follow; an older candidate's 92-command
+result cannot validate this correction. Hosted DRY/LIVE, human reviews and
+environment approvals, fresh native2/public5/Rust32 acceptance, actual own-attempt
+receipts and final published 35-byte verification remain distinct requirements.

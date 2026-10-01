@@ -1,5 +1,12 @@
 # EXOCHAIN 0.2.7 publication recovery
 
+**Mode scope, October 1:** The later explicit
+[preserved-byte contract](PRESERVED-PAYLOAD-RECOVERY-DESIGN.md) changes only
+the unavailable payload transport for `recover-0.2.7-preserved`. Older sections
+retain the original and retained-mode contracts and dated evidence; they do not
+prohibit the separately authorized transport in the new mode or silently relax
+an old mode. Product bytes, human protections and final acceptance stay fixed.
+
 ## Scope and authority
 
 The maintainer has repeatedly authorized fixes and release operations and has
@@ -302,3 +309,53 @@ Unit source reviews and historical approvals are distinct from final-source
 validation, fresh cryptographic evidence, exact-head CI and two new non-author
 human approvals. No new protected run, release execution or 35-asset readback
 is claimed by this documentation snapshot.
+
+## September 30 empty-draft controller transition
+
+The explicitly approved [guarded transition](EMPTY-DRAFT-CONTROLLER-TRANSITION.md)
+adds one exception for empty unpublished draft `400420101` and its authenticated
+failed-controller history. Only the body may change after the current writer's
+full gates; fresh readback precedes all asset uploads. Every other draft and old
+operation remains strict. The exception preserves source, package identities,
+tags, custody, expiry, exact assets and human protections; it is not a release
+acceptance claim or permission for an automatic retry.
+
+## October 1 exact preserved-byte transport
+
+Bob explicitly authorized a separately reviewed implementation using the exact
+saved bytes and changing that transport restriction. The canonical
+[policy](PRESERVED-PAYLOAD-TRANSPORT.json), semantic SHA-256
+`2c8fae5c116feb500ac57054470a29fa6407ce2806da7b95c89cab190d9dc3f9`,
+binds published custody-only prerelease `400603306`, asset `602278328`, and
+configured-signed tag `v0.2.7-custody.1` object
+`0214fdc29d7285c4557a317592149563810bf35e`, peeled to reviewed historical
+controller `b5871abd548d427cacab27e748b49e75897a5f66`. This tag anchors
+authorized local provisioning, not an Actions build or the future recovery
+implementation. The transport is a prerelease, never the latest stable product.
+
+The one asset is the unchanged 147126946-byte ZIP, SHA-256
+`eb4138638b9305b406fb50f5e49e205982611af6bcba9aedf92bb34dd7d06b5a`.
+Its complete strict 40-member profile and original inner hashes remain required.
+Rehosting does not renew old artifact `10779404529`, prove continuous hosted
+custody, or authorize a rebuild/repack. The new mode never requests that old
+payload metadata/archive endpoint. Current custody `10780480598` and predecessor
+failure evidence `11124850978` remain fixed, exact and nonexpired dependencies.
+All four historical JSON records and their semantic pins remain unchanged.
+
+Origin and receipts use explicit v3 discriminators and the preserved policy pin.
+The producer and writer independently observe the repository, signed anchor,
+release, asset and terminal one-asset inventory, then independently acquire and
+verify the bytes. Binary API reads use octet-stream Accept; a single exact
+official-storage redirect is credential-free, with no forwarded Authorization
+or signed-URL logging. No caller-selected asset or local-file fallback exists.
+V3 carries actual new transport observations, never fabricated fresh old-payload
+metadata. Completed-writer controls must fall within that writer's lifetime.
+
+The producer remains read-only, without publisher credentials or OIDC. Fresh
+native, package and Rust verification, direct same-attempt receipts, source and
+per-mutation transport checks precede the existing guarded body-only transition
+of empty product draft `400420101`. Exactly 35 product assets, no overwrite,
+unknown-write stop, final fresh transport acquisition and independent all-provider
+byte acceptance remain mandatory. The distinct recovery execution tag still
+requires final-head human review, integrated CI and protected DRY then LIVE;
+the custody prerelease itself is not evidence of product release completion.

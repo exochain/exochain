@@ -20,7 +20,7 @@ for credential_name in CARGO_REGISTRY_TOKEN NPM_TOKEN NODE_AUTH_TOKEN \
     TWINE_PASSWORD PYPI_TOKEN PYPI_API_TOKEN ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL; do
   [ -z "${!credential_name:-}" ] || fail "publication credentials and OIDC must be absent during helper capture"
 done
-if [[ "${RELEASE_OPERATION:-}" = recover-0.2.7-retained || "${RELEASE_OPERATION:-}" = recover-0.2.7-retained-404 ]]; then
+if [[ "${RELEASE_OPERATION:-}" = recover-0.2.7-retained || "${RELEASE_OPERATION:-}" = recover-0.2.7-retained-404 || "${RELEASE_OPERATION:-}" = recover-0.2.7-preserved ]]; then
   [ -z "${RELEASE_RECOVERY_PYTHON_PHASE:-}" ] || fail 'retained acceptance forbids stage exemptions'
 fi
 
@@ -154,15 +154,20 @@ original_commit="$(trusted_git rev-parse --verify 'refs/tags/v0.2.7^{commit}')"
   --remote-refs "$capture/original-remote-refs.txt" >/dev/null
 
 retaining_verified=false
-if [[ "${RELEASE_OPERATION:-}" = recover-0.2.7-retained || "${RELEASE_OPERATION:-}" = recover-0.2.7-retained-404 ]]; then
+preserved_verified=false
+if [[ "${RELEASE_OPERATION:-}" = recover-0.2.7-retained || "${RELEASE_OPERATION:-}" = recover-0.2.7-retained-404 || "${RELEASE_OPERATION:-}" = recover-0.2.7-preserved ]]; then
   trusted_git show "$controller_sha:governance/releases/v0.2.7/RETAINED-CUSTODY.json" > "$capture/RETAINED-CUSTODY.json"
   /bin/chmod 400 "$capture/RETAINED-CUSTODY.json"
   /usr/bin/env -i "$python_path" -I -B "$capture/verify_release_recovery_027.py" retained-record \
     --manifest "$capture/RECOVERY-MANIFEST.json" --record "$capture/RETAINED-CUSTODY.json" >/dev/null
-  if [ "$RELEASE_OPERATION" = recover-0.2.7-retained-404 ]; then
+  if [[ "$RELEASE_OPERATION" = recover-0.2.7-retained-404 || "$RELEASE_OPERATION" = recover-0.2.7-preserved ]]; then
     trusted_git show "$controller_sha:governance/releases/v0.2.7/RETAINED-METADATA-POLICY.json" > "$capture/RETAINED-METADATA-POLICY.json"
     /bin/chmod 400 "$capture/RETAINED-METADATA-POLICY.json"
-    /usr/bin/env -i "$python_path" -I -B - "$capture" <<'POLICY_CHECK' >/dev/null
+    if [ "$RELEASE_OPERATION" = recover-0.2.7-preserved ]; then
+      trusted_git show "$controller_sha:governance/releases/v0.2.7/PRESERVED-PAYLOAD-TRANSPORT.json" > "$capture/PRESERVED-PAYLOAD-TRANSPORT.json"
+      /bin/chmod 400 "$capture/PRESERVED-PAYLOAD-TRANSPORT.json"
+    fi
+    /usr/bin/env -i "$python_path" -I -B - "$capture" "$RELEASE_OPERATION" <<'POLICY_CHECK' > "$capture/anchor-identity.txt"
 import importlib.util, pathlib, sys
 root = pathlib.Path(sys.argv[1])
 spec = importlib.util.spec_from_file_location('retained_identity_checker', root / 'verify_release_recovery_027.py')
@@ -170,7 +175,11 @@ checker = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(checker)
 manifest = checker.load_manifest(root / 'RECOVERY-MANIFEST.json')
 record = checker.load_retained_record(manifest, root / 'RETAINED-CUSTODY.json')
-checker.load_retained_metadata_policy(manifest, record, root / 'RETAINED-METADATA-POLICY.json')
+policy = checker.load_retained_metadata_policy(manifest, record, root / 'RETAINED-METADATA-POLICY.json')
+if sys.argv[2] == checker.PRESERVED_OPERATION:
+    preserved = checker.load_preserved_payload_policy(manifest, record, policy, root / 'PRESERVED-PAYLOAD-TRANSPORT.json')
+    anchor = preserved['anchor']
+    print(anchor['ref'], anchor['object'], anchor['commit'], anchor['signer_fingerprint'])
 POLICY_CHECK
     trusted_git show "$controller_sha:governance/releases/v0.2.7/RETAINED-METADATA-POLICY.json" \
       | /usr/bin/cmp - "$capture/RETAINED-METADATA-POLICY.json" \
@@ -193,16 +202,41 @@ assert len(rows)==2 and dict((ref,sha) for sha,ref in rows)=={
 "refs/tags/v0.2.7-recover.2^{}":"2198e4ef610e9ef6d04adf726f7f4b3e156a3bc1"}
 ' "$capture/retaining-remote-refs.txt"
   retaining_verified=true
+  if [ "$RELEASE_OPERATION" = recover-0.2.7-preserved ]; then
+    read -r anchor_ref anchor_object anchor_commit anchor_signer < "$capture/anchor-identity.txt"
+    [ "${EXOCHAIN_RELEASE_SIGNING_FINGERPRINT:-}" = "$anchor_signer" ] \
+      && [ "$(trusted_git rev-parse --verify "$anchor_ref")" = "$anchor_object" ] \
+      && [ "$(trusted_git rev-parse --verify "$anchor_ref^{commit}")" = "$anchor_commit" ] \
+      || fail 'preserved anchor local identity or configured signer differs'
+    /usr/bin/env -i "${identity_env[@]}" "RELEASE_TAG=${anchor_ref#refs/tags/}" \
+      /bin/bash --noprofile --norc -p "$capture/verify_release_tag_signer.sh" >&2
+    /usr/bin/env -i PATH=/usr/bin:/bin GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+      GIT_NO_REPLACE_OBJECTS=1 GIT_TERMINAL_PROMPT=0 /usr/bin/git -C "$capture" \
+      ls-remote https://github.com/exochain/exochain.git "$anchor_ref" "$anchor_ref^{}" > "$capture/anchor-remote-refs.txt"
+    /usr/bin/env -i "$python_path" -I -B -c '
+import pathlib,sys
+path,ref,obj,commit=sys.argv[1:]
+rows=[line.split() for line in pathlib.Path(path).read_text().splitlines()]
+assert len(rows)==2 and all(len(row)==2 for row in rows) and dict((r,s) for s,r in rows)=={ref:obj,ref+"^{}":commit}
+' "$capture/anchor-remote-refs.txt" "$anchor_ref" "$anchor_object" "$anchor_commit"
+    for policy_name in RETAINED-METADATA-POLICY PRESERVED-PAYLOAD-TRANSPORT; do
+      trusted_git show "$controller_sha:governance/releases/v0.2.7/$policy_name.json" \
+        | /usr/bin/cmp - "$capture/$policy_name.json" || fail 'preserved policy capture changed'
+    done
+    preserved_verified=true
+  fi
 fi
 
 /usr/bin/env -i "$python_path" -I -B -c '
 import json,sys
-sha,ref,capture,retaining=sys.argv[1:]
-print(json.dumps({"controller_sha":sha,"controller_ref":ref,
+sha,ref,capture,retaining,preserved=sys.argv[1:]
+result={"controller_sha":sha,"controller_ref":ref,
     "product_commit":"666c578f719d1e54fce95d6831a3af92ea80df93",
     "product_tag_object":"be47589ec7dbefe821ada35ed0a89dedc9751953",
     "controller_signature_verified":True,"product_signature_verified":True,
     "retaining_signature_verified":retaining=="true",
     "captured_directory":capture,"helper":capture+"/verify_release_recovery_027.py",
-    "manifest":capture+"/RECOVERY-MANIFEST.json"},sort_keys=True,separators=(",",":")))
-' "$controller_sha" "$GITHUB_REF" "$capture" "$retaining_verified"
+    "manifest":capture+"/RECOVERY-MANIFEST.json"}
+if preserved=="true": result["preserved_signature_verified"]=True
+print(json.dumps(result,sort_keys=True,separators=(",",":")))
+' "$controller_sha" "$GITHUB_REF" "$capture" "$retaining_verified" "$preserved_verified"
