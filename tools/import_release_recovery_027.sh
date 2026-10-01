@@ -150,13 +150,14 @@ class Transport:
     A validated storage Location is fetched in a separate credential-free
     process. Signed storage URLs and authorization values are never receipts.
     """
-    def __init__(self, scratch, token, manifest, retained=None, *, policy=None, preserved=None):
+    def __init__(self, scratch, token, manifest, retained=None, *, policy=None, preserved=None, budget=None):
         # Opaque Bearer transport syntax (RFC 6750 section 2.1), not a
         # GitHub token-prefix/length assumption. This alphabet cannot break
         # the quoted curl config below: no quotes, backslashes or whitespace.
         require(re.fullmatch(r"[A-Za-z0-9._~+/-]+=*", token or "") is not None,
                 "malformed read-only GitHub credential")
         self.scratch, self.token = Path(scratch), token
+        self.budget = budget
         self.endpoints = fixed_endpoints(manifest)
         self.retained = retained
         self.policy = policy
@@ -220,14 +221,17 @@ class Transport:
                 "--write-out", "%{http_code}", "--config", "-", url]
         succeeded = False
         try:
+            if self.budget is not None:
+                self.budget.begin('GET',authenticated)
+                argv[argv.index('--max-time')+1] = str(self.budget.timeout(240))
             try:
-                result = subprocess.run(argv, input=config.encode(), capture_output=True, env=BASE_ENV, timeout=250, check=False)
+                result = subprocess.run(argv, input=config.encode(), capture_output=True, env=BASE_ENV,
+                                        timeout=250 if self.budget is None else self.budget.timeout(250), check=False)
             except (OSError, subprocess.SubprocessError) as error:
                 raise ImportFailure("bounded provider GET failed") from error
             # Do not propagate curl diagnostics: a URL may contain a storage SAS.
             require(result.returncode == 0, "bounded provider GET failed")
-            require(result.stdout in ((b"200", b"302", b"404") if allow_original_404 else (b"200", b"302")),
-                    "unexpected provider HTTP status")
+            require(re.fullmatch(rb'[1-5][0-9]{2}',result.stdout) is not None, 'malformed provider HTTP status')
             require(destination.is_file() and not destination.is_symlink() and destination.stat().st_size <= limit,
                     "provider response exceeded its bound")
             require(header_path.stat().st_size <= 65536, "provider response headers exceeded their bound")
@@ -244,11 +248,22 @@ class Transport:
             require(len(codes) >= 1 and all(code in (100, 103) for code in codes[:-1]) and
                     codes[-1] == int(result.stdout), "provider final HTTP status differs from curl status")
             headers = blocks[-1].decode("latin-1")
+            if self.budget is not None:
+                from email.message import Message
+                rate_headers = Message()
+                for line in headers.splitlines()[1:]:
+                    require(':' in line, 'provider HTTP header malformed')
+                    key,value = line.split(':',1)
+                    rate_headers[key] = value.strip()
+                self.budget.finish(rate_headers,int(result.stdout),authenticated)
+            require(result.stdout in ((b"200", b"302", b"404") if allow_original_404 else (b"200", b"302")),
+                    "unexpected provider HTTP status")
             locations = [line.split(":", 1)[1].strip() for line in headers.splitlines() if line.lower().startswith("location:")]
             require(len(locations) <= 1, "duplicate provider redirect")
             succeeded = True
             return int(result.stdout), locations
         finally:
+            if self.budget is not None and not succeeded:self.budget.failed()
             header_path.unlink(missing_ok=True)
             if not succeeded:
                 destination.unlink(missing_ok=True)
@@ -677,7 +692,11 @@ def fetch_rust(manifest, custody, transport, evidence):
     responses = {}
     for name, url in fixed_endpoints(manifest)["rust"]:
         path = directory / (name + ".json")
-        time.sleep(1)
+        budget = getattr(transport,'budget',None)
+        if budget is None:
+            time.sleep(1)
+        else:
+            budget.sleep(1)
         transport.get(url, path, JSON_LIMIT)
         responses[name] = custody.load_json(path, "public Rust version")
     return custody.verify_rust(manifest, responses)
@@ -715,7 +734,7 @@ def check_attestation(manifest, artifact, results):
     return {"lane":artifact["lane"], "original_invocation":invocation, "verified_attestations":len(results)}
 
 
-def verify_attestation(manifest, artifact, archive, evidence, token, custody):
+def verify_attestation(manifest, artifact, archive, evidence, token, custody, *, budget=None):
     config = evidence / (artifact["lane"] + "-gh-config")
     config.mkdir(mode=0o700)
     argv = ["/usr/bin/gh", "attestation", "verify", str(archive), "--repo", "exochain/exochain",
@@ -724,7 +743,9 @@ def verify_attestation(manifest, artifact, archive, evidence, token, custody):
             "--deny-self-hosted-runners", "--format", "json"]
     environment = dict(BASE_ENV, GH_HOST="github.com", GH_TOKEN=token, GH_CONFIG_DIR=str(config),
                        HOME=str(config), GH_PROMPT_DISABLED="1")
-    result = subprocess.run(argv, env=environment, capture_output=True, timeout=240, check=False)
+    result = subprocess.run(argv, env=environment, capture_output=True,
+                            timeout=240 if budget is None else budget.timeout(240), check=False)
+    if budget is not None:budget.check()
     require(result.returncode == 0, "gh cryptographic native attestation verification failed")
     verified = custody.parse_json(result.stdout, "cryptographically verified native attestations")
     receipt = check_attestation(manifest, artifact, verified)
@@ -783,7 +804,8 @@ def validate_sboms(manifest, directory, capture):
     return {"canonical_sboms":len(artifact["files"])}
 
 
-def command(argv, receipt, extra_env=None, timeout=240, bounded=False):
+def command(argv, receipt, extra_env=None, timeout=240, bounded=False, *, budget=None):
+    if budget is not None:timeout = budget.timeout(timeout)
     environment = dict(BASE_ENV)
     environment.update(extra_env or {})
     with receipt.open("xb") as stream:
@@ -829,22 +851,23 @@ def command(argv, receipt, extra_env=None, timeout=240, bounded=False):
         else:
             result = subprocess.run(argv, env=environment, stdout=stream, stderr=subprocess.PIPE, timeout=timeout, check=False)
     require(result.returncode == 0, "captured canonical artifact validator rejected input: " + Path(argv[0]).name)
+    if budget is not None:budget.check()
 
 
-def validate_packages(manifest, artifacts, capture, evidence, python, node):
+def validate_packages(manifest, artifacts, capture, evidence, python, node, *, budget=None):
     for lane, profile in [("npm-wasm", "wasm"), ("npm-llm", "llm"), ("npm-sdk", "sdk")]:
         artifact = next(a for a in manifest["artifacts"] if a["lane"] == lane)
         archive = artifacts / lane / artifact["files"][0]["path"]
         unpacked = evidence / (lane + "-inspected")
         command([python, "-I", "-B", str(capture / "verify_npm_release_tarball.py"), str(archive), str(unpacked)],
-                evidence / (lane + "-tarball-check.txt"))
+                evidence / (lane + "-tarball-check.txt"),budget=budget)
         command([node, str(capture / "verify_npm_release_package.mjs"), profile, str(unpacked / "package")],
-                evidence / (lane + "-package-check.txt"), {"RELEASE_EXPECTED_VERSION":"0.2.7"})
+                evidence / (lane + "-package-check.txt"), {"RELEASE_EXPECTED_VERSION":"0.2.7"},budget=budget)
         # These inspected copies are temporary data, never package lifecycle input.
         shutil.rmtree(unpacked)
     command([python, "-I", "-B", str(capture / "verify_python_release_package.py"), "artifacts",
              str(artifacts / "python/dist"), "exochain", "0.2.7", "--expect-manifest", str(artifacts / "python/artifact-manifest.tsv")],
-            evidence / "python-artifact-check.json")
+            evidence / "python-artifact-check.json",budget=budget)
     summary = {"npm_packages":3,"python_distributions":2,"sbom":validate_sboms(manifest, artifacts / "sbom", capture)}
     for lane in ("native-x86_64", "native-aarch64"):
         artifact = next(a for a in manifest["artifacts"] if a["lane"] == lane)
@@ -1031,7 +1054,7 @@ def create_retained_receipts(custody, manifest, record, context, summary, checke
     return members
 
 
-def assert_captured_inputs(capture, custody, *, policy=None, preserved=None):
+def assert_captured_inputs(capture, custody, *, policy=None, preserved=None, budget=None):
     paths = {"tools/"+name:name for name in (
         "verify_release_recovery_027.sh", "verify_release_recovery_027.py", "verify_npm_release_tarball.py",
         "verify_npm_release_package.mjs", "verify_python_release_package.py", "verify_release_sbom.py",
@@ -1046,7 +1069,8 @@ def assert_captured_inputs(capture, custody, *, policy=None, preserved=None):
     for source, name in paths.items():
         result = subprocess.run(["/usr/bin/git","--no-replace-objects","-c","core.fsmonitor=false",
             "-c","core.untrackedCache=false","-C",os.environ["GITHUB_WORKSPACE"],"show",os.environ["GITHUB_SHA"]+":"+source],
-            env=environment,capture_output=True,timeout=30,check=False)
+            env=environment,capture_output=True,timeout=30 if budget is None else budget.timeout(30),check=False)
+        if budget is not None:budget.check()
         require(result.returncode == 0 and len(result.stdout) <= JSON_LIMIT
                 and result.stdout == custody.read_regular(capture / name, JSON_LIMIT, "captured input"),
                 "captured controller helper or governance input changed")

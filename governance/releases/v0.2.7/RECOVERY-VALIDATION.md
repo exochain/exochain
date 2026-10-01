@@ -449,3 +449,34 @@ verification and configured signatures remain separate from fixture tests.
 Exact-head hosted CI, two genuine human reviews, protected DRY/LIVE, actual
 same-attempt receipts and independent final provider bytes are still required.
 No final full-suite, hosted execution or release acceptance is claimed here.
+
+### Final-review I1/I2 correction validation plan
+
+The preserved writer now independently invokes the canonical native verifier for
+both lanes and shares bounded provider admission across its existing HTTP clients.
+The regression plan exercises the production `retained_main` public-gate closure,
+actual canonical native result validation and retained JSON, either-lane rejection
+with zero writes, and unchanged legacy defaults. External HTTP and `gh` are
+substituted in local tests; these are not hosted cryptographic proof.
+
+Budget regressions count 1,325 authenticated requests through both real client
+boundaries with the 1,000/hour default, including initially depleted allowance
+and two reset waits; they also cover 15,000, prior usage, regional counter
+disagreement and concurrent reduction. Real canonical rebinds, worst permitted
+release pagination and all 35 initial/final asset downloads prove bounded phase
+consumption. Wait tests reject changed receipt identity/expiry, completed or
+changed writer, source/file/custody/original-vector/transport drift before writes.
+Header, clock, reset-count, cumulative-wait, deadline and expiry fault cases must
+fail closed. Upload/body/publication 403/429/500, timeout, truncation and malformed
+JSON retain one mutation attempt and an unknown journal; status diagnostics must
+exclude raw provider data. Request/child expiry clamping and parsed workflow
+timeout, permission, human gate and publisher-exclusion checks are included.
+
+Run the complete writer, importer, custody and workflow Python suites against the
+final source, including the explicitly configured actual saved archive tests and
+portable runs without those inputs. Keep the single unavailable historical
+provider-origin replay named. Relevant non-Cargo shell guards, independent scoped
+review and a newly frozen full gate run follow; an older candidate's 92-command
+result cannot validate this correction. Hosted DRY/LIVE, human reviews and
+environment approvals, fresh native2/public5/Rust32 acceptance, actual own-attempt
+receipts and final published 35-byte verification remain distinct requirements.

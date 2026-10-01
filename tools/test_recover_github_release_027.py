@@ -6,12 +6,15 @@ import io
 import hashlib
 import json
 import copy
+from datetime import datetime, timezone
 from email.message import Message
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import tempfile
+import time
 import unittest
 import types
 import zipfile
@@ -44,6 +47,431 @@ class FakeProvider:
 
 
 class GithubRecoveryTests(unittest.TestCase):
+    def budget_fixture(self, remaining=1000, limit=1000):
+        self.assertTrue(hasattr(self.v, 'ProviderBudget'), 'preserved writer lacks bounded provider admission')
+        clock = types.SimpleNamespace(now=1790812800.0, mono=0.0, sleeps=[], calls=[], remaining=remaining,
+                                      reset=1790816400, limit=limit)
+        def sleep(seconds):
+            self.assertLessEqual(seconds,60)
+            clock.sleeps.append(seconds); clock.now+=seconds; clock.mono+=seconds
+        budget=self.v.ProviderBudget(wall=lambda:clock.now, monotonic=lambda:clock.mono, sleeper=sleep)
+        client=self.v.GitHub('SECRET_SENTINEL',lambda raw,label:json.loads(raw),budget=budget)
+        def headers():
+            return {'X-RateLimit-Limit':str(clock.limit),'X-RateLimit-Remaining':str(clock.remaining),
+                    'X-RateLimit-Used':str(clock.limit-clock.remaining),'X-RateLimit-Reset':str(clock.reset),
+                    'X-RateLimit-Resource':'core'}
+        def response(request,timeout):
+            if clock.now>=clock.reset:
+                clock.remaining=clock.limit;clock.reset=int(clock.now)+3600
+            admission=request.full_url=='https://api.github.com/rate_limit'
+            if not admission:clock.remaining-=1
+            clock.calls.append((request.method,request.full_url,clock.mono))
+            result=io.BytesIO(b'{"resources":{"core":{"remaining":999999}}}')
+            result.status=200;result.headers=headers()
+            return result
+        client.transport=types.SimpleNamespace(open=response)
+        return budget,client,clock,headers
+
+    def test_shared_budget_crosses_default_primary_reset_without_retry(self):
+        self.shared_budget_case(1000,1)
+        self.shared_budget_case(0,2)
+
+    def shared_budget_case(self,remaining,waits):
+        budget,client,clock,headers=self.budget_fixture(remaining)
+        with tempfile.TemporaryDirectory() as tmp:
+            importer=types.ModuleType('budget_importer')
+            source=HELPER.with_name('import_release_recovery_027.sh').read_text().split(
+                '# BEGIN RECOVERY_IMPORT_PYTHON\n',1)[1].split('# END RECOVERY_IMPORT_PYTHON',1)[0]
+            exec(compile(source,'budget-importer','exec'),importer.__dict__)
+            manifest,_,record,policy,preserved=self.preserved_inputs()
+            transport=importer.Transport(Path(tmp),'SECRET_SENTINEL',manifest,record,
+                                         policy=policy,preserved=preserved,budget=budget)
+            def curl(argv,**kwargs):
+                if clock.now>=clock.reset:
+                    clock.remaining=clock.limit;clock.reset=int(clock.now)+3600
+                clock.remaining-=1
+                clock.calls.append(('GET',argv[-1],clock.mono))
+                Path(argv[argv.index('--output')+1]).write_bytes(b'{}')
+                raw='HTTP/2 200\r\n'+''.join(k+': '+v+'\r\n' for k,v in headers().items())+'\r\n'
+                Path(argv[argv.index('--dump-header')+1]).write_bytes(raw.encode())
+                return subprocess.CompletedProcess(argv,0,b'200',b'')
+            with patch.object(importer.subprocess,'run',side_effect=curl):
+                for n in range(1325):
+                    if n%70==0:budget.admit(client,'test-phase')
+                    if n%2:transport.get(transport.endpoints['run'],Path(tmp)/f'{n}.json',1024)
+                    else:client.request('GET',self.v.API+'/releases')
+            self.assertEqual(len([c for c in clock.calls if not c[1].endswith('/rate_limit')]),1325)
+            self.assertEqual(budget.waits,waits)
+            self.assertGreaterEqual(clock.now,1790816400)
+            self.assertTrue(all(b[2]-a[2]>=1 for a,b in zip(clock.calls,clock.calls[1:])))
+
+    def test_budget_blocks_129th_request_and_missing_allowance(self):
+        budget,client,clock,_=self.budget_fixture(limit=15000,remaining=15000)
+        budget.admit(client,'bounded')
+        for _ in range(128):client.request('GET',self.v.API+'/releases')
+        count=len(clock.calls)
+        with self.assertRaisesRegex(ValueError,'phase'):client.request('GET',self.v.API+'/releases')
+        self.assertEqual(len(clock.calls),count)
+        budget,client,clock,_=self.budget_fixture()
+        def bad(request,timeout):
+            result=io.BytesIO(b'{}');result.status=200;result.headers={};return result
+        client.transport.open=bad
+        with self.assertRaisesRegex(ValueError,'rate'):budget.admit(client,'missing')
+
+    def test_writer_public_gate_requires_both_native_crypto_results(self):
+        self.assertTrue(hasattr(self.v,'writer_public_checks'), 'writer public gate omits independent native crypto')
+        spec=importlib.util.spec_from_file_location('native_writer_tests',HELPER.with_name('test_import_release_recovery_027.py'))
+        tests=importlib.util.module_from_spec(spec);spec.loader.exec_module(tests)
+        tests.ImportTests.setUpClass()
+        fixture=tests.ImportTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
+        _,proof=fixture.attestation()
+        for reject in (None,'native-x86_64','native-aarch64'):
+            with self.subTest(reject=reject), tempfile.TemporaryDirectory() as tmp:
+                evidence=Path(tmp);calls=[];provider=FakeProvider({**self.expected,'id':123,'draft':True,'prerelease':False})
+                def process(argv,**kwargs):
+                    self.assertEqual(argv[:3],['/usr/bin/gh','attestation','verify'])
+                    self.assertEqual(kwargs['env']['GH_TOKEN'],'configured-test-token')
+                    lane=Path(argv[3]).parent.name;calls.append(lane)
+                    return subprocess.CompletedProcess(argv,1 if lane==reject else 0,json.dumps(proof).encode(),b'')
+                def gate():
+                    self.v.writer_public_checks(fixture.i,fixture.custody,fixture.manifest,{},evidence,
+                        evidence,evidence,'python','node','configured-test-token',transport=None,preserved=True)
+                with patch.object(fixture.i.subprocess,'run',side_effect=process), \
+                     patch.object(fixture.i,'validate_packages',return_value={}), \
+                     patch.object(fixture.i,'fetch_rust',return_value={}), \
+                     patch.object(self.v,'readback_publications',return_value=None):
+                    if reject:
+                        with self.assertRaisesRegex(ValueError,'cryptographic'):
+                            self.v.complete_retained(provider,self.expected,self.assets,lambda:None,lambda:None,gate)
+                        self.assertEqual(provider.mutations,[])
+                    else:
+                        self.v.complete_retained(provider,self.expected,self.assets,lambda:None,lambda:None,gate)
+                        self.assertEqual(calls,['native-x86_64','native-aarch64'])
+                        for lane in calls:
+                            self.assertEqual(json.loads((evidence/(lane+'-verified-attestations.json')).read_text()),proof)
+                outcome=json.loads((evidence/'writer-native-outcome.json').read_text())
+                self.assertEqual(outcome['independent_crypto_verification_succeeded'],reject is None)
+
+    def test_budget_depleted_enterprise_regional_and_concurrent_allowance(self):
+        for remaining,limit,waits in ((0,1000,1),(127,1000,1),(128,1000,0),(15000,15000,0)):
+            with self.subTest(remaining=remaining):
+                budget,client,clock,_=self.budget_fixture(remaining,limit)
+                self.assertEqual(budget.admit(client,'allowance'),bool(waits))
+                self.assertEqual(budget.waits,waits)
+                client.request('GET',self.v.API+'/releases')
+        budget,client,clock,_=self.budget_fixture()
+        budget.admit(client,'regional')
+        clock.remaining=200
+        client.request('GET',self.v.API+'/releases')
+        self.assertEqual(budget.remaining,199)
+        clock.remaining=900
+        client.request('GET',self.v.API+'/releases')
+        self.assertEqual(budget.remaining,198)
+        clock.remaining=1
+        client.request('GET',self.v.API+'/releases')
+        count=len(clock.calls)
+        with self.assertRaisesRegex(ValueError,'allowance'):client.request('GET',self.v.API+'/releases')
+        self.assertEqual(len(clock.calls),count)
+
+    def test_budget_malformed_headers_fail_without_exposing_provider_data(self):
+        for field,value in [('X-RateLimit-Limit',None),('X-RateLimit-Limit','-1'),
+                ('X-RateLimit-Remaining','SECRET_SENTINEL'),('X-RateLimit-Remaining','1001'),
+                ('X-RateLimit-Used','2'),('X-RateLimit-Reset','1790812799'),
+                ('X-RateLimit-Reset','1790816461'),('X-RateLimit-Resource','search'),
+                ('duplicate','X-RateLimit-Remaining')]:
+            with self.subTest(field=field,value=value):
+                budget,client,clock,headers=self.budget_fixture()
+                def response(request,timeout):
+                    header=Message()
+                    for key,original in headers().items():
+                        if field!=key or value is not None:header[key]=value if field==key else original
+                    if field=='duplicate':header[value]='1000'
+                    result=io.BytesIO(b'SECRET_SENTINEL');result.status=200;result.headers=header;return result
+                client.transport.open=response
+                with self.assertRaises(ValueError) as error:budget.admit(client,'malformed')
+                self.assertNotIn('SECRET_SENTINEL',str(error.exception))
+                self.assertTrue(budget.stopped)
+
+    def test_budget_wait_deadline_expiry_clock_and_count_bounds(self):
+        for fault in ('expiry','deadline','third','cumulative','wall-backward','mono-backward','clock-jump'):
+            with self.subTest(fault=fault):
+                budget,client,clock,_=self.budget_fixture(0)
+                if fault=='expiry':budget.dependency(clock.now+100)
+                elif fault=='deadline':budget.deadline=100
+                elif fault=='third':budget.waits=2
+                elif fault=='cumulative':budget.wait_seconds=7320
+                elif fault=='wall-backward':clock.now-=1
+                elif fault=='mono-backward':clock.mono-=1
+                elif fault=='clock-jump':clock.now+=100
+                with self.assertRaises(ValueError):budget.admit(client,'bounded-wait')
+                self.assertFalse(clock.sleeps)
+
+    def test_budget_paces_mutation_before_fresh_gate_and_rejects_auth_extensions(self):
+        budget,client,clock,_=self.budget_fixture()
+        budget.admit(client,'first')
+        client.request('PATCH',self.v.API+'/releases/400420101',b'{}')
+        before=len(clock.calls)
+        with self.assertRaisesRegex(ValueError,'spacing'):
+            client.request('PATCH',self.v.API+'/releases/400420101',b'{}')
+        self.assertEqual(len(clock.calls),before)
+        budget.admit(client,'second')
+        fresh=clock.mono
+        sleeps=len(clock.sleeps)
+        client.request('PATCH',self.v.API+'/releases/400420101',b'{}')
+        self.assertEqual(clock.mono,fresh);self.assertEqual(len(clock.sleeps),sleeps)
+        for method,url in [('POST','https://api.github.com/rate_limit'),
+                ('GET','https://api.github.com/rate_limit?x=1'),('GET','https://api.github.com/orgs/exochain')]:
+            with self.assertRaisesRegex(ValueError,'credential'):client.request(method,url)
+
+    def test_production_retained_main_public_gate_rejects_native_crypto_before_writes(self):
+        h=self.preserved_writer_fixture()
+        context=h.envelope['context']
+        budget,client,clock,_=self.budget_fixture()
+        # Epoch matches the authenticated October fixture; no real clock/provider I/O.
+        clock.now=1790892000.;clock.reset=int(clock.now)+3600
+        budget.last_wall=clock.now
+        env={'RELEASE_OPERATION':'recover-0.2.7-preserved','RELEASE_VERSION':'0.2.7',
+            'GITHUB_JOB':'retained-github','RELEASE_WORKFLOW_DRY_RUN':'false','GITHUB_ACTIONS':'true',
+            'GITHUB_EVENT_NAME':'workflow_dispatch','RUNNER_ENVIRONMENT':'github-hosted',
+            'GITHUB_SHA':context['controller_sha'],'GITHUB_REF':context['controller_ref'],
+            'RUNNER_TEMP':str(h.fixture.root),'GITHUB_WORKSPACE':str(h.workspace),
+            'RELEASE_GITHUB_TOKEN':'fixture-token','RELEASE_PYTHON':'python','RELEASE_NODE':'node'}
+        calls=[]
+        def source(argv,**kwargs):return (h.workspace/argv[-1].split(':',1)[1]).read_bytes()
+        def process(argv,**kwargs):
+            if argv[:3]==['/usr/bin/gh','attestation','verify']:
+                calls.append(argv);return subprocess.CompletedProcess(argv,1,b'[]',b'')
+            if 'show' in argv:return subprocess.CompletedProcess(argv,0,source(argv),b'')
+            return subprocess.CompletedProcess(argv,0,b'',b'')
+        def stages(provider,expected,assets,rebind,receipt_gate,public_gate,*args,**kwargs):
+            importer=dict(zip(public_gate.__code__.co_freevars,(cell.cell_contents for cell in public_gate.__closure__)))['importer']
+            with patch.object(importer,'validate_packages',return_value={}):public_gate()
+        with patch.dict(os.environ,env,clear=True),patch.object(self.v,'ProviderBudget',return_value=budget), \
+             patch.object(self.v,'GitHub',return_value=client),patch.object(self.v.subprocess,'check_output',side_effect=source), \
+             patch.object(self.v.subprocess,'run',side_effect=process),patch.object(self.v,'complete_retained',side_effect=stages), \
+             patch.object(self.v,'receipt_handoff',return_value=(context,h.envelope['members'],h.envelope['upload_outputs'])):
+            with self.assertRaisesRegex(ValueError,'cryptographic'):self.v.retained_main()
+        self.assertEqual(len(calls),1)
+        self.assertTrue(all(method=='GET' for method,_,_ in clock.calls))
+        self.assertFalse(list(h.fixture.root.glob('exochain-retained-github.*/evidence/release-result.json')))
+
+    def test_budget_mutation_failures_are_single_attempt_unknown_and_diagnostic(self):
+        for operation in ('upload','body','publish'):
+            for fault in (403,429,500,'timeout','truncated','malformed'):
+                with self.subTest(operation=operation,fault=fault):
+                    budget,client,clock,headers=self.budget_fixture()
+                    original=client.transport.open
+                    release=(self.fixed_predecessor() if operation=='body' else
+                        {**self.expected,'id':123,'draft':True,'prerelease':False})
+                    mutations=[];journal=[]
+                    def response(request,timeout):
+                        if request.full_url==self.v.RATE_URL:return original(request,timeout)
+                        clock.remaining-=1
+                        if request.method!='GET':
+                            mutations.append(request.method)
+                            if fault=='timeout':raise TimeoutError('private timeout detail')
+                            status=fault if type(fault) is int else (201 if operation=='upload' else 200)
+                            raw=b'x'*(4*1024*1024+1) if fault=='truncated' else b'SECRET_SENTINEL'
+                        else:
+                            status=200
+                            raw=json.dumps([release] if request.full_url.endswith('/releases?per_page=100&page=1') else []).encode()
+                        result=io.BytesIO(raw);result.status=status;result.headers=headers();return result
+                    client.transport.open=response
+                    rebind=lambda:budget.admit(client,'mutation')
+                    with self.assertRaises((ValueError,OSError)):
+                        if operation=='body':
+                            expected={**self.expected,'body':'corrected-controller-body'}
+                            self.v.transition_empty_draft(client,expected,release,rebind,journal.append)
+                        else:
+                            self.v.recover(client,self.expected,{'file':b'bytes'} if operation=='upload' else {},rebind,journal.append)
+                    self.assertEqual(len(mutations),1)
+                    self.assertEqual([event['outcome'] for event in journal],['intent','unknown'])
+                    self.assertNotIn('SECRET_SENTINEL',json.dumps(journal))
+                    if type(fault) is int:
+                        self.assertEqual(journal[-1].get('http_diagnostics',{}).get('http_status'),fault)
+
+    def test_slow_stream_deadline_stops_unknown_mutation_and_restores_alarm(self):
+        budget,client,clock,headers=self.budget_fixture()
+        original=client.transport.open
+        release={**self.expected,'id':123,'draft':True,'prerelease':False}
+        mutations=[];journal=[]
+        class SlowBody(io.BytesIO):
+            def read(self,*args):
+                time.sleep(0.2)
+                return super().read(*args)
+        def response(request,timeout):
+            if request.full_url==self.v.RATE_URL:return original(request,timeout)
+            clock.remaining-=1
+            if request.method=='POST':
+                mutations.append('upload')
+                result=SlowBody(b'{"name":"file","size":5}')
+                result.status=201
+            else:
+                result=io.BytesIO(json.dumps([release] if request.full_url.endswith('/releases?per_page=100&page=1') else []).encode())
+                result.status=200
+                if budget.phase==2 and '/assets?' in request.full_url and request.full_url.endswith('page=2'):
+                    budget.deadline=clock.mono+0.03
+            result.headers=headers();return result
+        client.transport.open=response
+        saved_handler=signal.getsignal(signal.SIGALRM)
+        saved_timer=signal.getitimer(signal.ITIMER_REAL)
+        handler=lambda signum,frame:None
+        signal.signal(signal.SIGALRM,handler)
+        signal.setitimer(signal.ITIMER_REAL,10)
+        try:
+            with self.assertRaises(ValueError):
+                self.v.recover(client,self.expected,{'file':b'bytes'},lambda:budget.admit(client,'stream'),journal.append)
+            self.assertEqual(mutations,['upload'])
+            self.assertEqual([e['outcome'] for e in journal],['intent','unknown'])
+            self.assertIs(signal.getsignal(signal.SIGALRM),handler)
+            self.assertGreater(signal.getitimer(signal.ITIMER_REAL)[0],9)
+            self.assertLess(signal.getitimer(signal.ITIMER_REAL)[0],10)
+        finally:
+            signal.setitimer(signal.ITIMER_REAL,0)
+            signal.signal(signal.SIGALRM,saved_handler)
+            signal.setitimer(signal.ITIMER_REAL,*saved_timer)
+
+    def test_post_wait_receipt_refresh_rejects_changed_identity_before_pending_write(self):
+        self.assertTrue(hasattr(self.v,'admit_preserved_phase'),'wait lacks canonical fresh receipt/run/writer revalidation')
+        for fault in (None,'expired','replaced','writer-completed','writer-changed'):
+            with self.subTest(fault=fault):
+                h=self.preserved_writer_fixture()
+                budget,client,clock,_=self.budget_fixture(0)
+                context=h.envelope['context']
+                handoff=context,h.envelope['members'],h.envelope['upload_outputs']
+                env={'RELEASE_OPERATION':'recover-0.2.7-preserved','GITHUB_JOB':'retained-github',
+                    'GITHUB_RUN_ID':str(context['run_id']),'GITHUB_RUN_ATTEMPT':str(context['run_attempt']),
+                    'GITHUB_SHA':context['controller_sha'],'GITHUB_REF':context['controller_ref'],
+                    'EXPECTED_TAG_OBJECT_SHA':context['controller_tag_object']}
+                evidence=h.fixture.root/'wait-test';evidence.mkdir()
+                with patch.dict(os.environ,env,clear=True):
+                    prepared=self.v.prepare_current_receipt(h.custody,h.importer,h.manifest,h.record,
+                        h.policy,h.transport,evidence,handoff,preserved=h.preserved)
+                    state={'prepared':prepared,'observer':h.initial['observations']['observer']}
+                    original=budget.sleeper
+                    def sleep(seconds):
+                        original(seconds)
+                        h.state['now']='2026-10-01T23:08:00Z'
+                        if fault=='expired':h.envelope['metadata_before']['expired']=True
+                        if fault=='replaced':h.envelope['metadata_before']['id']+=1
+                        if fault and fault.startswith('writer-'):
+                            writer=next(j for j in h.envelope['current_jobs']['jobs'] if j['name']==h.custody.RECEIPT_WRITER_JOB)
+                            if fault=='writer-completed':writer.update(status='completed',conclusion='success',completed_at='2026-10-01T23:00:00Z')
+                            else:writer['id']+=1
+                    budget.sleeper=sleep
+                    def admit():
+                        self.v.admit_preserved_phase(budget,client,'pending-write',h.custody,h.importer,
+                            h.manifest,h.record,h.policy,h.transport,evidence,handoff,h.preserved,state)
+                    if fault:
+                        with self.assertRaises(ValueError):admit()
+                    else:
+                        admit()
+                        self.assertEqual(state['prepared']['observed_at'],'2026-10-01T23:08:00Z')
+                        self.assertTrue(list(evidence.glob('after-wait-1-phase-1/preliminary-receipt-input.json')))
+                    self.assertTrue(all(method=='GET' for method,_,_ in clock.calls))
+
+    def test_canonical_rebind_and_maximum_pages_all_35_asset_bytes_fit_admission(self):
+        self.canonical_budget_recovery_case()
+
+    def test_wait_precedes_canonical_source_file_custody_vector_and_transport_checks(self):
+        for fault in ('valid-wait','source','payload','custody','custody-deleted','vector','transport'):
+            with self.subTest(fault=fault):self.canonical_budget_recovery_case(fault)
+
+    def canonical_budget_recovery_case(self,fault=None):
+        h=self.preserved_writer_fixture()
+        budget,client,clock,headers=self.budget_fixture(15000,15000)
+        clock.now=h.custody.timestamp('2026-10-01T22:08:00Z','fixture').timestamp()
+        clock.reset=int(clock.now)+3600;budget.last_wall=clock.now
+        importer=types.ModuleType('full_budget_importer')
+        source=HELPER.with_name('import_release_recovery_027.sh').read_text().split(
+            '# BEGIN RECOVERY_IMPORT_PYTHON\n',1)[1].split('# END RECOVERY_IMPORT_PYTHON',1)[0]
+        exec(compile(source,'full-budget-importer','exec'),importer.__dict__)
+        importer.utc_now=lambda:datetime.fromtimestamp(clock.now,timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        transport=importer.Transport(h.fixture.root,'fixture',h.manifest,h.record,
+            policy=h.policy,preserved=h.preserved,budget=budget)
+        controls=h.initial['controls_after']
+        responses={transport.endpoints['run']:(200,controls['original_run']),
+            transport.endpoints['jobs'][0]:(200,controls['original_jobs']),
+            transport.endpoints['retaining_run']:(200,controls['retaining_run']),
+            transport.endpoints['retaining_jobs'][0]:(200,controls['retaining_jobs']),
+            h.record['custody']['metadata']['url']:(200,h.record['custody']['metadata'])}
+        for item in h.initial['observations']['after']['records']:
+            responses[importer.API+f"/artifacts/{item['id']}"]=(item['status'],item.get('metadata',{}))
+        for (_,url),item in zip(transport.endpoints['preserved'],controls['preserved_observation']['requests']):
+            responses[url]=(200,item['data'])
+        def curl(argv,**kwargs):
+            status,value=responses[argv[-1]]
+            clock.remaining-=1;clock.calls.append(('GET',argv[-1],clock.mono))
+            Path(argv[argv.index('--output')+1]).write_bytes(json.dumps(value).encode())
+            Path(argv[argv.index('--dump-header')+1]).write_bytes((f'HTTP/2 {status}\r\n'+
+                ''.join(k+': '+v+'\r\n' for k,v in headers().items())+'\r\n').encode())
+            return subprocess.CompletedProcess(argv,0,str(status).encode(),b'')
+        release={**self.expected,'id':123,'draft':True,'prerelease':False}
+        assets={f'asset-{n}':bytes([n]) for n in range(35)}
+        inventory=[{'id':n+1,'name':name,'size':1,'state':'uploaded'} for n,name in enumerate(assets)]
+        original=client.transport.open
+        downloads=[];writes=[];phases=[];rebind_counts=[]
+        waited_source=[]
+        def source_gate():
+            waited_source.append(budget.waits)
+            if budget.waits and fault=='source':raise ValueError('source drift during wait')
+        def files(*args):
+            if budget.waits and fault=='payload':raise ValueError('payload drift during wait')
+            return {}
+        original_sleep=budget.sleeper
+        def sleep(seconds):
+            original_sleep(seconds)
+            if not budget.waits:return
+            if fault=='custody':
+                responses[h.record['custody']['metadata']['url']]=(200,{**h.record['custody']['metadata'],'expired':True})
+            elif fault=='custody-deleted':responses[h.record['custody']['metadata']['url']]=(404,{})
+            elif fault=='vector':
+                item=next(item for item in h.initial['observations']['after']['records'] if item['status']==200)
+                responses[importer.API+f"/artifacts/{item['id']}"]=(404,{})
+            elif fault=='transport':
+                url=transport.endpoints['preserved'][6][1]
+                responses[url]=(200,{**responses[url][1],'id':1})
+        budget.sleeper=sleep
+        def response(request,timeout):
+            if request.full_url==self.v.RATE_URL:return original(request,timeout)
+            clock.remaining-=1;clock.calls.append((request.method,request.full_url,clock.mono))
+            if request.method=='PATCH':
+                writes.append((budget.phase,budget.phase_requests));release['draft']=False;raw=json.dumps(release).encode()
+            elif '/releases/assets/' in request.full_url:
+                identifier=int(request.full_url.rsplit('/',1)[1]);downloads.append(identifier);raw=bytes([identifier-1])
+            elif '/releases/123/assets?' in request.full_url:
+                raw=json.dumps(inventory if request.full_url.endswith('page=1') else []).encode()
+            else:
+                page=int(request.full_url.rsplit('=',1)[1])
+                raw=json.dumps(([release] if page==1 else [{'id':1000+page,'tag_name':'other'}]) if page<10 else []).encode()
+            result=io.BytesIO(raw);result.status=200;result.headers=headers();return result
+        client.transport.open=response
+        def rebind():
+            if budget.phase:phases.append(budget.phase_requests)
+            if fault and budget.phase==1:clock.remaining=budget.remaining=0
+            budget.admit(client,'canonical')
+            directory=h.fixture.root/f'actual-requests-{budget.phase}';directory.mkdir()
+            before=budget.requests
+            self.v.check_retained_rebind(h.custody,importer,h.manifest,h.record,h.policy,
+                transport,directory,'fixture','fixture',h.initial,h.initial['observations']['observer'],
+                h.candidate,source_gate,preserved=h.preserved)
+            rebind_counts.append(budget.requests-before)
+        with patch.object(importer.subprocess,'run',side_effect=curl), \
+             patch.object(h.custody,'verify_files',side_effect=files):
+            if fault not in (None,'valid-wait'):
+                with self.assertRaises(ValueError):self.v.recover(client,self.expected,assets,rebind)
+                self.assertEqual(writes,[])
+                self.assertEqual(waited_source,[0,1])
+                return
+            result=self.v.recover(client,self.expected,assets,rebind)
+        self.assertEqual(result['asset_count'],35)
+        self.assertTrue(result['published'])
+        self.assertEqual(rebind_counts,[22,22,22,22])
+        self.assertEqual(phases,[71,33,69])
+        self.assertEqual(downloads,list(range(1,36))*2)
+        self.assertEqual(writes,[(2,33)])
+        if fault=='valid-wait':self.assertEqual(waited_source,[0,1,1,1])
+
     def setUp(self):
         self.assertTrue(HELPER.is_file(), "GitHub exact-asset recovery absent")
         spec = importlib.util.spec_from_file_location("github_recovery", HELPER)
@@ -1240,7 +1668,8 @@ class GithubRecoveryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             directory=Path(tmp); evidence=directory/'evidence'; evidence.mkdir()
             calls=[]
-            def command(argv,receipt,environment,timeout,bounded):
+            def command(argv,receipt,environment,timeout,bounded,budget=None):
+                self.assertIsNone(budget)
                 calls.append(argv[-2:] if argv[-1]=='retained-readback' and argv[-2] in ('wasm','llm','sdk') else argv[-1:])
                 self.assertEqual(timeout,1200); self.assertTrue(bounded)
                 self.assertEqual(environment['RELEASE_OPERATION'],'recover-0.2.7-retained')

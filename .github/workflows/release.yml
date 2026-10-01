@@ -5573,6 +5573,7 @@ jobs:
   retained-github:
     if: ${{ (needs.validate-release-inputs.outputs.operation == 'recover-0.2.7-retained' || needs.validate-release-inputs.outputs.operation == 'recover-0.2.7-retained-404' || needs.validate-release-inputs.outputs.operation == 'recover-0.2.7-preserved') && !inputs.dry_run }}
     name: "Complete Retained 0.2.7 GitHub Release"
+    timeout-minutes: 240
     runs-on: ubuntu-24.04
     needs: [ci, approve, approve-second, verify-signed-tag, validate-release-inputs, retained-acceptance]
     environment: release
@@ -5707,6 +5708,10 @@ jobs:
           path: |
             ${{ runner.temp }}/exochain-retained-github.*/mutation-journal.jsonl
             ${{ runner.temp }}/exochain-retained-github.*/evidence/release-result.json
+            ${{ runner.temp }}/exochain-retained-github.*/evidence/provider-budget.jsonl
+            ${{ runner.temp }}/exochain-retained-github.*/evidence/writer-native-outcome.json
+            ${{ runner.temp }}/exochain-retained-github.*/evidence/native-x86_64-verified-attestations.json
+            ${{ runner.temp }}/exochain-retained-github.*/evidence/native-aarch64-verified-attestations.json
           if-no-files-found: warn
           retention-days: 30
           compression-level: 6

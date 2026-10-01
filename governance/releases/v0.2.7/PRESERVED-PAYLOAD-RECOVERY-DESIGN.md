@@ -121,6 +121,15 @@ Both freshly download the separate custody archive and reverify original native
 attestations, all five public package files/crypto, and all 32 Rust checksums and
 nonyanked state using the existing canonical mechanisms.
 
+The preserved LIVE public gate invokes the canonical `verify_attestation` for
+both native lanes after its independent acquisition and complete current receipt
+verification. It retains each verified JSON result and a separate writer-native
+outcome with the actually verified lanes. Failure of either lane stops before
+body transition, upload or publication. The existing configured token reads
+public attestations; no OIDC, package credentials or additional write permission
+is introduced. Producer claims remain required but do not stand in for writer
+cryptographic verification.
+
 ## Origin and current receipts
 
 Use distinct OriginV3 and receipt v3 schemas for preserved mode. Do not manufacture
@@ -149,6 +158,63 @@ accepted local byte descriptors before every body transition/upload/publication,
 then at final readback. Independently download/hash the transport again at final
 acceptance. Observed drift stops; never rebaseline. Before/after reads detect
 observable races but are not atomic provider immutability.
+
+### Preserved LIVE provider admission
+
+Only the preserved LIVE writer shares a `ProviderBudget` between its existing
+GET-only importer Transport and GitHub writer. The producer, local helper and
+legacy modes retain their defaults. The one additional authenticated admission
+endpoint is exactly `GET https://api.github.com/rate_limit`; it grants no new
+mutation URL. Bounded actual response rate headers are authoritative; a differing
+resource summary cannot increase allowance. Across regional counter differences,
+the writer retains the smaller remaining count and later reset until that window
+has elapsed. Admission is local accounting, not a server reservation against
+other repository callers.
+
+Each phase admits 128 primary requests before source, receipt, file or provider
+checks. Phases cover preliminary receipt/observer, acquisition, full receipt,
+native/public verification, post-public checks, failed predecessor, every
+canonical rebind and final transport readback. A rebind uses 22 authenticated
+requests. Even with ten release pages, terminal asset pagination and 35 unverified
+existing asset downloads, bounded recovery windows remain below 128; regression
+tests count requests at both actual HTTP boundaries. An unexpected extra request
+or exhausted allowance stops inside the phase without another request or reset
+wait. Binary API entries and mutations count; credential-free storage and package
+registry requests do not. Opaque native `gh` calls are followed by fresh admission
+before the next rebind and any subsequent mutation.
+
+The writer serializes requests and paces authenticated GETs by one second.
+Mutation spacing is satisfied at admission before fresh checks; there is no
+mutation sleep after the checks. Hourly reset waits occur only at admission:
+at most two, at most 3,660 seconds each and 7,320 seconds in total, in chunks no
+longer than 60 seconds. Clock regressions, inconsistent or implausible reset
+times, invalid headers and insufficient time stop execution. The job timeout is
+240 minutes and the internal writer deadline is 230 minutes, leaving room for
+the existing always-run journal upload. Requests and child tools keep their
+existing individual ceilings, further clamped by the internal deadline and the
+earliest live dependency expiry: pinned custody, fixed failed-writer evidence,
+and the actual authenticated current receipt metadata.
+
+After a reset wait the writer freshly authenticates current receipt metadata,
+run/jobs and the same running writer identity into a unique evidence directory.
+It rejects expiry, replacement or observer drift, then performs the ordinary
+source/local-file/custody/original-vector/new-transport checks before a mutation.
+The preserved eight-request observation still requires real 200 responses and
+the existing 300-second chronology bound; 304 is never rewritten as 200.
+Private budget evidence contains numeric counts, times and phase outcomes only.
+HTTP 403/429, permission failures, malformed responses and timeouts stop rather
+than retry; mutation intent and unknown-outcome journals remain authoritative.
+The whole urllib exchange, including response streaming, has a restored
+process-timer deadline in addition to its socket timeout. The always-run writer
+artifact retains the existing journal/result plus exactly the numeric budget
+journal, writer-native outcome and two canonical native verification JSON files.
+It never includes token configuration or a broad evidence-directory glob.
+These new writer artifacts do not change the immutable historical 603-byte
+failure artifact or the current producer receipt's strict two-member contract.
+
+The documented default token limit motivates this admission design; actual
+hosted quota, shared consumption and read permissions require protected execution
+evidence. No historical upload failure cause is inferred from these limits.
 
 Preserve draft ID **400420101**, historical unknown SBOM upload and four-row journal.
 Freshly authenticate the fixed predecessor evidence and exact empty unpublished

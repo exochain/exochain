@@ -51,6 +51,91 @@ def importer_module():
 
 
 class ImportTests(unittest.TestCase):
+    def test_writer_budget_clamps_curl_and_native_children_without_changing_legacy_defaults(self):
+        writer=module_file('import_budget_writer',ROOT/'tools/recover_github_release_027.py')
+        clock=types.SimpleNamespace(now=1790812800.,mono=0.)
+        def sleep(seconds):clock.now+=seconds;clock.mono+=seconds
+        budget=writer.ProviderBudget(wall=lambda:clock.now,monotonic=lambda:clock.mono,sleeper=sleep)
+        budget.dependency(clock.now+10)
+        client=writer.GitHub('fixture',self.custody.parse_json,budget=budget)
+        rate={'X-RateLimit-Limit':'1000','X-RateLimit-Remaining':'1000','X-RateLimit-Used':'0',
+              'X-RateLimit-Reset':str(int(clock.now)+3600),'X-RateLimit-Resource':'core'}
+        def response(request,timeout):
+            result=io.BytesIO(b'{}');result.status=200;result.headers=rate;return result
+        client.transport=types.SimpleNamespace(open=response)
+        budget.admit(client,'children')
+        transport=self.i.Transport(self.root,'fixture',self.manifest,budget=budget)
+        calls=[]
+        _,proof=self.attestation()
+        def process(argv,**kwargs):
+            calls.append((argv,kwargs))
+            self.assertGreater(kwargs['timeout'],0);self.assertLessEqual(kwargs['timeout'],10)
+            if argv[0]=='/usr/bin/curl':
+                self.assertLessEqual(float(argv[argv.index('--max-time')+1]),10)
+                Path(argv[argv.index('--output')+1]).write_bytes(b'{}')
+                rate['X-RateLimit-Remaining']='999';rate['X-RateLimit-Used']='1'
+                Path(argv[argv.index('--dump-header')+1]).write_bytes(('HTTP/2 200\r\n'+
+                    ''.join(k+': '+v+'\r\n' for k,v in rate.items())+'\r\n').encode())
+                return subprocess.CompletedProcess(argv,0,b'200',b'')
+            return subprocess.CompletedProcess(argv,0,json.dumps(proof).encode(),b'')
+        with patch.object(self.i.subprocess,'run',side_effect=process):
+            transport.get(transport.endpoints['run'],self.root/'budget.json',1024)
+            artifact=next(a for a in self.manifest['artifacts'] if a['lane']=='native-x86_64')
+            self.i.verify_attestation(self.manifest,artifact,self.root/'archive',self.root,
+                                     'fixture',self.custody,budget=budget)
+        self.assertEqual(budget.requests,1)
+        self.assertEqual(len(calls),2)
+        with self.assertRaises(self.i.ImportFailure):
+            transport.get('https://api.github.com/orgs/exochain',self.root/'forbidden',1024)
+        budget.dependency(clock.now+0.5)
+        with patch.object(self.i.time,'sleep') as unbounded_sleep, \
+             patch.object(transport,'get',side_effect=ValueError('deadline')):
+            with self.assertRaises(ValueError):self.i.fetch_rust(self.manifest,self.custody,transport,self.root)
+            self.assertEqual(unbounded_sleep.call_count,0,'registry pacing bypassed writer expiry')
+
+    def test_writer_source_capture_children_obey_remaining_deadline(self):
+        self.assertIn('budget',__import__('inspect').signature(self.i.assert_captured_inputs).parameters)
+        writer=module_file('source_budget_writer',ROOT/'tools/recover_github_release_027.py')
+        budget=writer.ProviderBudget()
+        budget.dependency(time.time()+5)
+        calls=[]
+        def process(argv,**kwargs):
+            calls.append(argv)
+            self.assertGreater(kwargs['timeout'],0);self.assertLessEqual(kwargs['timeout'],5)
+            return subprocess.CompletedProcess(argv,0,b'fixed',b'')
+        with patch.dict(os.environ,{'GITHUB_WORKSPACE':str(ROOT),'GITHUB_SHA':'a'*40}), \
+             patch.object(self.i.subprocess,'run',side_effect=process), \
+             patch.object(self.custody,'read_regular',return_value=b'fixed'):
+            self.i.assert_captured_inputs(self.root,self.custody,budget=budget)
+        self.assertEqual(len(calls),14)
+
+    def test_current_attempt_job_pagination_bound_used_by_writer_admission(self):
+        for total in (250,251):
+            with self.subTest(total=total):
+                transport=self.i.Transport(self.root,'fixture',self.manifest)
+                run=self.i.API+'/runs/123/attempts/1'
+                endpoints={'run':run,'jobs':[run+f'/jobs?per_page=100&page={page}' for page in range(1,11)]}
+                transport.authenticated.update([run,*endpoints['jobs']])
+                calls=[]
+                def process(argv,**kwargs):
+                    url=argv[-1];calls.append(url)
+                    if url==run:value={'id':123}
+                    else:
+                        page=int(url.rsplit('=',1)[1]);start=(page-1)*100
+                        value={'total_count':total,'jobs':[{'id':n} for n in range(start,min(start+100,total))]}
+                    Path(argv[argv.index('--output')+1]).write_bytes(json.dumps(value).encode())
+                    Path(argv[argv.index('--dump-header')+1]).write_bytes(b'HTTP/2 200\r\n\r\n')
+                    return subprocess.CompletedProcess(argv,0,b'200',b'')
+                with patch.object(self.i.subprocess,'run',side_effect=process):
+                    if total==250:
+                        _,jobs=self.i.fetch_run_jobs(self.custody,transport,self.root/f'jobs-{total}',endpoints,None)
+                        self.assertEqual(len(jobs['jobs']),250)
+                        self.assertEqual(calls,[run,*endpoints['jobs'][:3]])
+                    else:
+                        with self.assertRaisesRegex(self.i.ImportFailure,'unbounded'):
+                            self.i.fetch_run_jobs(self.custody,transport,self.root/f'jobs-{total}',endpoints,None)
+                        self.assertEqual(calls,[run,endpoints['jobs'][0]])
+
     @classmethod
     def setUpClass(cls):
         cls.importer = None

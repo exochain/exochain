@@ -80,6 +80,7 @@ def retained_policy(value):
     require(jobs['verify-signed-tag']['needs'] == ['approve', 'approve-second', 'validate-release-inputs'])
     require(acceptance['permissions'] == {'contents':'read', 'actions':'read', 'attestations':'read'})
     require(writer['permissions'] == {'contents':'write', 'actions':'read'})
+    require(writer.get('timeout-minutes') == 240)
     require(writer['environment'] == 'release')
     retained_condition = "(needs.validate-release-inputs.outputs.operation == 'recover-0.2.7-retained' || needs.validate-release-inputs.outputs.operation == 'recover-0.2.7-retained-404' || needs.validate-release-inputs.outputs.operation == 'recover-0.2.7-preserved')"
     require(acceptance['if'] == '${{ ' + retained_condition + ' }}')
@@ -115,13 +116,23 @@ def retained_policy(value):
     require(journal['if'] == '${{ always() }}')
     require(journal['uses'] == 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02')
     require(journal['with'] == {'name':'exochain-027-retained-github-receipts',
-        'path':'${{ runner.temp }}/exochain-retained-github.*/mutation-journal.jsonl\n${{ runner.temp }}/exochain-retained-github.*/evidence/release-result.json\n',
+        'path':'${{ runner.temp }}/exochain-retained-github.*/mutation-journal.jsonl\n${{ runner.temp }}/exochain-retained-github.*/evidence/release-result.json\n'
+               '${{ runner.temp }}/exochain-retained-github.*/evidence/provider-budget.jsonl\n'
+               '${{ runner.temp }}/exochain-retained-github.*/evidence/writer-native-outcome.json\n'
+               '${{ runner.temp }}/exochain-retained-github.*/evidence/native-x86_64-verified-attestations.json\n'
+               '${{ runner.temp }}/exochain-retained-github.*/evidence/native-aarch64-verified-attestations.json\n',
         'if-no-files-found':'warn','retention-days':30,'compression-level':6,'overwrite':False,'include-hidden-files':False})
     for name in outputs:
         require(writer['steps'][3]['env']['RELEASE_RECEIPT_' + name.upper()] == '${{ needs.retained-acceptance.outputs.' + name + ' }}')
 
 
 class RecoveryWorkflowTests(unittest.TestCase):
+    def test_writer_timeout_leaves_journal_upload_margin(self):
+        writer=parsed_workflow(self.text)['jobs']['retained-github']
+        self.assertEqual(writer.get('timeout-minutes'),240)
+        self.assertEqual(writer['permissions'],{'contents':'write','actions':'read'})
+        self.assertEqual(writer['steps'][-1]['if'],'${{ always() }}')
+
     @classmethod
     def setUpClass(cls):
         cls.text = (ROOT / ".github/workflows/release.yml").read_text()

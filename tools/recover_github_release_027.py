@@ -3,16 +3,19 @@
 # SPDX-License-Identifier: Apache-2.0
 """Complete only the fixed original release; never replace a release asset."""
 import hashlib
+from contextlib import contextmanager, nullcontext
 import importlib.util
 import io
 import json
 import os
 from pathlib import Path
 import re
+import signal
 import stat
 import subprocess
 import sys
 import tempfile
+import time
 import types
 import urllib.error
 import urllib.parse
@@ -27,11 +30,198 @@ HISTORICAL_MEMBER_SHA256 = '0c248f93130119592d029253f6f7e370651713054228dae55133
 HISTORICAL_MEMBER = 'exochain-retained-github.5gehyybi/mutation-journal.jsonl'
 PRESERVED_RELEASE_FIELDS = ('id','node_id','tag_name','target_commitish','name',
     'draft','prerelease','published_at','created_at','immutable','url','upload_url')
+RATE_URL = 'https://api.github.com/rate_limit'
 
 
 def require(condition, message):
     if not condition:
         raise ValueError(message)
+
+
+class ProviderBudget:
+    """Writer-local admission, never a provider reservation or HTTP retry policy."""
+    def __init__(self, *, wall=time.time, monotonic=time.monotonic, sleeper=time.sleep,
+                 evidence=None, started=None):
+        self.wall, self.monotonic, self.sleeper = wall, monotonic, sleeper
+        self.last_wall, self.last_mono = wall(), monotonic()
+        self.deadline = (self.last_mono if started is None else started) + 230 * 60
+        self.expiry = None
+        self.remaining = self.reset = None
+        self.phase = 0
+        self.phase_requests = 0
+        self.requests = 0
+        self.admission_requests = 0
+        self.waits = 0
+        self.wait_seconds = 0
+        self.last_get = self.last_mutation = None
+        self.active = self.inflight = self.admitting = self.stopped = False
+        self.evidence = evidence
+
+    def check(self):
+        require(not self.stopped, 'provider budget stopped')
+        wall, mono = self.wall(), self.monotonic()
+        require(wall >= self.last_wall and mono >= self.last_mono and
+                abs((wall-self.last_wall)-(mono-self.last_mono)) <= 5,
+                'provider budget clock anomaly')
+        self.last_wall, self.last_mono = wall, mono
+        remaining = self.deadline-mono
+        if self.expiry is not None:
+            remaining = min(remaining,self.expiry-wall)
+        require(remaining > 0, 'provider budget deadline or dependency expiry exhausted')
+        return remaining
+
+    def timeout(self, ceiling):
+        return min(ceiling,self.check())
+
+    @contextmanager
+    def request_deadline(self, ceiling):
+        """Bound the whole serial urllib exchange, including a trickling body."""
+        timeout = self.timeout(ceiling)
+        previous_handler = signal.getsignal(signal.SIGALRM)
+        previous_timer = signal.getitimer(signal.ITIMER_REAL)
+        started = time.monotonic()
+        def expired(signum, frame):
+            if previous_timer[0] and time.monotonic()-started >= previous_timer[0] and callable(previous_handler):
+                previous_handler(signum,frame)
+            raise TimeoutError('bounded provider request deadline exhausted')
+        signal.signal(signal.SIGALRM,expired)
+        try:
+            signal.setitimer(signal.ITIMER_REAL,min(timeout,previous_timer[0]) if previous_timer[0] else timeout)
+            yield
+            self.check()
+        finally:
+            signal.setitimer(signal.ITIMER_REAL,0)
+            signal.signal(signal.SIGALRM,previous_handler)
+            if previous_timer[0]:
+                signal.setitimer(signal.ITIMER_REAL,max(0.000001,previous_timer[0]-(time.monotonic()-started)),
+                                previous_timer[1])
+
+    def dependency(self, expires):
+        require(type(expires) in (int,float) and expires > self.wall(), 'provider dependency expired')
+        self.expiry = expires if self.expiry is None else min(self.expiry,expires)
+        self.check()
+
+    def sleep(self, seconds):
+        require(0 <= seconds <= self.check(), 'provider wait exceeds deadline or dependency expiry')
+        end = self.monotonic()+seconds
+        while self.monotonic() < end:
+            delay = min(60,end-self.monotonic())
+            require(delay < self.check(), 'provider wait exhausts deadline or dependency expiry')
+            before = self.monotonic()
+            self.sleeper(delay)
+            self.check()
+            require(self.monotonic() > before, 'provider sleeper made no progress')
+
+    def record(self, outcome):
+        if self.evidence is not None:
+            self.evidence({'phase':self.phase,'outcome':outcome,'requests':self.requests,
+                'admission_requests':self.admission_requests,
+                'authenticated_requests':self.requests+self.admission_requests,
+                'phase_requests':self.phase_requests,'waits':self.waits,
+                'wait_seconds':self.wait_seconds,'remaining':self.remaining,'reset':self.reset,
+                'elapsed_seconds':self.last_mono-(self.deadline-230*60)})
+
+    def begin(self, method, authenticated, *, admission=False):
+        self.check()
+        require(not self.inflight, 'provider requests must be serial')
+        if authenticated:
+            require(admission == self.admitting, 'provider admission boundary differs')
+            if not admission:
+                require(self.active and self.phase_requests < 128, 'provider phase request bound exhausted')
+                require(self.remaining is not None and self.remaining > 0, 'provider allowance exhausted inside phase')
+            if method == 'GET':
+                if self.last_get is not None:
+                    self.sleep(max(0,1-(self.monotonic()-self.last_get)))
+                self.last_get = self.monotonic()
+            else:
+                require(not admission and (self.last_mutation is None or
+                        self.monotonic()-self.last_mutation >= 1), 'mutation spacing not admitted')
+                self.last_mutation = self.monotonic()
+            if not admission:
+                self.phase_requests += 1
+                self.requests += 1
+                self.remaining -= 1
+            else:
+                self.admission_requests += 1
+        self.inflight = True
+
+    def finish(self, headers, status, authenticated):
+        self.inflight = False
+        self.check()
+        if not authenticated:
+            return
+        try:
+            values = {}
+            items = list(headers.items())
+            require(len(items) <= 100 and all(type(key) is str and type(value) is str for key,value in items)
+                    and sum(len(key)+len(value) for key,value in items) <= 65536,
+                    'provider rate response headers exceeded bound')
+            for key,value in items:
+                key = key.lower()
+                if key.startswith('x-ratelimit-'):
+                    require(key not in values and type(value) is str and len(value) <= 32,
+                            'duplicate or malformed rate header')
+                    values[key] = value
+            require(values.get('x-ratelimit-resource') == 'core', 'unexpected rate resource')
+            numbers = []
+            for name in ('limit','remaining','used','reset'):
+                value = values.get('x-ratelimit-'+name)
+                require(type(value) is str and re.fullmatch(r'[0-9]{1,12}',value) is not None,
+                        'missing or malformed rate header')
+                numbers.append(int(value))
+            limit,remaining,used,reset = numbers
+            require(0 < limit <= 10**7 and remaining <= limit and used <= limit and
+                    remaining+used == limit, 'inconsistent rate counters')
+            require(self.wall() <= reset <= self.wall()+3660, 'rate reset outside bounded future')
+            if self.reset is None or self.wall() >= self.reset:
+                self.remaining,self.reset = remaining,reset
+            else:
+                # Regions and other callers can disagree: never restore allowance
+                # until the latest previously observed window has actually ended.
+                self.remaining = min(self.remaining,remaining)
+                self.reset = max(self.reset,reset)
+            require(status not in (403,429), 'provider denied request; no retry')
+        except Exception:
+            self.stopped = True
+            self.record(0)
+            raise
+
+    def failed(self):
+        self.inflight = False
+        self.stopped = True
+        self.record(0)
+
+    def admit(self, provider, phase):
+        require(type(phase) is str and phase, 'missing provider phase')
+        self.check()
+        require(not self.inflight, 'cannot admit an active request')
+        self.active = False
+        self.phase += 1
+        self.phase_requests = 0
+        waited = False
+        while True:
+            self.admitting = True
+            try:
+                status,_,_ = provider.request('GET',RATE_URL)
+                require(status == 200, 'rate admission request rejected')
+            finally:
+                self.admitting = False
+            if self.remaining >= 128:
+                break
+            require(self.waits < 2, 'provider primary reset wait count exhausted')
+            delay = self.reset-self.wall()+1
+            require(0 < delay <= 3660 and self.wait_seconds+delay <= 7320,
+                    'provider primary reset wait bound exhausted')
+            self.waits += 1
+            self.wait_seconds += delay
+            self.record(1)
+            self.sleep(delay)
+            waited = True
+        if self.last_mutation is not None:
+            self.sleep(max(0,1-(self.monotonic()-self.last_mutation)))
+        self.active = True
+        self.record(2)
+        return waited
 
 
 class GitHubUploadError(ValueError):
@@ -262,9 +452,10 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class GitHub:
-    def __init__(self, token, parser):
+    def __init__(self, token, parser, *, budget=None):
         self.token = token
         self.parser = parser
+        self.budget = budget
         # Do not inherit proxy environment or an arbitrary redirect policy.
         self.transport = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
 
@@ -272,7 +463,8 @@ class GitHub:
         parsed = urllib.parse.urlsplit(url)
         require(parsed.scheme == "https" and not parsed.username and not parsed.password and not parsed.fragment, "unsafe provider URL")
         if auth:
-            require(parsed.netloc in ("api.github.com", "uploads.github.com") and parsed.path.startswith("/repos/exochain/exochain/"), "credential destination forbidden")
+            require((parsed.netloc in ("api.github.com", "uploads.github.com") and parsed.path.startswith("/repos/exochain/exochain/")) or
+                    (self.budget is not None and method == 'GET' and url == RATE_URL and self.budget.admitting), "credential destination forbidden")
         else:
             require(method == "GET" and parsed.netloc in ("release-assets.githubusercontent.com", "crates.io"), "public destination forbidden")
         headers = {"User-Agent":"exochain-027-release-recovery", "Accept":"application/octet-stream" if binary else "application/vnd.github+json"}
@@ -282,12 +474,44 @@ class GitHub:
         if data is not None:
             headers["Content-Type"] = "application/octet-stream" if binary_body else "application/json"
         request = urllib.request.Request(url, data=data, method=method, headers=headers)
+        if self.budget is not None:
+            self.budget.begin(method,auth,admission=url == RATE_URL)
         try:
-            response = self.transport.open(request, timeout=60)
+            with self.budget.request_deadline(60) if self.budget is not None else nullcontext():
+                return self._response(request,method,auth,limit,binary_body)
+        except Exception:
+            if self.budget is not None:self.budget.failed()
+            raise
+
+    def _response(self, request, method, auth, limit, binary_body):
+        try:
+            response = self.transport.open(request, timeout=60 if self.budget is None else self.budget.timeout(60))
         except urllib.error.HTTPError as error:
             response = error
+        except Exception:
+            if self.budget is not None:self.budget.failed()
+            raise
         with response:
-            payload = response.read(limit + 1)
+            try:
+                payload = response.read(limit + 1)
+            except Exception:
+                if self.budget is not None:self.budget.failed()
+                if self.budget is not None and method != 'GET':
+                    raise GitHubUploadError(response.status,b'',response.headers,
+                        truncated=True,operation='release mutation response read') from None
+                raise ValueError('bounded provider response failed or unknown') from None
+            if self.budget is not None:
+                try:
+                    self.budget.finish(response.headers,response.status,auth)
+                except Exception:
+                    if method != 'GET':
+                        raise GitHubUploadError(response.status,payload,response.headers,
+                            truncated=len(payload)>limit,operation='release mutation') from None
+                    raise
+                if method != 'GET' and (response.status not in (200,201) or len(payload)>limit):
+                    self.budget.failed()
+                    raise GitHubUploadError(response.status,payload,response.headers,
+                        truncated=len(payload)>limit,operation='release mutation')
             if len(payload) > limit and binary_body and response.status != 201:
                 raise GitHubUploadError(response.status, payload, response.headers, truncated=True)
             require(len(payload) <= limit, "provider response exceeded size limit")
@@ -295,11 +519,17 @@ class GitHub:
 
     def json(self, method, suffix, payload=None, allow_absent=False):
         data = None if payload is None else json.dumps(payload, separators=(",", ":")).encode()
-        status, raw, _ = self.request(method, API + suffix, data)
+        status, raw, headers = self.request(method, API + suffix, data)
         if allow_absent and status == 404:
             return None
         require(status in (200, 201), "GitHub API request failed with HTTP " + str(status))
-        return self.parser(raw, "GitHub response")
+        try:
+            return self.parser(raw, "GitHub response")
+        except Exception:
+            if self.budget is not None and method != 'GET':
+                self.budget.failed()
+                raise GitHubUploadError(status,raw,headers,operation='release mutation response') from None
+            raise
 
     def lookup(self):
         # The by-tag endpoint is documented for published releases. List with
@@ -344,8 +574,14 @@ class GitHub:
         status, response, headers = self.request("POST", url, data, binary_body=True)
         if status != 201:
             raise GitHubUploadError(status, response, headers)
-        result = self.parser(response, "uploaded asset")
-        require(result.get("name") == name and result.get("size") == len(data), "uploaded asset identity differs")
+        try:
+            result = self.parser(response, "uploaded asset")
+            require(result.get("name") == name and result.get("size") == len(data), "uploaded asset identity differs")
+        except Exception:
+            if self.budget is not None:
+                self.budget.failed()
+                raise GitHubUploadError(status,response,headers,operation='asset upload response') from None
+            raise
 
     def publish(self, identifier):
         return self.json("PATCH", f"/releases/{identifier}", {"draft":False, "make_latest":"true"})
@@ -356,7 +592,13 @@ class GitHub:
         status, raw, headers = self.request('PATCH', API + '/releases/400420101', data)
         if status != 200:
             raise GitHubUploadError(status, raw, headers, operation='release body transition')
-        return self.parser(raw, 'transition response')
+        try:
+            return self.parser(raw, 'transition response')
+        except Exception:
+            if self.budget is not None:
+                self.budget.failed()
+                raise GitHubUploadError(status,raw,headers,operation='release body response') from None
+            raise
 
 
 def release_metadata(manifest, publications, sha, ref):
@@ -713,7 +955,7 @@ def receive_current_receipts(custody, importer, manifest, record, publications, 
     return result
 
 
-def readback_publications(importer, publications, candidate, capture, evidence):
+def readback_publications(importer, publications, candidate, capture, evidence, *, budget=None):
     """Fresh canonical public reads, with producer result generation disabled."""
     environment = dict(os.environ,RELEASE_RECOVERY_DIRECTORY=str(candidate))
     for profile in ('wasm','llm','sdk'):
@@ -724,11 +966,52 @@ def readback_publications(importer, publications, candidate, capture, evidence):
             RELEASE_NPM_TARBALL=str(candidate/publication['lane']/publication['file']['path']),
             RELEASE_EXPECTED_TARBALL_SHA256=publication['file']['sha256'])
         importer.command(['/bin/bash','--noprofile','--norc','-p',str(capture/'publish_release_npm_package.sh'),profile,'retained-readback'],
-            evidence/f'npm-{profile}-readback.txt',child,timeout=1200,bounded=True)
+            evidence/f'npm-{profile}-readback.txt',child,timeout=1200,bounded=True,budget=budget)
     importer.command(['/bin/bash','--noprofile','--norc','-p',str(capture/'recover_release_python_027.sh'),'retained-readback'],
-        evidence/'python-readback.txt',environment,timeout=1200,bounded=True)
+        evidence/'python-readback.txt',environment,timeout=1200,bounded=True,budget=budget)
     require(not os.path.lexists(Path(environment['RUNNER_TEMP'])/'exochain-recovery-receipts'),
             'readback cannot mint producer acceptance receipts')
+
+
+def writer_public_checks(importer, custody, manifest, publications, candidate, capture,
+                         evidence, python, node, token, *, transport, preserved=False, budget=None):
+    """The LIVE public gate owns independent native crypto, not producer claims."""
+    importer.validate_packages(manifest,candidate,capture,evidence,python,node,budget=budget)
+    if preserved:
+        outcomes = []
+        accepted = False
+        try:
+            for lane in ('native-x86_64','native-aarch64'):
+                artifact, = [a for a in manifest['artifacts'] if a['lane'] == lane]
+                outcomes.append(importer.verify_attestation(manifest,artifact,
+                    candidate/lane/artifact['files'][0]['path'],evidence,token,custody,budget=budget))
+            accepted = True
+        finally:
+            importer.dump(evidence/'writer-native-outcome.json',{
+                'independent_crypto_verification_succeeded':accepted,
+                'verified_lanes':outcomes})
+    importer.fetch_rust(manifest,custody,transport,evidence)
+    readback_publications(importer,publications,candidate,capture,evidence,budget=budget)
+
+
+def admit_preserved_phase(budget, provider, phase, custody, importer, manifest, record,
+                          policy, transport, evidence, handoff, preserved, state):
+    """A reset wait invalidates receipt freshness before the caller's rebind."""
+    if budget is None:
+        return
+    waited = budget.admit(provider,phase)
+    if waited and 'prepared' in state:
+        directory = evidence/f'after-wait-{budget.waits}-phase-{budget.phase}'
+        directory.mkdir(mode=0o700)
+        current = prepare_current_receipt(custody,importer,manifest,record,policy,transport,
+            directory,handoff,preserved=preserved)
+        custody.exact(current['metadata_before'],state['prepared']['metadata_before'],
+                      'receipt changed while waiting')
+        if 'observer' in state:
+            _require_running_writer(custody,current['current_jobs'],handoff[0],
+                current['observed_at'],state['observer'])
+        state['prepared'] = current
+        budget.dependency(custody.timestamp(current['metadata_before']['expires_at'],'receipt expiry').timestamp())
 
 
 def check_retained_rebind(custody, importer, manifest, record, policy, transport, evidence,
@@ -859,6 +1142,8 @@ def retained_capture_paths(operation):
 
 
 def retained_main():
+    started = time.monotonic()
+    budget = None
     env = os.environ
     operation = env.get('RELEASE_OPERATION')
     require(operation in ('recover-0.2.7-retained', 'recover-0.2.7-retained-404', 'recover-0.2.7-preserved') and
@@ -879,7 +1164,8 @@ def retained_main():
     paths = retained_capture_paths(operation)
     def source(path, commit=sha):
         return subprocess.check_output(['/usr/bin/git','--no-replace-objects','-c','core.fsmonitor=false',
-            '-C',str(workspace),'show',commit+':'+path],env=git_env,timeout=30)
+            '-C',str(workspace),'show',commit+':'+path],env=git_env,
+            timeout=30 if budget is None else budget.timeout(30))
     for path,name in paths.items():
         data = source(path)
         require(len(data) <= 4*1024*1024, 'captured source exceeds bound')
@@ -909,16 +1195,27 @@ def retained_main():
     evidence = capture/'evidence'; evidence.mkdir(mode=0o700)
     archives = capture/'archives'; archives.mkdir(mode=0o700)
     candidate = capture/'artifacts'
+    if preserved is not None:
+        budget = ProviderBudget(started=started,evidence=Journal(evidence/'provider-budget.jsonl'))
+        budget.dependency(custody.timestamp(record['custody']['metadata']['expires_at'],'custody expiry').timestamp())
+        budget.dependency(custody.timestamp('2026-10-30T20:41:01Z','failed evidence expiry').timestamp())
     transport = importer.Transport(capture,env.get('RELEASE_GITHUB_TOKEN',''),manifest,record,
-                                   policy=policy,preserved=preserved)
+                                   policy=policy,preserved=preserved,budget=budget)
+    provider = GitHub(env['RELEASE_GITHUB_TOKEN'],custody.parse_json,budget=budget)
     def identities():
-        importer.assert_captured_inputs(capture,custody,policy=policy,preserved=preserved)
+        if budget is not None:budget.check()
+        importer.assert_captured_inputs(capture,custody,policy=policy,preserved=preserved,budget=budget)
         require(source('tools/recover_github_release_027.py') == custody.read_regular(capture/'recover_github_release_027.py',4*1024*1024,'writer'), 'writer source changed')
         subprocess.run(['/bin/bash','--noprofile','--norc','-p',str(capture/'verify_release_recovery_027.sh')],
-            env=dict(env),stdout=subprocess.DEVNULL,timeout=240,check=True)
-    identities()
-    provider = GitHub(env['RELEASE_GITHUB_TOKEN'],custody.parse_json)
+            env=dict(env),stdout=subprocess.DEVNULL,
+            timeout=240 if budget is None else budget.timeout(240),check=True)
+        if budget is not None:budget.check()
     expected, assets, state = {}, {}, {}
+    def admit(phase):
+        admit_preserved_phase(budget,provider,phase,custody,importer,manifest,record,policy,
+            transport,evidence,handoff,preserved,state)
+    admit('initial-source')
+    identities()
     historical = archives/f"{record['custody']['metadata']['id']}.zip"
     if policy is None:
         importer.acquire_retained(manifest,record,custody,transport,evidence,archives,candidate,workflow)
@@ -929,6 +1226,7 @@ def retained_main():
     rebind_count = 0
     def rebind():
         nonlocal rebind_count
+        admit('canonical-rebind')
         rebind_count += 1
         if policy is not None:
             directory = evidence/f'rebind-{rebind_count}'
@@ -946,10 +1244,16 @@ def retained_main():
                 custody.exact(custody.semantic_digest(observed),custody.semantic_digest(pinned),'fresh retained availability')
                 require(custody.timestamp(importer.utc_now(),'observation') < custody.timestamp(pinned['expires_at'],'expiry'), 'retained artifact expired')
     def prepare_gate():
+        admit('preliminary-receipt-observer')
+        identities()
         state['prepared'] = prepare_current_receipt(custody,importer,manifest,record,policy,transport,
                                                     evidence,handoff,preserved=preserved)
+        if budget is not None:
+            budget.dependency(custody.timestamp(state['prepared']['metadata_before']['expires_at'],'receipt expiry').timestamp())
         state['observer'] = importer.capture_observer(custody,transport,capture,evidence,'retained-github')
     def acquire_gate():
+        admit('independent-acquisition')
+        identities()
         importer.acquire_retained(manifest,record,custody,transport,evidence,archives,candidate,workflow,
                                   policy=policy,observer=state['observer'],preserved=preserved)
         state['origin'] = custody.load_json(evidence/'acquisition-origin-input.json','fresh acquisition origin')
@@ -958,21 +1262,31 @@ def retained_main():
         expected.update(public)
         assets.update(release_assets(custody,manifest,candidate,receipt))
     def receipt_gate():
+        admit('full-current-receipt')
+        identities()
         state['receipt'] = receive_current_receipts(custody,importer,manifest,record,publications,
             transport,evidence,historical,workflow,state['origin'],handoff,policy=policy,
             prepared=state.get('prepared'),preserved=preserved)
     def public_gate():
-        importer.validate_packages(manifest,candidate,capture,evidence,env['RELEASE_PYTHON'],env['RELEASE_NODE'])
-        importer.fetch_rust(manifest,custody,transport,evidence)
-        readback_publications(importer,publications,candidate,capture,evidence)
+        admit('native-public-verification')
+        identities()
+        writer_public_checks(importer,custody,manifest,publications,candidate,capture,evidence,
+            env['RELEASE_PYTHON'],env['RELEASE_NODE'],env['RELEASE_GITHUB_TOKEN'],
+            transport=transport,preserved=preserved is not None,budget=budget)
+        # Opaque gh calls used the configured token: admission reads authoritative
+        # current headers before any further writer observations or mutations.
         rebind()
     def final_gate():
+        admit('post-public-final')
         directory = evidence/'post-public-final'
         directory.mkdir(mode=0o700)
         state['public_final'] = check_retained_rebind(custody,importer,manifest,record,policy,
             transport,directory,historical,workflow,state['origin'],state['observer'],candidate,identities,
             preserved=preserved)
     def readback_gate():
+        admit('final-published-transport')
+        identities()
+        custody.verify_files(manifest,candidate)
         directory = evidence/'writer-readback'
         directory.mkdir(mode=0o700)
         state['fresh_payload'] = verify_fresh_preserved_payload(custody,transport,manifest,record,directory)
@@ -981,6 +1295,8 @@ def retained_main():
             transport,directory/'controls',historical,workflow,state['origin'],state['observer'],candidate,
             identities,preserved=preserved,phase='writer-readback')
     def transition_gate():
+        admit('failed-predecessor')
+        identities()
         predecessor = authenticate_failed_predecessor(transport,custody,importer,evidence,
             manifest,publications,record,policy)
         rebind()
