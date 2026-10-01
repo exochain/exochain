@@ -1,5 +1,17 @@
 # Preserved original 0.2.7 payload recovery — approved design and implementation plan
 
+> **Later explicit scope — October 1:** Bob authorized the separate
+> [preserved-byte recovery design](PRESERVED-PAYLOAD-RECOVERY-DESIGN.md) and
+> [implementation/execution plan](PRESERVED-PAYLOAD-RECOVERY-PLAN.md). Only
+> `recover-0.2.7-preserved` uses the new pinned custody-only release asset
+> `602278328` in release `400603306`, carrying the exact unchanged saved ZIP.
+> This supersedes this document's no-new-transport restriction for that explicit
+> new mode only. Old retained modes still require their fixed Actions payload;
+> they never fall back. The September24 status and authority statements below
+> remain dated history, not a request to repeat already-given authorization.
+> No product rebuild/repack/republication, arbitrary local fallback, unrelated
+> expiry waiver or human-protection bypass is permitted.
+
 > **Status at September 24, 2026:** Bob approved the bounded design. The
 > retained record, importer, read-only package acceptance, workflow, receipts
 > and GitHub completion source through signed commit
@@ -603,3 +615,16 @@ in the preserved execution ledger and self-contained PR handoff after the
 complete signed candidate is frozen; a later source correction requires full
 validation again. No new protected run, live completion, provider/35-asset
 readback or issue 822 retirement is claimed here.
+
+## Preserved-mode relationship to this historical plan
+
+`RETAINED-CUSTODY.json` remains unchanged: it authenticates the historical
+retaining import, metadata and strict40/60 ZIP profiles. Preserved mode does not
+pretend Actions artifact10779404529 is current or extend its expiry. It uses
+the separately pinned release asset and explicit v3 controls/receipts, while
+current custody10780480598 and failed predecessor11124850978 remain exact and
+nonexpired. All nine original observations and the fixed-four404 policy,
+genuine crypto/public checks, source/signatures, direct current receipt handoff,
+same empty product draft, no-overwrite35assets and final independent byte
+acceptance are retained. See the linked new design/plan for the current path;
+this historical checklist is not a second implementation to restart.

@@ -39,9 +39,9 @@ job_block() {
 
 validate_block=$(job_block "validate-release-inputs")
 [[ -n "$validate_block" ]] || fail "release workflow must validate dispatch inputs before release jobs"
-grep -F 'options: [release, recover-0.2.7, recover-0.2.7-retained, recover-0.2.7-retained-404]' "$workflow" >/dev/null \
-  || fail "release dispatch must expose only the four reviewed operations"
-grep -F 'recover-0.2.7|recover-0.2.7-retained|recover-0.2.7-retained-404)' <<<"$validate_block" >/dev/null \
+grep -F 'options: [release, recover-0.2.7, recover-0.2.7-retained, recover-0.2.7-retained-404, recover-0.2.7-preserved]' "$workflow" >/dev/null \
+  || fail "release dispatch must expose only the five reviewed operations"
+grep -F 'recover-0.2.7|recover-0.2.7-retained|recover-0.2.7-retained-404|recover-0.2.7-preserved)' <<<"$validate_block" >/dev/null \
   || fail "release input validator must admit the exact new retained operation"
 grep -F '[[ "$GITHUB_REF" =~ ^refs/tags/v0\.2\.7-recover\.[1-9][0-9]*$ ]]' <<<"$validate_block" >/dev/null \
   || fail "all retained operations must bind an exact signed maintenance tag"

@@ -15,6 +15,13 @@ Sigstore/npm and PEP 740 verification tools.
 
 **Spec:** `governance/releases/v0.2.7/RECOVERY-DESIGN.md`.
 
+**Current extension:** Bob's October 1 explicit instruction authorizes the
+[separately reviewed preserved-byte plan](PRESERVED-PAYLOAD-RECOVERY-PLAN.md),
+including its bounded new transport and legitimate release execution. The
+dated steps below remain history and old-mode requirements, not another
+design/plan approval request. Genuine final-head reviews and protected human
+environment approvals are still independent prerequisites.
+
 ## Global Constraints
 
 - Product version remains 0.2.7; no package payload or third-party lock changes.
@@ -364,3 +371,33 @@ review the complete change and run fresh final-source validation before the
 normal reviewed integration and protected DRY/LIVE path. Do not reuse an old
 producer receipt or failed-job-only rerun, bypass a human gate, or waive expiry.
 Record actual results separately; this plan is not proof of execution.
+
+## October 1 preserved-byte execution contract
+
+The canonical new operation is `recover-0.2.7-preserved`, version `0.2.7`.
+Use the existing `release.yml` retained producer/writer graph; never rerun an
+old failed attempt or substitute its producer receipt. The fixed new carrier is
+custody release `400603306` / asset `602278328` under
+`PRESERVED-PAYLOAD-TRANSPORT.json`; it is already provisioned and must not be
+created or uploaded again. Its exact whole-ZIP hash and 40 original files are
+unchanged. Historical custody and failed-writer evidence retain their own
+strict current availability/expiry checks. Existing recovery modes remain strict.
+
+Follow the linked four-task plan: canonical policy/v3 verification, read-only
+acquisition and producer receipts, protected writer/workflow integration, then
+complete exact-source validation and independent whole-change review. Normally
+update existing PR846 with the final signed candidate, complete its actual new
+CI and two distinct non-author final-head human approvals, integrate normally,
+and verify the integrated tree/signature/CI. Earlier green CI or human approvals
+belong only to their exact historical heads.
+
+After fresh source/protection/custody/transport checks, use a new unused signed
+`v0.2.7-recover.N` on the actual integrated controller. Dispatch the protected
+preserved operation once with `dry_run=true`; verify genuine gates, actual
+read-only-token acquisition, the current producer's direct receipt ID/digest,
+full cryptographic acceptance and all writers skipped. Then a separate protected
+`dry_run=false` run needs its own current producer receipt and genuine gates.
+The LIVE writer independently reacquires the exact transport and preserves the
+same draft/history through the approved body-only transition. Verify every one
+of the 35 asset bytes and all public providers before declaring 0.2.7 released
+or closing844; issue822 retirement follows its own approved acceptance process.

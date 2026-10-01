@@ -63,7 +63,8 @@ def retained_policy(value):
     require(all(term not in json.dumps(value.get('env',{})) for term in
                 ('secrets.','TOKEN','PASSWORD','ACTIONS_ID_TOKEN','GITHUB_')))
     require(value['on']['workflow_dispatch']['inputs']['operation']['options'] ==
-            ['release', 'recover-0.2.7', 'recover-0.2.7-retained', 'recover-0.2.7-retained-404'])
+            ['release', 'recover-0.2.7', 'recover-0.2.7-retained', 'recover-0.2.7-retained-404',
+             'recover-0.2.7-preserved'])
     for names, operation in ((NORMAL, 'release'), (RECOVERY, 'recover-0.2.7')):
         for name in names:
             condition = jobs[name]['if']
@@ -80,7 +81,7 @@ def retained_policy(value):
     require(acceptance['permissions'] == {'contents':'read', 'actions':'read', 'attestations':'read'})
     require(writer['permissions'] == {'contents':'write', 'actions':'read'})
     require(writer['environment'] == 'release')
-    retained_condition = "(needs.validate-release-inputs.outputs.operation == 'recover-0.2.7-retained' || needs.validate-release-inputs.outputs.operation == 'recover-0.2.7-retained-404')"
+    retained_condition = "(needs.validate-release-inputs.outputs.operation == 'recover-0.2.7-retained' || needs.validate-release-inputs.outputs.operation == 'recover-0.2.7-retained-404' || needs.validate-release-inputs.outputs.operation == 'recover-0.2.7-preserved')"
     require(acceptance['if'] == '${{ ' + retained_condition + ' }}')
     require(writer['if'] == '${{ ' + retained_condition + ' && !inputs.dry_run }}')
     require(acceptance['name'] == 'Verify Retained 0.2.7 Custody and Publications')
@@ -148,6 +149,24 @@ class RecoveryWorkflowTests(unittest.TestCase):
         self.assertNotIn('dry_run', jobs['retained-acceptance']['if'])
         for name in NORMAL + RECOVERY:
             self.assertNotIn('recover-0.2.7-retained-404', jobs[name]['if'])
+
+    def test_preserved_operation_uses_existing_read_only_producer_and_live_protected_writer(self):
+        workflow=parsed_workflow(self.text)
+        jobs=workflow['jobs']
+        self.assertEqual([name for name in jobs if name.startswith('retained-')],RETAINED)
+        self.assertIn('recover-0.2.7-preserved',
+            workflow['on']['workflow_dispatch']['inputs']['operation']['options'])
+        self.assertIn("needs.validate-release-inputs.outputs.operation == 'recover-0.2.7-preserved'",
+            jobs['retained-acceptance']['if'])
+        self.assertIn("needs.validate-release-inputs.outputs.operation == 'recover-0.2.7-preserved'",
+            jobs['retained-github']['if'])
+        self.assertEqual(jobs['retained-acceptance']['permissions'],
+                         {'contents':'read','actions':'read','attestations':'read'})
+        self.assertEqual(jobs['retained-github']['permissions'],{'contents':'write','actions':'read'})
+        self.assertEqual(jobs['retained-github']['environment'],'release')
+        self.assertIn('!inputs.dry_run',jobs['retained-github']['if'])
+        for name in NORMAL+RECOVERY:
+            self.assertNotIn('recover-0.2.7-preserved',jobs[name]['if'])
 
     def test_new_mode_preserves_permissions_direct_outputs_and_source_capture(self):
         workflow = parsed_workflow(self.text)
@@ -224,6 +243,10 @@ class RecoveryWorkflowTests(unittest.TestCase):
         code = self.jobs["validate-release-inputs"].split("# BEGIN RELEASE OPERATION VALIDATION\n", 1)[1].split("# END RELEASE OPERATION VALIDATION", 1)[0]
         code = "\n".join(line[10:] if line.startswith(" " * 10) else line for line in code.splitlines())
         cases = [
+            ('recover-0.2.7-preserved', '0.2.7', 'refs/tags/v0.2.7-recover.5', True, 'v0.2.7-recover.5'),
+            ('recover-0.2.7-preserved', '0.2.8', 'refs/tags/v0.2.7-recover.5', False, ''),
+            ('recover-0.2.7-preserved', '0.2.7', 'refs/tags/v0.2.7-custody.1', False, ''),
+            ('recover-0.2.7-preserved-extra', '0.2.7', 'refs/tags/v0.2.7-recover.5', False, ''),
             ('recover-0.2.7-retained-404', '0.2.7', 'refs/tags/v0.2.7-recover.3', True, 'v0.2.7-recover.3'),
             ('recover-0.2.7-retained-404', '0.2.8', 'refs/tags/v0.2.7-recover.3', False, ''),
             ('recover-0.2.7-retained-404', '0.2.7', 'refs/tags/v0.2.7-recover.0', False, ''),

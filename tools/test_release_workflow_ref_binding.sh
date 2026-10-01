@@ -1315,7 +1315,7 @@ workflow_path = ARGV.fetch(0)
 workflow = Psych.load_file(workflow_path)
 jobs = workflow.fetch("jobs")
 
-retained_condition = "(needs.validate-release-inputs.outputs.operation == 'recover-0.2.7-retained' || needs.validate-release-inputs.outputs.operation == 'recover-0.2.7-retained-404')"
+retained_condition = "(needs.validate-release-inputs.outputs.operation == 'recover-0.2.7-retained' || needs.validate-release-inputs.outputs.operation == 'recover-0.2.7-retained-404' || needs.validate-release-inputs.outputs.operation == 'recover-0.2.7-preserved')"
 retained_producer = jobs.fetch("retained-acceptance")
 retained_writer = jobs.fetch("retained-github")
 unless retained_producer.fetch("if") == "${{ #{retained_condition} }}" &&

@@ -9,6 +9,8 @@ import copy
 from email.message import Message
 import os
 from pathlib import Path
+import shutil
+import subprocess
 import tempfile
 import unittest
 import types
@@ -60,6 +62,485 @@ class GithubRecoveryTests(unittest.TestCase):
             ('RECOVERY-MANIFEST.json','PUBLICATION-IDENTITIES.json','RETAINED-CUSTODY.json',
              'RETAINED-METADATA-POLICY.json')]
         return self.v.fixed_empty_predecessor(manifest,publications,record,policy)
+
+    def preserved_inputs(self):
+        root=HELPER.parent.parent/'governance/releases/v0.2.7'
+        return [json.loads((root/name).read_text()) for name in
+            ('RECOVERY-MANIFEST.json','PUBLICATION-IDENTITIES.json','RETAINED-CUSTODY.json',
+             'RETAINED-METADATA-POLICY.json','PRESERVED-PAYLOAD-TRANSPORT.json')]
+
+    def preserved_writer_fixture(self, *, actual=False):
+        """Offline v3 fixture; actual mode additionally acquires exact local archives."""
+        audit=os.environ.get('EXO_RETAINED_AUDIT_DIR')
+        failure_input=os.environ.get('EXO_RETAINED_FAILED_WRITER_ZIP')
+        if actual and not audit:self.skipTest('actual preserved ZIP requires explicit local audit directory')
+        if actual and not failure_input:self.skipTest('actual failed-writer ZIP requires explicit local evidence path')
+        spec=importlib.util.spec_from_file_location('preserved_writer_end_to_end_fixture',
+            HELPER.with_name('test_release_recovery_027.py'))
+        fixtures=importlib.util.module_from_spec(spec);spec.loader.exec_module(fixtures)
+        fixtures.RetainedTests.setUpClass()
+        fixture=fixtures.RetainedTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
+        custody=fixture.v
+        record,publications,policy,preserved,envelope,receipts=fixture.v3_receipt_fixture()
+        receipt_zip=fixture.write_receipt_fixture(envelope,receipts)
+        importer=types.ModuleType('preserved_writer_importer_fixture')
+        source=HELPER.with_name('import_release_recovery_027.sh').read_text().split(
+            '# BEGIN RECOVERY_IMPORT_PYTHON\n',1)[1].split('# END RECOVERY_IMPORT_PYTHON',1)[0]
+        exec(compile(source,'captured-preserved-writer-importer','exec'),importer.__dict__)
+        root=fixture.root
+        capture=root/'capture';capture.mkdir()
+        workspace=HELPER.parent.parent
+        for source_path,name in self.v.retained_capture_paths('recover-0.2.7-preserved').items():
+            shutil.copyfile(workspace/source_path,capture/name)
+        audit_root=Path(audit) if audit else None
+        failed_archive=Path(failure_input) if failure_input else None
+        if actual:
+            self.assertTrue(failed_archive.is_file(),'actual failed-writer ZIP evidence required')
+            self.assertEqual(hashlib.sha256(failed_archive.read_bytes()).hexdigest(),
+                             '29f4c3a4e9075aabd725ad4c4ab7225f8e98be5aca3df67309c3e0e0ff0ae09d')
+        failure_url=importer.API+'/artifacts/11124850978'
+        failure_metadata={'id':11124850978,'name':'exochain-027-retained-github-receipts',
+            'size_in_bytes':603,'url':failure_url,'archive_download_url':failure_url+'/zip',
+            'node_id':'MDg6QXJ0aWZhY3QxMTEyNDg1MDk3OA==',
+            'digest':'sha256:29f4c3a4e9075aabd725ad4c4ab7225f8e98be5aca3df67309c3e0e0ff0ae09d',
+            'created_at':'2026-09-30T20:41:02Z','updated_at':'2026-09-30T20:41:02Z',
+            'expires_at':'2026-10-30T20:41:01Z','expired':False,
+            'workflow_run':{'id':36653810772,'repository_id':1116455646,
+                'head_repository_id':1116455646,'head_sha':'b5871abd548d427cacab27e748b49e75897a5f66',
+                'head_branch':'v0.2.7-recover.4'}}
+        state={'now':'2026-10-01T22:05:30Z','rebind':0,'fault':None,'events':[]}
+        class Transport:
+            authenticated=set()
+            endpoints={'run':'original-run','jobs':['original-jobs'],
+                'retaining_run':'retaining-run','retaining_jobs':['retaining-jobs']}
+            def get(self,url,path,limit):
+                value=failure_metadata if url==failure_url else envelope['metadata_before']
+                if state['fault']=='stale-receipt' and url!=failure_url:
+                    value={**value,'expired':True}
+                path.write_text(json.dumps(value))
+            def receipt_archive(self,metadata,path):
+                if metadata['id']==11124850978:
+                    if not actual:raise AssertionError('actual historical writer ZIP unavailable in portable fixture')
+                    shutil.copyfile(failed_archive,path)
+                else:shutil.copyfile(receipt_zip,path)
+            def preserved_archive(self,path):
+                if not actual:raise AssertionError('actual preserved ZIP unavailable in portable fixture')
+                state['events'].append('fresh-preserved-payload')
+                shutil.copyfile(audit_root/'10779404529.zip',path)
+            def archive(self,metadata,path):
+                if not actual:raise AssertionError('actual retained archive unavailable in portable fixture')
+                self_outer.assertEqual(metadata['id'],10780480598)
+                shutil.copyfile(audit_root/'10780480598.zip',path)
+        self_outer=self
+        transport=Transport()
+        original=envelope['origin']
+        def controls(*args,phase,preserved=None,**kwargs):
+            self.assertIsNotNone(preserved)
+            value=copy.deepcopy(original['controls_before'] if phase=='acquisition-start'
+                else original['controls_after'])
+            if state['fault']=='transport' and state['rebind']==state.get('fault_at') and phase in ('writer-final','writer-readback'):
+                value['preserved_observation']['requests'][6]['data']['id']+=1
+            return value
+        def observations(*args,phase,**kwargs):
+            return copy.deepcopy(original['observations']['before'] if phase=='acquisition-before'
+                                 else original['observations']['after'])
+        importer.fetch_retained_controls=controls
+        importer.fetch_original_observation_pass=observations
+        importer.fetch_run_jobs=lambda *args:(copy.deepcopy(envelope['current_run']),
+                                              copy.deepcopy(envelope['current_jobs']))
+        importer.utc_now=lambda:state['now']
+        archives=root/'archives';archives.mkdir()
+        candidate=root/'candidate'
+        acquisition=root/'acquisition';acquisition.mkdir()
+        if actual:
+            acquired,_=importer.acquire_retained(fixture.manifest,record,custody,transport,acquisition,
+                archives,candidate,'fixture',policy=policy,
+                observer=original['observations']['observer'],preserved=preserved)
+            initial=custody.load_json(acquisition/'acquisition-origin-input.json','v3 acquisition input')
+        else:
+            initial=copy.deepcopy(original)
+            acquired=custody.verify_retained_origin(fixture.manifest,record,initial,
+                'fixture','fixture',policy=policy,preserved=preserved)
+        self.assertEqual(acquired['schema'],'exochain-retained-origin-result-027/v3')
+        receipt,expected=self.v.retained_release_metadata(fixture.manifest,publications,record,
+            envelope['context']['controller_sha'],envelope['context']['controller_ref'],
+            policy=policy,preserved=preserved)
+        assets=(self.v.release_assets(custody,fixture.manifest,candidate,receipt) if actual else
+            {name:name.encode() for name in receipt['github_release_assets'][:-1]} |
+            {'RECOVERY-CUSTODY.json':json.dumps(receipt,sort_keys=True).encode()})
+        self.assertEqual(len(assets),35)
+        predecessor=self.v.fixed_empty_predecessor(fixture.manifest,publications,record,policy)
+        return types.SimpleNamespace(fixture=fixture,custody=custody,importer=importer,
+            manifest=fixture.manifest,record=record,publications=publications,policy=policy,
+            preserved=preserved,envelope=envelope,transport=transport,capture=capture,
+            workspace=workspace,archives=archives,candidate=candidate,initial=initial,
+            expected=expected,assets=assets,predecessor=predecessor,state=state,
+            failure_url=failure_url,actual=actual)
+
+    def run_preserved_writer_case(self,h,label,*,fault=None,fault_at=None,full_files=False):
+        """Run the canonical writer stages against local provider and I/O boundaries."""
+        directory=h.fixture.root/label;directory.mkdir()
+        evidence=directory/'evidence';evidence.mkdir()
+        state=h.state
+        state.update(now='2026-10-01T22:05:30Z',rebind=0,fault=fault,fault_at=fault_at,events=[])
+        context=h.envelope['context']
+        env={'RELEASE_OPERATION':'recover-0.2.7-preserved','GITHUB_JOB':'retained-github',
+             'GITHUB_RUN_ID':str(context['run_id']),'GITHUB_RUN_ATTEMPT':str(context['run_attempt']),
+             'GITHUB_SHA':context['controller_sha'],'GITHUB_REF':context['controller_ref'],
+             'EXPECTED_TAG_OBJECT_SHA':context['controller_tag_object'],
+             'GITHUB_WORKSPACE':str(h.workspace)}
+        provider=FakeProvider(copy.deepcopy(h.predecessor))
+        provider.patches=[]
+        def update_body(identifier,body):
+            provider.mutations.append('patch')
+            provider.patches.append((identifier,body))
+            if fault=='unknown-body':raise OSError('body response uncertain')
+            provider.release={**provider.release,'body':body,'updated_at':'2026-10-01T22:08:30Z'}
+            return dict(provider.release)
+        provider.update_body=update_body
+        ordinary_upload=provider.upload
+        def upload(identifier,name,data):
+            if fault=='unknown-asset' and name==next(iter(h.assets)):
+                provider.mutations.append('upload:'+name)
+                raise OSError('asset response uncertain')
+            return ordinary_upload(identifier,name,data)
+        provider.upload=upload
+        ordinary_publish=provider.publish
+        def publish(identifier):
+            if fault=='unknown-publish':
+                provider.mutations.append('publish')
+                raise OSError('publication response uncertain')
+            return ordinary_publish(identifier)
+        provider.publish=publish
+        journal=[]
+        saved_policy=(h.capture/'PRESERVED-PAYLOAD-TRANSPORT.json').read_bytes()
+        target_file=(h.candidate/'sbom'/next(file['path'] for lane in h.manifest['artifacts']
+            if lane['lane']=='sbom' for file in lane['files'])) if h.actual else None
+        saved_file=None
+        saved_file_mode=None
+        real_files=h.custody.verify_files
+        def files(manifest,candidate):
+            if h.actual and (full_files or (fault=='file' and state['rebind']==fault_at)):
+                return real_files(manifest,candidate)
+            return {'files_verified':40}
+        def git_source(argv,**kwargs):
+            path=argv[-1].split(':',1)[1]
+            data=(h.workspace/path).read_bytes()
+            if fault=='source' and state['rebind']==fault_at and path=='tools/recover_github_release_027.py':
+                data=b'wrong reviewed writer source'
+            return subprocess.CompletedProcess(argv,0,data,b'')
+        def source_gate():
+            state['events'].append(('source',state['rebind']))
+            if fault=='captured-policy' and state['rebind']==fault_at:
+                (h.capture/'PRESERVED-PAYLOAD-TRANSPORT.json').write_bytes(b'{}')
+            h.importer.assert_captured_inputs(h.capture,h.custody,
+                policy=h.policy,preserved=h.preserved)
+        def check(phase='writer-final'):
+            location=evidence/f'rebind-{state["rebind"]}-{phase}'
+            location.mkdir()
+            return self.v.check_retained_rebind(h.custody,h.importer,h.manifest,h.record,h.policy,
+                h.transport,location,h.archives/'10780480598.zip','fixture',h.initial,
+                h.initial['observations']['observer'],h.candidate,source_gate,
+                preserved=h.preserved,phase=phase)
+        def rebind():
+            nonlocal saved_file,saved_file_mode
+            state['rebind']+=1
+            state['events'].append(('rebind',state['rebind']))
+            if fault=='file' and state['rebind']==fault_at:
+                saved_file=target_file.read_bytes()
+                saved_file_mode=target_file.stat().st_mode
+                target_file.chmod(saved_file_mode|0o200)
+                target_file.write_bytes(saved_file+b'changed')
+            return check()
+        def prepare_gate():
+            state['events'].append('preliminary-v3')
+            state['prepared']=self.v.prepare_current_receipt(h.custody,h.importer,h.manifest,
+                h.record,h.policy,h.transport,evidence,
+                (context,h.envelope['members'],h.envelope['upload_outputs']),preserved=h.preserved)
+            state['observer']=h.importer.capture_observer(h.custody,h.transport,h.capture,evidence,
+                'retained-github')
+            self.assertEqual(state['observer'],h.initial['observations']['observer'])
+        def acquire_gate():
+            state['events'].append('independent-v3-acquisition' if h.actual else 'fixture-v3-origin-verification')
+            checked=h.custody.verify_retained_origin(h.manifest,h.record,h.initial,
+                h.archives/'10780480598.zip' if h.actual else 'fixture',
+                'fixture',policy=h.policy,preserved=h.preserved)
+            self.assertEqual(checked['schema'],'exochain-retained-origin-result-027/v3')
+            if full_files:
+                h.custody.verify_retained_transport(h.manifest,h.record,h.archives)
+        def receipt_gate():
+            state['events'].append('full-v3-receipt')
+            state['now']='2026-10-01T22:08:00Z'
+            state['receipt']=self.v.receive_current_receipts(h.custody,h.importer,h.manifest,
+                h.record,h.publications,h.transport,evidence,h.archives/'10780480598.zip',
+                'fixture',h.initial,(context,h.envelope['members'],h.envelope['upload_outputs']),
+                policy=h.policy,prepared=state['prepared'],preserved=h.preserved)
+            self.assertEqual(state['receipt']['schema'],'exochain-retained-receipts-result-027/v3')
+        def public_gate():
+            state['events'].append('public-file-gate' if h.actual else 'fixture-public-file-boundary')
+            if full_files:real_files(h.manifest,h.candidate)
+        def final_gate():
+            state['events'].append('post-public-v3-finalizer')
+            state['rebind']=0
+            return check()
+        def transition_gate():
+            state['events'].append('predecessor-authentication' if h.actual else 'fixture-fixed-predecessor')
+            predecessor=(self.v.authenticate_failed_predecessor(h.transport,h.custody,h.importer,
+                evidence,h.manifest,h.publications,h.record,h.policy) if h.actual else
+                self.v.fixed_empty_predecessor(h.manifest,h.publications,h.record,h.policy))
+            self.assertEqual(predecessor,h.predecessor)
+            rebind()
+            current=provider.lookup()
+            if current is not None and current.get('body')==h.expected['body']:
+                return 400420101,False,lambda release:self.v.validate_continued_release(
+                    release,h.expected,predecessor)
+            identifier=self.v.transition_empty_draft(provider,h.expected,predecessor,rebind,journal.append)
+            return identifier,True,lambda release:self.v.validate_continued_release(
+                release,h.expected,predecessor)
+        def readback_gate():
+            state['events'].append('final-fresh-v3-payload' if h.actual else 'fixture-readback-boundary')
+            if h.actual:
+                location=evidence/'fresh-payload';location.mkdir()
+                state['fresh']=self.v.verify_fresh_preserved_payload(h.custody,h.transport,h.manifest,
+                    h.record,location)
+            else:state['events'].append('fixture-readback-no-archive')
+            state['rebind']=42
+            check('writer-readback')
+        error=result=None
+        try:
+            with patch.dict(os.environ,env,clear=True), \
+                 patch.object(h.importer.subprocess,'run',side_effect=git_source), \
+                 patch.object(h.custody,'verify_files',side_effect=files):
+                result=self.v.complete_retained(provider,h.expected,h.assets,rebind,receipt_gate,
+                    public_gate,journal.append,prepare_gate=prepare_gate,acquire_gate=acquire_gate,
+                    final_gate=final_gate,transition_gate=transition_gate,readback_gate=readback_gate)
+        except Exception as failure:
+            error=failure
+        finally:
+            (h.capture/'PRESERVED-PAYLOAD-TRANSPORT.json').write_bytes(saved_policy)
+            if saved_file is not None:
+                target_file.write_bytes(saved_file)
+                target_file.chmod(saved_file_mode)
+        return types.SimpleNamespace(provider=provider,journal=journal,state=state.copy(),
+                                     result=result,error=error)
+
+    def test_preserved_public_receipt_and_body_disclose_distinct_production_and_rehosting(self):
+        manifest, publications, record, policy, preserved = self.preserved_inputs()
+        receipt, expected = self.v.retained_release_metadata(manifest,publications,record,
+            'a'*40,'refs/tags/v0.2.7-recover.5',policy=policy,preserved=preserved)
+        self.assertEqual(receipt['schema'],'exochain-release-retained-custody/v3')
+        self.assertEqual(receipt['preserved_payload']['historical_actions_artifact_id'],10779404529)
+        self.assertEqual(receipt['preserved_payload']['custody_release_id'],400603306)
+        self.assertEqual(receipt['preserved_payload']['custody_asset_id'],602278328)
+        self.assertEqual(receipt['preserved_payload']['sha256'],
+            'eb4138638b9305b406fb50f5e49e205982611af6bcba9aedf92bb34dd7d06b5a')
+        self.assertFalse(receipt['preserved_payload']['continuous_hosted_custody_proven'])
+        self.assertEqual(receipt['controller'],{'sha':'a'*40,'ref':'refs/tags/v0.2.7-recover.5'})
+        for phrase in ('authorized local', 'historical', 'not a new build', '400603306'):
+            self.assertIn(phrase,expected['body'])
+        self.assertEqual(len(receipt['github_release_assets']),35)
+        with self.assertRaises(ValueError):
+            self.v.retained_release_metadata(manifest,publications,record,'a'*40,
+                'refs/tags/v0.2.7-recover.5',preserved=preserved)
+
+    def test_final_preserved_byte_check_precedes_accepted_result(self):
+        events=[]
+        provider=FakeProvider()
+        journal=[]
+        def readback():
+            events.append('fresh-full-payload')
+            self.assertEqual(len(provider.assets),2)
+            raise ValueError('preserved payload disappeared after publication')
+        with self.assertRaisesRegex(ValueError,'preserved payload disappeared'):
+            self.v.complete_retained(provider,self.expected,self.assets,
+                lambda:events.append('rebind'),lambda:events.append('receipts'),
+                lambda:events.append('public'),journal.append,
+                prepare_gate=lambda:events.append('prepare'),acquire_gate=lambda:events.append('acquire'),
+                final_gate=lambda:events.append('before-writes'),readback_gate=readback)
+        self.assertEqual(events[-1],'fresh-full-payload')
+        self.assertNotIn('final_readback',[row['operation'] for row in journal])
+
+    def test_preserved_exact_35_assets_same_draft_final_acceptance(self):
+        h=self.preserved_writer_fixture(actual=True)
+        outcome=self.run_preserved_writer_case(h,'actual-v3-success',full_files=True)
+        self.assertIsNone(outcome.error,repr(outcome.error))
+        self.assertEqual(outcome.result,{'tag':'v0.2.7','release_id':400420101,
+                                         'asset_count':35,'published':True})
+        self.assertEqual(outcome.provider.patches,[(400420101,h.expected['body'])])
+        for field in self.v.PRESERVED_RELEASE_FIELDS:
+            if field not in ('draft','published_at'):
+                self.assertEqual(outcome.provider.release[field],h.predecessor[field],field)
+        self.assertEqual(outcome.provider.mutations,
+            ['patch']+['upload:'+name for name in h.assets]+['publish'])
+        self.assertEqual(set(outcome.provider.assets),set(h.assets))
+        for name,data in h.assets.items():
+            self.assertEqual(outcome.provider.assets[name],data,name)
+        self.assertEqual(outcome.state['events'][:6],
+            ['preliminary-v3','independent-v3-acquisition','full-v3-receipt',
+             'public-file-gate','post-public-v3-finalizer',('source',0)])
+        self.assertLess(outcome.state['events'].index('predecessor-authentication'),
+                        outcome.state['events'].index(('rebind',1)))
+        self.assertLess(outcome.state['events'].index('final-fresh-v3-payload'),
+                        outcome.state['events'].index('fresh-preserved-payload'))
+        transition=[(i,row['outcome']) for i,row in enumerate(outcome.journal)
+                    if row['operation']=='transition_controller_body']
+        self.assertEqual([value for _,value in transition],
+                         ['intent','response_received_not_yet_accepted','accepted'])
+        first_upload=next(i for i,row in enumerate(outcome.journal)
+                          if row['operation']=='upload_asset')
+        self.assertLess(transition[-1][0],first_upload)
+        self.assertEqual(outcome.journal[-1]['operation'],'final_readback')
+        self.assertEqual(outcome.journal[-1]['outcome'],'accepted')
+
+    def test_preserved_source_rebind_halts_each_mutation_and_final_boundary(self):
+        h=self.preserved_writer_fixture()
+        names=list(h.assets)
+        for boundary in (2,*range(4,40),40,41,42):
+            with self.subTest(boundary=boundary):
+                outcome=self.run_preserved_writer_case(h,f'source-boundary-{boundary}',
+                    fault='source',fault_at=boundary)
+                self.assertIsNotNone(outcome.error)
+                self.assertIn('captured controller helper',str(outcome.error).lower())
+                self.assertIn(('source',boundary),outcome.state['events'])
+                if boundary==2:
+                    expected=[]
+                elif boundary<=39:
+                    expected=['patch']+['upload:'+name for name in names[:max(0,boundary-5)]]
+                elif boundary==40:
+                    expected=['patch']+['upload:'+name for name in names]
+                else:
+                    expected=['patch']+['upload:'+name for name in names]+['publish']
+                self.assertEqual(outcome.provider.mutations,expected)
+                self.assertNotIn('final_readback',
+                    [row['operation'] for row in outcome.journal])
+
+    def test_preserved_policy_transport_receipt_and_unknown_writes_halt(self):
+        h=self.preserved_writer_fixture()
+        scenarios=(
+            ('captured-policy',2,[]),
+            ('captured-policy',40,['patch']+['upload:'+name for name in h.assets]),
+            ('transport',4,['patch']),
+            ('transport',38,['patch']+['upload:'+name for name in list(h.assets)[:33]]),
+            ('transport',42,['patch']+['upload:'+name for name in h.assets]+['publish']),
+            ('stale-receipt',None,[]),
+            ('unknown-body',None,['patch']),
+            ('unknown-asset',None,['patch','upload:'+next(iter(h.assets))]),
+            ('unknown-publish',None,['patch']+['upload:'+name for name in h.assets]+['publish']),
+        )
+        for number,(fault,boundary,writes) in enumerate(scenarios):
+            with self.subTest(fault=fault,boundary=boundary):
+                outcome=self.run_preserved_writer_case(h,f'fault-{number}',
+                    fault=fault,fault_at=boundary)
+                self.assertIsNotNone(outcome.error)
+                if fault=='transport':
+                    self.assertIn('preserved',str(outcome.error).lower())
+                if fault=='captured-policy':
+                    self.assertIn('captured',str(outcome.error).lower())
+                self.assertEqual(outcome.provider.mutations,writes)
+                self.assertNotIn('final_readback',
+                    [row['operation'] for row in outcome.journal])
+                if fault.startswith('unknown-'):
+                    self.assertEqual(outcome.journal[-1]['outcome'],'unknown')
+
+    def test_actual_preserved_staged_file_drift_halts_before_upload(self):
+        h=self.preserved_writer_fixture(actual=True)
+        outcome=self.run_preserved_writer_case(h,'actual-staged-file-drift',
+            fault='file',fault_at=4)
+        self.assertIsNotNone(outcome.error)
+        self.assertIn('file',str(outcome.error).lower())
+        self.assertEqual(outcome.provider.mutations,['patch'])
+        self.assertNotIn('final_readback',[row['operation'] for row in outcome.journal])
+
+    def test_writer_fresh_payload_readback_strictly_verifies_actual_preserved_zip(self):
+        audit=os.environ.get('EXO_RETAINED_AUDIT_DIR')
+        if not audit:self.skipTest('actual preserved ZIP requires explicit local audit directory')
+        manifest,_,record,_,_=self.preserved_inputs()
+        spec=importlib.util.spec_from_file_location('preserved_readback_custody',
+            HELPER.with_name('verify_release_recovery_027.py'))
+        custody=importlib.util.module_from_spec(spec);spec.loader.exec_module(custody)
+        source=Path(audit)/'10779404529.zip'
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            calls=[]
+            class Transport:
+                def preserved_archive(self,destination):
+                    calls.append(destination)
+                    shutil.copyfile(source,destination)
+            result=self.v.verify_fresh_preserved_payload(custody,Transport(),manifest,record,root)
+            self.assertEqual(result,{'files_verified':40,
+                'zip_sha256':'eb4138638b9305b406fb50f5e49e205982611af6bcba9aedf92bb34dd7d06b5a'})
+            self.assertEqual(calls,[root/'10779404529.zip'])
+
+    def test_preserved_preliminary_receipt_binds_current_producer_before_acquisition(self):
+        spec=importlib.util.spec_from_file_location('preserved_writer_fixture',
+            HELPER.with_name('test_release_recovery_027.py'))
+        fixtures=importlib.util.module_from_spec(spec);spec.loader.exec_module(fixtures)
+        fixtures.RetainedTests.setUpClass()
+        fixture=fixtures.RetainedTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
+        record,_,policy,preserved,envelope,receipts=fixture.v3_receipt_fixture()
+        fixture.write_receipt_fixture(envelope,receipts)
+        handoff=(envelope['context'],envelope['members'],envelope['upload_outputs'])
+        evidence=fixture.root/'preserved-preliminary';evidence.mkdir()
+        class Transport:
+            authenticated=set()
+            def get(self,url,path,limit): path.write_text(json.dumps(envelope['metadata_before']))
+        importer=types.SimpleNamespace(API='https://api.github.com/repos/exochain/exochain/actions',
+            JSON_LIMIT=4*1024*1024,
+            fetch_run_jobs=lambda *args:(copy.deepcopy(envelope['current_run']),copy.deepcopy(envelope['current_jobs'])),
+            utc_now=lambda:envelope['observed_at'],
+            dump=lambda path,value:path.write_text(json.dumps(value)))
+        context=envelope['context']
+        env={'RELEASE_OPERATION':'recover-0.2.7-preserved','GITHUB_JOB':'retained-github',
+             'GITHUB_RUN_ID':str(context['run_id']),'GITHUB_RUN_ATTEMPT':str(context['run_attempt']),
+             'GITHUB_SHA':context['controller_sha'],'GITHUB_REF':context['controller_ref'],
+             'EXPECTED_TAG_OBJECT_SHA':context['controller_tag_object']}
+        with patch.dict(os.environ,env,clear=True):
+            prepared=self.v.prepare_current_receipt(fixture.v,importer,fixture.manifest,record,
+                policy,Transport(),evidence,handoff,preserved=preserved)
+        self.assertEqual(prepared['schema'],'exochain-retained-receipts-input-027/v3')
+        self.assertEqual(prepared['preserved_policy_sha256'],fixture.v.PRESERVED_PAYLOAD_POLICY_SHA256)
+        self.assertEqual(prepared['operation'],'recover-0.2.7-preserved')
+        self.assertNotIn('origin',prepared)
+
+    def test_preserved_writer_captures_both_policies_from_controller(self):
+        paths=self.v.retained_capture_paths('recover-0.2.7-preserved')
+        self.assertEqual(paths['governance/releases/v0.2.7/PRESERVED-PAYLOAD-TRANSPORT.json'],
+                         'PRESERVED-PAYLOAD-TRANSPORT.json')
+        self.assertEqual(paths['governance/releases/v0.2.7/RETAINED-METADATA-POLICY.json'],
+                         'RETAINED-METADATA-POLICY.json')
+        self.assertNotIn('governance/releases/v0.2.7/PRESERVED-PAYLOAD-TRANSPORT.json',
+                         self.v.retained_capture_paths('recover-0.2.7-retained-404'))
+        with self.assertRaises(ValueError): self.v.retained_capture_paths('release')
+
+    def test_preserved_full_writer_receipt_accepts_only_v3_same_attempt(self):
+        spec=importlib.util.spec_from_file_location('preserved_full_writer_fixture',
+            HELPER.with_name('test_release_recovery_027.py'))
+        fixtures=importlib.util.module_from_spec(spec);spec.loader.exec_module(fixtures)
+        fixtures.RetainedTests.setUpClass()
+        fixture=fixtures.RetainedTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
+        record,publications,policy,preserved,envelope,receipts=fixture.v3_receipt_fixture()
+        receipt=fixture.write_receipt_fixture(envelope,receipts)
+        prepared={key:copy.deepcopy(value) for key,value in envelope.items()
+                  if key not in ('origin','metadata_after')}
+        prepared['observed_at']='2026-10-01T22:05:30Z'
+        evidence=fixture.root/'writer-full-v3';evidence.mkdir()
+        class Transport:
+            authenticated=set()
+            def get(self,url,path,limit):path.write_text(json.dumps(envelope['metadata_before']))
+            def receipt_archive(self,metadata,path):path.write_bytes(receipt.read_bytes())
+        importer=types.SimpleNamespace(API='https://api.github.com/repos/exochain/exochain/actions',
+            JSON_LIMIT=4*1024*1024,
+            fetch_run_jobs=lambda *args:(copy.deepcopy(envelope['current_run']),copy.deepcopy(envelope['current_jobs'])),
+            utc_now=lambda:'2026-10-01T22:08:00Z',
+            dump=lambda path,value:path.write_text(json.dumps(value)))
+        handoff=(envelope['context'],envelope['members'],envelope['upload_outputs'])
+        with patch.dict(os.environ,{'RELEASE_OPERATION':'recover-0.2.7-preserved'}):
+            result=self.v.receive_current_receipts(fixture.v,importer,fixture.manifest,record,
+                publications,Transport(),evidence,'fixture','fixture',envelope['origin'],handoff,
+                policy=policy,prepared=prepared,preserved=preserved)
+        self.assertEqual(result['schema'],'exochain-retained-receipts-result-027/v3')
+        self.assertEqual(result['producer_job_id'],envelope['context']['producer_job_id'])
+        self.assertEqual(result['preserved_policy_sha256'],fixture.v.PRESERVED_PAYLOAD_POLICY_SHA256)
 
     def test_read_only_preflight_never_creates_uploads_or_publishes(self):
         self.assertTrue(callable(getattr(self.v, 'preflight', None)), 'read-only preflight absent')
