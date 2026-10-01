@@ -8,7 +8,7 @@ fail() { printf 'release recovery runner failed: %s\n' "$1" >&2; exit 1; }
 operation="$1"
 case "$operation" in
   retained-acceptance|retained-github)
-    [[ "${RELEASE_OPERATION:-}" = recover-0.2.7-retained || "${RELEASE_OPERATION:-}" = recover-0.2.7-retained-404 ]] \
+    [[ "${RELEASE_OPERATION:-}" = recover-0.2.7-retained || "${RELEASE_OPERATION:-}" = recover-0.2.7-retained-404 || "${RELEASE_OPERATION:-}" = recover-0.2.7-preserved ]] \
       || fail 'operation and release mode differ'
     for credential in NODE_AUTH_TOKEN NPM_TOKEN CARGO_REGISTRY_TOKEN TWINE_PASSWORD PYPI_TOKEN PYPI_API_TOKEN \
         ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL; do
@@ -74,13 +74,20 @@ capture_helper() {
   /bin/chmod 400 "$capture/$1"
 }
 capture_helper verify_release_recovery_027.sh
-if [ "$release_operation" = recover-0.2.7-retained-404 ]; then
+if [[ "$release_operation" = recover-0.2.7-retained-404 || "$release_operation" = recover-0.2.7-preserved ]]; then
   capture_helper verify_release_recovery_027.py
   /usr/bin/env -i GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1 \
     /usr/bin/git --no-replace-objects -c core.fsmonitor=false -c core.untrackedCache=false \
       -C "$GITHUB_WORKSPACE" show "$GITHUB_SHA:governance/releases/v0.2.7/RETAINED-METADATA-POLICY.json" \
       > "$capture/RETAINED-METADATA-POLICY.json"
   /bin/chmod 400 "$capture/RETAINED-METADATA-POLICY.json"
+  if [ "$release_operation" = recover-0.2.7-preserved ]; then
+    /usr/bin/env -i GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1 \
+      /usr/bin/git --no-replace-objects -c core.fsmonitor=false -c core.untrackedCache=false \
+        -C "$GITHUB_WORKSPACE" show "$GITHUB_SHA:governance/releases/v0.2.7/PRESERVED-PAYLOAD-TRANSPORT.json" \
+        > "$capture/PRESERVED-PAYLOAD-TRANSPORT.json"
+    /bin/chmod 400 "$capture/PRESERVED-PAYLOAD-TRANSPORT.json"
+  fi
 fi
 key_home="$capture/signing-keys"
 /bin/mkdir -m 700 "$key_home"
@@ -122,12 +129,19 @@ if [ "$operation" = python-readback ]; then
 fi
 /usr/bin/env -i "${common[@]}" /bin/bash --noprofile --norc -p \
   "$capture/verify_release_recovery_027.sh" > "$capture/identity.json"
-if [ "$release_operation" = recover-0.2.7-retained-404 ]; then
+if [[ "$release_operation" = recover-0.2.7-retained-404 || "$release_operation" = recover-0.2.7-preserved ]]; then
   /usr/bin/env -i GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1 \
     /usr/bin/git --no-replace-objects -c core.fsmonitor=false -c core.untrackedCache=false \
       -C "$GITHUB_WORKSPACE" show "$GITHUB_SHA:governance/releases/v0.2.7/RETAINED-METADATA-POLICY.json" \
       | /usr/bin/cmp - "$capture/RETAINED-METADATA-POLICY.json" \
       || fail 'captured retained metadata policy changed'
+  if [ "$release_operation" = recover-0.2.7-preserved ]; then
+    /usr/bin/env -i GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1 \
+      /usr/bin/git --no-replace-objects -c core.fsmonitor=false -c core.untrackedCache=false \
+        -C "$GITHUB_WORKSPACE" show "$GITHUB_SHA:governance/releases/v0.2.7/PRESERVED-PAYLOAD-TRANSPORT.json" \
+        | /usr/bin/cmp - "$capture/PRESERVED-PAYLOAD-TRANSPORT.json" \
+        || fail 'captured preserved transport policy changed'
+  fi
 fi
 
 case "$operation" in

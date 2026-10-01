@@ -211,7 +211,7 @@ grep -q 'publication credentials must be absent' "$receipts/stderr"
 reset_case bootstrap-rejects-ref
 expect_failure /usr/bin/env ACTIONS_ID_TOKEN_REQUEST_TOKEN= RELEASE_TAG=v0.2.7 /bin/bash "$helper" preflight
 grep -q 'invalid controller commit or maintenance tag' "$receipts/stderr"
-for operation in recover-0.2.7-retained recover-0.2.7-retained-404; do
+for operation in recover-0.2.7-retained recover-0.2.7-retained-404 recover-0.2.7-preserved; do
   for retained_mode in accept retained-readback; do
     reset_case "bootstrap-$operation-$retained_mode"
     expect_failure /usr/bin/env -i "RELEASE_OPERATION=$operation" RELEASE_WORKFLOW_DRY_RUN=true \

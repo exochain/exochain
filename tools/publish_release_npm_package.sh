@@ -27,7 +27,7 @@ fail() {
 }
 
 is_retained_operation() {
-  [[ "$RELEASE_OPERATION" = recover-0.2.7-retained || "$RELEASE_OPERATION" = recover-0.2.7-retained-404 ]]
+  [[ "$RELEASE_OPERATION" = recover-0.2.7-retained || "$RELEASE_OPERATION" = recover-0.2.7-retained-404 || "$RELEASE_OPERATION" = recover-0.2.7-preserved ]]
 }
 
 is_recovery_operation() {
@@ -217,7 +217,7 @@ validate_npm_release_context() {
         || fail "normal release cannot accept maintenance refs or recovery context"
       [ -n "${RELEASE_GITHUB_TOKEN:-}" ] || fail "RELEASE_GITHUB_TOKEN is required"
       ;;
-    recover-0.2.7|recover-0.2.7-retained|recover-0.2.7-retained-404)
+    recover-0.2.7|recover-0.2.7-retained|recover-0.2.7-retained-404|recover-0.2.7-preserved)
       if is_retained_operation; then
         [[ "${RELEASE_NPM_MODE:-}" = retained-accept || "${RELEASE_NPM_MODE:-}" = retained-readback ]] \
           || fail 'explicit retained-accept mode or retained-readback required'
@@ -420,7 +420,7 @@ exit_code = int(status) if status else None
 upload_code = int(upload_exit) if upload_exit else None
 assert exit_code is None or 0 <= exit_code <= 255
 assert upload_code is None or 0 <= upload_code <= 255
-assert operation in ("recover-0.2.7", "recover-0.2.7-retained", "recover-0.2.7-retained-404")
+assert operation in ("recover-0.2.7", "recover-0.2.7-retained", "recover-0.2.7-retained-404", "recover-0.2.7-preserved")
 assert operation == "recover-0.2.7" or (phase == "result" and attempted == "false" and upload_code is None)
 value = {"schema":"exochain-npm-recovery-receipt/v1", "operation":operation,
          "controller_commit":commit, "controller_ref":ref, "package":package,

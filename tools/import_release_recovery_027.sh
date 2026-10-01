@@ -7,7 +7,7 @@ set -euo pipefail
 umask 077
 fail() { printf 'release recovery import failed: %s\n' "$1" >&2; exit 1; }
 if [ "$#" -eq 1 ] && [ "$1" = retained-acceptance ]; then
-  [[ "${RELEASE_OPERATION:-}" = recover-0.2.7-retained || "${RELEASE_OPERATION:-}" = recover-0.2.7-retained-404 ]] \
+  [[ "${RELEASE_OPERATION:-}" = recover-0.2.7-retained || "${RELEASE_OPERATION:-}" = recover-0.2.7-retained-404 || "${RELEASE_OPERATION:-}" = recover-0.2.7-preserved ]] \
     || fail 'operation and release mode differ'
   [[ "${RELEASE_WORKFLOW_DRY_RUN:-}" = true || "${RELEASE_WORKFLOW_DRY_RUN:-}" = false ]] \
     || fail 'explicit workflow dry-run boolean required'
@@ -57,7 +57,7 @@ for helper in verify_release_recovery_027.sh verify_release_recovery_027.py \
 done
 trusted_git show "$GITHUB_SHA:governance/releases/v0.2.7/RECOVERY-MANIFEST.json" > "$capture/RECOVERY-MANIFEST.json"
 /bin/chmod 400 "$capture/RECOVERY-MANIFEST.json"
-if [[ "$RELEASE_OPERATION" = recover-0.2.7-retained || "$RELEASE_OPERATION" = recover-0.2.7-retained-404 ]]; then
+if [[ "$RELEASE_OPERATION" = recover-0.2.7-retained || "$RELEASE_OPERATION" = recover-0.2.7-retained-404 || "$RELEASE_OPERATION" = recover-0.2.7-preserved ]]; then
   for helper in import_release_recovery_027.sh publish_release_npm_package.sh recover_release_python_027.sh recover_github_release_027.py; do
     trusted_git show "$GITHUB_SHA:tools/$helper" > "$capture/$helper"
     /bin/chmod 400 "$capture/$helper"
@@ -68,9 +68,13 @@ if [[ "$RELEASE_OPERATION" = recover-0.2.7-retained || "$RELEASE_OPERATION" = re
     trusted_git show "$GITHUB_SHA:governance/releases/v0.2.7/$record.json" > "$capture/$record.json"
     /bin/chmod 400 "$capture/$record.json"
   done
-  if [ "$RELEASE_OPERATION" = recover-0.2.7-retained-404 ]; then
+  if [[ "$RELEASE_OPERATION" = recover-0.2.7-retained-404 || "$RELEASE_OPERATION" = recover-0.2.7-preserved ]]; then
     trusted_git show "$GITHUB_SHA:governance/releases/v0.2.7/RETAINED-METADATA-POLICY.json" > "$capture/RETAINED-METADATA-POLICY.json"
     /bin/chmod 400 "$capture/RETAINED-METADATA-POLICY.json"
+  fi
+  if [ "$RELEASE_OPERATION" = recover-0.2.7-preserved ]; then
+    trusted_git show "$GITHUB_SHA:governance/releases/v0.2.7/PRESERVED-PAYLOAD-TRANSPORT.json" > "$capture/PRESERVED-PAYLOAD-TRANSPORT.json"
+    /bin/chmod 400 "$capture/PRESERVED-PAYLOAD-TRANSPORT.json"
   fi
   trusted_git show '2198e4ef610e9ef6d04adf726f7f4b3e156a3bc1:.github/workflows/release.yml' > "$capture/retaining-workflow.yml"
   /bin/chmod 400 "$capture/retaining-workflow.yml"
@@ -146,7 +150,7 @@ class Transport:
     A validated storage Location is fetched in a separate credential-free
     process. Signed storage URLs and authorization values are never receipts.
     """
-    def __init__(self, scratch, token, manifest, retained=None, *, policy=None):
+    def __init__(self, scratch, token, manifest, retained=None, *, policy=None, preserved=None):
         # Opaque Bearer transport syntax (RFC 6750 section 2.1), not a
         # GitHub token-prefix/length assumption. This alphabet cannot break
         # the quoted curl config below: no quotes, backslashes or whitespace.
@@ -156,14 +160,19 @@ class Transport:
         self.endpoints = fixed_endpoints(manifest)
         self.retained = retained
         self.policy = policy
+        self.preserved = preserved
         self.manifest = manifest
         if policy is not None:
             require(retained is not None and policy.get("operation") == "recover-0.2.7-retained-404",
                     "original observation policy is not selected")
             self.endpoints["historical_failure"] = API + "/artifacts/11124850978"
         self.retained_storage = set()
+        self.preserved_storage = set()
+        if preserved is not None:
+            require(policy is not None and preserved.get("operation") == "recover-0.2.7-preserved",
+                    "preserved transport requires original observation policy")
         if retained is not None:
-            metadata = [retained[kind]["metadata"] for kind in ("payload", "custody")]
+            metadata = [retained[kind]["metadata"] for kind in (("custody",) if preserved is not None else ("payload", "custody"))]
             self.endpoints["archives"] = [(m["id"], m["archive_download_url"]) for m in metadata]
             self.endpoints["metadata"] += [(m["id"], m["url"]) for m in metadata]
             retaining_run = API + f"/runs/{retained['retaining']['run_id']}/attempts/1"
@@ -177,12 +186,25 @@ class Transport:
             self.authenticated.update([self.endpoints["retaining_run"], *self.endpoints["retaining_jobs"]])
         if policy is not None:
             self.authenticated.add(self.endpoints["historical_failure"])
+        if preserved is not None:
+            base = "https://api.github.com/repos/" + preserved["repository"]["name"]
+            release = base + f"/releases/{preserved['release']['id']}"
+            self.endpoints["preserved"] = [
+                ("repository", base), ("ref", base + "/git/ref/" + preserved["anchor"]["ref"].removeprefix("refs/")),
+                ("tag", base + "/git/tags/" + preserved["anchor"]["object"]), ("release", release),
+                ("assets-first", release + "/assets?per_page=100&page=1"),
+                ("assets-terminal", release + "/assets?per_page=100&page=2"),
+                ("asset", preserved["asset"]["url"]), ("latest", base + "/releases/latest")]
+            self.authenticated.update(url for _, url in self.endpoints["preserved"])
 
-    def _get(self, url, destination, limit, authenticated, *, allow_original_404=False):
-        retained_payload = (self.retained is not None and limit == self.retained["payload"]["metadata"]["size_in_bytes"]
+    def _get(self, url, destination, limit, authenticated, *, allow_original_404=False, binary=False):
+        retained_payload = (self.preserved is None and self.retained is not None and limit == self.retained["payload"]["metadata"]["size_in_bytes"]
                             and (url == self.retained["payload"]["metadata"]["archive_download_url"]
                                  or (not authenticated and url in self.retained_storage)))
-        require(type(limit) is int and 0 < limit and (limit <= 96 * 1024 * 1024 or retained_payload), "invalid response bound")
+        preserved_payload = (self.preserved is not None and limit == self.preserved["asset"]["size"]
+                             and ((authenticated and binary and url == self.preserved["asset"]["url"])
+                                  or (not authenticated and url in self.preserved_storage)))
+        require(type(limit) is int and 0 < limit and (limit <= 96 * 1024 * 1024 or retained_payload or preserved_payload), "invalid response bound")
         destination = Path(destination)
         require(not os.path.lexists(destination), "download destination must be absent")
         descriptor, header_name = tempfile.mkstemp(prefix="headers-", dir=self.scratch)
@@ -190,7 +212,7 @@ class Transport:
         header_path = Path(header_name)
         config = 'header = "User-Agent: exochain-release-recovery-027"\n'
         if authenticated:
-            config += 'header = "Accept: application/vnd.github+json"\nheader = "X-GitHub-Api-Version: 2022-11-28"\n'
+            config += 'header = "Accept: ' + ('application/octet-stream' if binary else 'application/vnd.github+json') + '"\nheader = "X-GitHub-Api-Version: 2022-11-28"\n'
             config += 'header = "Authorization: Bearer ' + self.token + '"\n'
         argv = ["/usr/bin/curl", "--disable", "--silent", "--show-error", "--globoff", "--request", "GET",
                 "--proto", "=https", "--tlsv1.2", "--connect-timeout", "10", "--max-time", "240",
@@ -293,6 +315,78 @@ class Transport:
             require(artifact in [self.retained[k]["metadata"] for k in ("payload", "custody")], "retained artifact is not exactly pinned")
         payload = self.retained is not None and artifact['id'] == self.retained['payload']['metadata']['id']
         self._archive_bytes(fixed[artifact['id']], destination, limit, payload)
+
+    def preserved_observation(self, custody, directory):
+        require(self.preserved is not None, "preserved transport is not selected")
+        directory = Path(directory)
+        directory.mkdir(mode=0o700)
+        requests = []
+        for role, url in self.endpoints["preserved"]:
+            started = utc_now()
+            path = directory / (role + ".json")
+            self.get(url, path, JSON_LIMIT)
+            finished = utc_now()
+            requests.append({"endpoint_role":role,"request_started_at":started,"request_finished_at":finished,
+                             "status":200,"data":custody.load_json(path, "preserved transport metadata")})
+        observation = {"schema":"exochain-preserved-payload-observation-027/v1",
+                       "operation":custody.PRESERVED_OPERATION,
+                       "preserved_policy_sha256":custody.PRESERVED_PAYLOAD_POLICY_SHA256,"requests":requests}
+        custody.verify_preserved_payload_observation(self.preserved, observation)
+        dump(directory / "observation.json", observation)
+        return observation
+
+    def preserved_archive(self, destination):
+        require(self.preserved is not None, "preserved transport is not selected")
+        destination = Path(destination)
+        require(not os.path.lexists(destination), "download destination must be absent")
+        asset = self.preserved["asset"]
+        succeeded = False
+        try:
+            status, locations = self._get(asset["url"], destination, asset["size"], True, binary=True)
+            if status == 302:
+                require(len(locations) == 1, "preserved download lacks one storage redirect")
+                url = locations[0]
+                require(type(url) is str and not any(ord(c) < 33 or c == "\\" for c in url),
+                        "invalid preserved storage redirect")
+                try:
+                    parsed = urlsplit(url)
+                    approved = (parsed.scheme == "https" and parsed.netloc == self.preserved["storage"]["host"]
+                                and parsed.path == self.preserved["storage"]["path"] and not parsed.fragment)
+                except ValueError:
+                    approved = False
+                require(approved, "preserved redirect is outside pinned HTTPS storage")
+                destination.unlink()
+                self.preserved_storage.add(url)
+                try:
+                    status, locations = self._get(url, destination, asset["size"], False)
+                finally:
+                    self.preserved_storage.discard(url)
+            require(status == 200 and not locations, "preserved storage must return bytes without further redirects")
+            descriptor = os.open(destination, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+            try:
+                before = os.fstat(descriptor)
+                require(stat.S_ISREG(before.st_mode) and before.st_nlink == 1 and before.st_size == asset["size"],
+                        "preserved archive size or file identity differs")
+                digest = hashlib.sha256()
+                remaining = asset["size"]
+                with os.fdopen(descriptor, "rb", closefd=False) as source:
+                    while chunk := source.read(min(1024 * 1024, remaining + 1)):
+                        remaining -= len(chunk)
+                        require(remaining >= 0, "preserved archive exceeded hash byte bound")
+                        digest.update(chunk)
+                require(remaining == 0, "preserved archive truncated during hashing")
+                after = os.fstat(descriptor)
+                current = os.lstat(destination)
+                identity = lambda value: (value.st_dev,value.st_ino,value.st_mode,value.st_nlink,
+                                          value.st_size,value.st_mtime_ns,value.st_ctime_ns)
+                require(identity(before) == identity(after) == identity(current), "preserved archive changed during hashing")
+                require("sha256:" + digest.hexdigest() == asset["digest"], "preserved archive digest differs")
+            finally:
+                os.close(descriptor)
+            succeeded = True
+        finally:
+            if not succeeded:
+                destination.unlink(missing_ok=True)
 
     def receipt_archive(self, metadata, destination):
         identifier, limit = metadata.get('id'), metadata.get('size_in_bytes')
@@ -409,7 +503,7 @@ def capture_observer(custody, transport, capture: Path, evidence: Path, role: st
     return observer
 
 
-def fetch_retained_controls(manifest, record, custody, transport, evidence: Path, *, phase: str) -> dict:
+def fetch_retained_controls(manifest, record, custody, transport, evidence: Path, *, phase: str, preserved=None) -> dict:
     require(phase in ("acquisition-start", "acquisition-end", "producer-final", "writer-final", "writer-readback"),
             "invalid retained control phase")
     directory = evidence / (phase + "-controls")
@@ -420,14 +514,21 @@ def fetch_retained_controls(manifest, record, custody, transport, evidence: Path
         {"run":transport.endpoints["retaining_run"], "jobs":transport.endpoints["retaining_jobs"]},
         record["retaining"]["jobs_total"])
     retained = []
-    for kind in ("payload", "custody"):
+    kinds = ("custody",) if preserved is not None else ("payload", "custody")
+    for kind in kinds:
         pinned = record[kind]["metadata"]
         path = directory / (kind + "-metadata.json")
         transport.get(pinned["url"], path, JSON_LIMIT)
         retained.append(custody.load_json(path, "fresh retained metadata"))
     controls = {"original_run":original_run,"original_jobs":original_jobs,
-                "retaining_run":retaining_run,"retaining_jobs":retaining_jobs,
-                "retained_metadata":retained,"observed_at":utc_now()}
+                "retaining_run":retaining_run,"retaining_jobs":retaining_jobs}
+    if preserved is not None:
+        require(transport.preserved == preserved, "selected preserved transport differs")
+        controls.update(custody_metadata=retained[0],
+                        preserved_observation=transport.preserved_observation(custody, directory / "preserved"))
+    else:
+        controls["retained_metadata"] = retained
+    controls["observed_at"] = utc_now()
     custody.validate_run_identity(original_run, custody.RUN_ID, 1, custody.PRODUCT_COMMIT, "v0.2.7")
     custody.exact(len(custody.complete_jobs(original_jobs, custody.RUN_ID, 1,
         custody.PRODUCT_COMMIT, "v0.2.7")), manifest["origin"]["jobs_total"], "fresh original jobs")
@@ -436,7 +537,7 @@ def fetch_retained_controls(manifest, record, custody, transport, evidence: Path
     custody.exact(len(custody.complete_jobs(retaining_jobs, custody.RETAINED_RUN_ID, 1,
         custody.RETAINED_COMMIT, "v0.2.7-recover.2")), record["retaining"]["jobs_total"], "fresh retaining jobs")
     observed = custody.timestamp(controls["observed_at"], "retained control observation")
-    for actual, kind in zip(retained, ("payload", "custody")):
+    for actual, kind in zip(retained, kinds):
         pinned = record[kind]["metadata"]
         custody.exact(custody.semantic_digest(actual), custody.semantic_digest(pinned), "fresh retained " + kind)
         require(actual == pinned and actual.get("expired") is False and
@@ -462,20 +563,28 @@ def fetch_original_observation_pass(manifest, record, policy, custody, transport
     return result
 
 
-def acquire_retained(manifest, record, custody, transport, evidence, archives, candidate, workflow, *, policy=None, observer=None):
+def acquire_retained(manifest, record, custody, transport, evidence, archives, candidate, workflow, *, policy=None, observer=None, preserved=None):
     """Canonical custody acquisition; no local archive fallback or caller endpoints.
 
     Callers still perform the shared package/native structure and genuine native
     cryptography before claiming acceptance. Neither output alone asserts crypto.
     """
+    require(preserved is None or policy is not None, "preserved acquisition requires original observation policy")
+    extra = {"preserved":preserved} if preserved is not None else {}
+    if preserved is not None:
+        custody.validate_preserved_payload_policy(manifest, record, policy, preserved)
     if policy is not None:
         custody.validate_retained_metadata_policy(manifest, record, policy)
         require(type(observer) is dict, "actual retained observer is required")
-        controls_before = fetch_retained_controls(manifest, record, custody, transport, evidence, phase="acquisition-start")
+        controls_before = fetch_retained_controls(manifest, record, custody, transport, evidence, phase="acquisition-start", **extra)
         observations_before = fetch_original_observation_pass(manifest, record, policy, custody, transport,
             evidence, observer, phase="acquisition-before")
         for kind in ("payload", "custody"):
-            transport.archive(record[kind]["metadata"], archives / f"{record[kind]['metadata']['id']}.zip")
+            destination = archives / f"{record[kind]['metadata']['id']}.zip"
+            if kind == "payload" and preserved is not None:
+                transport.preserved_archive(destination)
+            else:
+                transport.archive(record[kind]["metadata"], destination)
         historical = archives / f"{record['custody']['metadata']['id']}.zip"
         verified = custody.verify_retained_transport(manifest, record, archives, candidate)
         authenticated_history = custody.read_historical_custody(manifest, record, historical)
@@ -489,15 +598,18 @@ def acquire_retained(manifest, record, custody, transport, evidence, archives, c
         dump(evidence / "acquisition-historical-result.json", authenticated_history["origin"])
         observations_after = fetch_original_observation_pass(manifest, record, policy, custody, transport,
             evidence, observer, phase="acquisition-after")
-        controls_after = fetch_retained_controls(manifest, record, custody, transport, evidence, phase="acquisition-end")
-        origin_input = {"schema":"exochain-retained-origin-027/v2","operation":custody.RETAINED_METADATA_OPERATION,
+        controls_after = fetch_retained_controls(manifest, record, custody, transport, evidence, phase="acquisition-end", **extra)
+        operation = custody.PRESERVED_OPERATION if preserved is not None else custody.RETAINED_METADATA_OPERATION
+        origin_input = {"schema":"exochain-retained-origin-027/" + ("v3" if preserved is not None else "v2"),"operation":operation,
             "policy_sha256":custody.RETAINED_METADATA_POLICY_SHA256,
             "observations":{"schema":"exochain-retained-original-observations-027/v1",
-                "operation":custody.RETAINED_METADATA_OPERATION,"policy_sha256":custody.RETAINED_METADATA_POLICY_SHA256,
+                "operation":operation,"policy_sha256":custody.RETAINED_METADATA_POLICY_SHA256,
                 "observer":observer,"before":observations_before,"after":observations_after},
             "controls_before":controls_before,"controls_after":controls_after,
             "retaining_tag":retaining_tag}
-        origin = custody.verify_retained_origin(manifest, record, origin_input, historical, workflow, policy=policy)
+        if preserved is not None:
+            origin_input["preserved_policy_sha256"] = custody.PRESERVED_PAYLOAD_POLICY_SHA256
+        origin = custody.verify_retained_origin(manifest, record, origin_input, historical, workflow, policy=policy, **extra)
         dump(evidence / "acquisition-origin-input.json", origin_input)
         dump(evidence / "acquisition-origin-result.json", origin)
         dump(evidence / "retained-transport-result.json", verified)
@@ -538,19 +650,22 @@ def acquire_retained(manifest, record, custody, transport, evidence, archives, c
 
 def finalize_retained_observations(manifest, record, policy, custody, transport, evidence: Path,
                                    historical: Path, workflow: Path, *, observer: dict,
-                                   initial_input: dict, phase: str) -> dict:
+                                   initial_input: dict, phase: str, preserved=None) -> dict:
     require(phase in ("producer-final", "writer-final", "writer-readback"), "invalid final observation phase")
     custody.validate_retained_metadata_policy(manifest, record, policy)
-    require(initial_input.get("schema") == "exochain-retained-origin-027/v2" and
+    extra = {"preserved":preserved} if preserved is not None else {}
+    require(initial_input.get("schema") == "exochain-retained-origin-027/" + ("v3" if preserved is not None else "v2") and
             initial_input["observations"]["observer"] == observer, "initial origin or observer differs")
-    initial = custody.verify_retained_origin(manifest, record, initial_input, historical, workflow, policy=policy)
+    initial = custody.verify_retained_origin(manifest, record, initial_input, historical, workflow, policy=policy, **extra)
     after = fetch_original_observation_pass(manifest, record, policy, custody, transport,
         evidence, observer, phase=phase)
-    controls_after = fetch_retained_controls(manifest, record, custody, transport, evidence, phase=phase)
+    controls_after = fetch_retained_controls(manifest, record, custody, transport, evidence, phase=phase, **extra)
     final_input = {**initial_input, "observations":{**initial_input["observations"],"after":after},
                    "controls_after":controls_after}
-    final = custody.verify_retained_origin(manifest, record, final_input, historical, workflow, policy=policy)
+    final = custody.verify_retained_origin(manifest, record, final_input, historical, workflow, policy=policy, **extra)
     require(final["original_vector"] == initial["original_vector"], "original availability transitioned after acquisition")
+    if preserved is not None:
+        custody.exact(final["preserved_transport"], initial["preserved_transport"], "preserved transport changed after acquisition")
     dump(evidence / (phase + "-origin-input.json"), final_input)
     dump(evidence / (phase + "-origin-result.json"), final)
     return final_input
@@ -839,15 +954,16 @@ def accept_publications(custody, publications, candidate, capture, evidence, run
     return outcomes
 
 
-def retained_github_preflight(capture, custody, manifest, publications, record, candidate, evidence, *, policy=None):
+def retained_github_preflight(capture, custody, manifest, publications, record, candidate, evidence, *, policy=None, preserved=None):
     github = load_module(capture, 'recover_github_release_027')
+    extra = {"preserved":preserved} if preserved is not None else {}
     receipt, expected = github.retained_release_metadata(manifest,publications,record,
-        os.environ['GITHUB_SHA'],os.environ['GITHUB_REF'],policy=policy)
+        os.environ['GITHUB_SHA'],os.environ['GITHUB_REF'],policy=policy,**extra)
     assets = github.release_assets(custody,manifest,candidate,receipt)
     provider = github.GitHub(os.environ['RELEASE_GITHUB_TOKEN'],custody.parse_json)
     predecessor = None
     if policy is not None:
-        transport = Transport(capture,os.environ['RELEASE_GITHUB_TOKEN'],manifest,record,policy=policy)
+        transport = Transport(capture,os.environ['RELEASE_GITHUB_TOKEN'],manifest,record,policy=policy,**extra)
         predecessor = github.authenticate_failed_predecessor(transport,custody,
             SimpleNamespace(API=API,JSON_LIMIT=JSON_LIMIT,utc_now=utc_now),
             evidence,manifest,publications,record,policy)
@@ -861,8 +977,9 @@ def publication_result(publication):
             "public_bytes_verified":True,"crypto_verified":True}
 
 
-def create_retained_receipts(custody, manifest, record, context, summary, checked_publications, evidence, *, policy=None):
-    bindings = custody.retained_receipt_bindings(manifest, record, context, summary["origin"], policy=policy)
+def create_retained_receipts(custody, manifest, record, context, summary, checked_publications, evidence, *, policy=None, preserved=None):
+    extra = {"preserved":preserved} if preserved is not None else {}
+    bindings = custody.retained_receipt_bindings(manifest, record, context, summary["origin"], policy=policy, **extra)
     require(summary["rust"] == {"version":"0.2.7","crates_verified":32}, "current Rust acceptance incomplete")
     transport = summary["retained_transport"]
     for key,value in {"retained_archives_verified":2,"payload_files_verified":40,"original_zip_envelopes_verified":0}.items():
@@ -883,6 +1000,8 @@ def create_retained_receipts(custody, manifest, record, context, summary, checke
     identity = custody.load_json(evidence / "identity-after.json", "final signatures")
     for key in ("controller_signature_verified","product_signature_verified","retaining_signature_verified"):
         require(identity.get(key) is True, "current signatures incomplete")
+    if preserved is not None:
+        require(identity.get("preserved_signature_verified") is True, "preserved anchor signature incomplete")
     custody_result = {"payload_files_verified":summary["files"]["files_verified"],
         "retained_archives_verified":transport["retained_archives_verified"],
         "original_zip_envelopes_verified":transport["original_zip_envelopes_verified"],
@@ -896,10 +1015,13 @@ def create_retained_receipts(custody, manifest, record, context, summary, checke
     members = []
     for name, result in (("custody",custody_result),("acceptance",acceptance_result)):
         path = receipt_directory / (name + "-receipt.json")
-        value = {"schema":"exochain-retained-"+name+"-receipt-027/"+("v2" if policy is not None else "v1"),
+        value = {"schema":"exochain-retained-"+name+"-receipt-027/"+("v3" if preserved is not None else "v2" if policy is not None else "v1"),
                  **bindings,"results":result}
         if policy is not None:
             value["original_observations"] = summary["origin"]["observations"]
+        if preserved is not None:
+            value["preserved_observations"] = {phase:summary["origin_input"]["controls_" + phase]["preserved_observation"]
+                                               for phase in ("before", "after")}
         dump(path, value)
         path.chmod(0o600)
         data = custody.read_regular(path, 512 * 1024, "current receipt")
@@ -909,7 +1031,7 @@ def create_retained_receipts(custody, manifest, record, context, summary, checke
     return members
 
 
-def assert_captured_inputs(capture, custody, *, policy=None):
+def assert_captured_inputs(capture, custody, *, policy=None, preserved=None):
     paths = {"tools/"+name:name for name in (
         "verify_release_recovery_027.sh", "verify_release_recovery_027.py", "verify_npm_release_tarball.py",
         "verify_npm_release_package.mjs", "verify_python_release_package.py", "verify_release_sbom.py",
@@ -918,6 +1040,8 @@ def assert_captured_inputs(capture, custody, *, policy=None):
         "RECOVERY-MANIFEST.json", "PUBLICATION-IDENTITIES.json", "RETAINED-CUSTODY.json")})
     if policy is not None:
         paths["governance/releases/v0.2.7/RETAINED-METADATA-POLICY.json"] = "RETAINED-METADATA-POLICY.json"
+    if preserved is not None:
+        paths["governance/releases/v0.2.7/PRESERVED-PAYLOAD-TRANSPORT.json"] = "PRESERVED-PAYLOAD-TRANSPORT.json"
     environment = dict(BASE_ENV,GIT_CONFIG_GLOBAL="/dev/null",GIT_CONFIG_NOSYSTEM="1",GIT_NO_REPLACE_OBJECTS="1")
     for source, name in paths.items():
         result = subprocess.run(["/usr/bin/git","--no-replace-objects","-c","core.fsmonitor=false",
@@ -940,17 +1064,20 @@ def main():
     archives = capture / "archives"; archives.mkdir(mode=0o700)
     token = os.environ["RELEASE_GITHUB_TOKEN"]
     operation = os.environ.get("RELEASE_OPERATION")
-    retained = operation in ("recover-0.2.7-retained", "recover-0.2.7-retained-404")
+    retained = operation in ("recover-0.2.7-retained", "recover-0.2.7-retained-404", custody.PRESERVED_OPERATION)
     record = custody.load_retained_record(manifest, capture / "RETAINED-CUSTODY.json") if retained else None
     policy = custody.load_retained_metadata_policy(manifest, record, capture / "RETAINED-METADATA-POLICY.json") \
-        if operation == "recover-0.2.7-retained-404" else None
-    transport = Transport(capture, token, manifest, record, policy=policy) if retained else Transport(capture, token, manifest)
+        if operation in ("recover-0.2.7-retained-404", custody.PRESERVED_OPERATION) else None
+    preserved = custody.load_preserved_payload_policy(manifest, record, policy, capture / "PRESERVED-PAYLOAD-TRANSPORT.json") \
+        if operation == custody.PRESERVED_OPERATION else None
+    extra = {"preserved":preserved} if preserved is not None else {}
+    transport = Transport(capture, token, manifest, record, policy=policy, **extra) if retained else Transport(capture, token, manifest)
     python, node = os.environ["RELEASE_PYTHON"], os.environ["RELEASE_NODE"]
     require(Path(node).is_absolute() and Path(node).resolve().is_file(), "invalid pinned Node executable")
     require(shutil.disk_usage(runner_temp).free >= 4 * 1024**3, "import requires at least four GiB free")
     before = custody.load_json(capture / "identity-before.json", "initial identity")
     if retained:
-        assert_captured_inputs(capture, custody, policy=policy)
+        assert_captured_inputs(capture, custody, policy=policy, **extra)
     summary = {"controller_sha":before["controller_sha"],"controller_ref":before["controller_ref"],
                "product":manifest["product"]}
     helper = [python, "-I", "-B", str(capture / "verify_release_recovery_027.py")]
@@ -960,7 +1087,7 @@ def main():
         else:
             observer = None
         summary["origin"], summary["retained_transport"] = acquire_retained(manifest, record, custody, transport, evidence, archives,
-                                              candidate, capture / "retaining-workflow.yml", policy=policy, observer=observer)
+                                              candidate, capture / "retaining-workflow.yml", policy=policy, observer=observer, **extra)
     else:
         summary["origin"] = fetch_origin(manifest, custody, transport, evidence)
         command(helper + ["origin", "--manifest", str(manifest_path), "--run", str(evidence / "run.json"),
@@ -981,7 +1108,7 @@ def main():
     if retained:
         publications = custody.load_publications(manifest, capture / "PUBLICATION-IDENTITIES.json")
         checked_publications = accept_publications(custody, publications, candidate, capture, evidence, runner_temp)
-        retained_github_preflight(capture,custody,manifest,publications,record,candidate,evidence,policy=policy)
+        retained_github_preflight(capture,custody,manifest,publications,record,candidate,evidence,policy=policy,**extra)
     command(helper + ["files", "--manifest", str(manifest_path), "--directory", str(candidate)], evidence / "final-file-check.json")
     # No package was executed. Recheck source, signatures and authoritative
     # remote tags immediately before exposing accepted data to later jobs.
@@ -997,16 +1124,18 @@ def main():
             initial_input = custody.load_json(evidence / "acquisition-origin-input.json", "complete acquisition origin")
             final_input = finalize_retained_observations(manifest, record, policy, custody, transport, evidence,
                 archives / f"{record['custody']['metadata']['id']}.zip", capture / "retaining-workflow.yml",
-                observer=observer, initial_input=initial_input, phase="producer-final")
+                observer=observer, initial_input=initial_input, phase="producer-final", **extra)
             summary["origin"] = custody.verify_retained_origin(manifest, record, final_input,
-                archives / f"{record['custody']['metadata']['id']}.zip", capture / "retaining-workflow.yml", policy=policy)
+                archives / f"{record['custody']['metadata']['id']}.zip", capture / "retaining-workflow.yml", policy=policy, **extra)
+            if preserved is not None:
+                summary["origin_input"] = final_input
         # Verify fixed files after the last identity checker, not just before it.
         summary["files"] = custody.verify_files(manifest, candidate)
-        assert_captured_inputs(capture, custody, policy=policy)
+        assert_captured_inputs(capture, custody, policy=policy, **extra)
         context = current_receipt_context(custody, transport, capture, evidence, python, node,
             observer=observer, checked_at=utc_now() if policy is not None else None)
         members = create_retained_receipts(custody, manifest, record, context, summary, checked_publications,
-            evidence, policy=policy)
+            evidence, policy=policy, **extra)
     shutil.copyfile(capture / "identity-before.json", evidence / "identity-before.json")
     dump(evidence / "import-receipt.json", summary)
     check_destinations(runner_temp, destination)

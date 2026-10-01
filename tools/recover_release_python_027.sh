@@ -297,7 +297,7 @@ main() {
   [[ "$#" = 1 && ( "$1" = preflight || "$1" = readback || "$1" = accept || "$1" = retained-readback ) ]] || fail 'expected preflight, readback, accept or retained-readback'
   local mode="$1" credential path
   if [[ "$mode" = accept || "$mode" = retained-readback ]]; then
-    [[ "${RELEASE_OPERATION:-}" = recover-0.2.7-retained || "${RELEASE_OPERATION:-}" = recover-0.2.7-retained-404 ]] \
+    [[ "${RELEASE_OPERATION:-}" = recover-0.2.7-retained || "${RELEASE_OPERATION:-}" = recover-0.2.7-retained-404 || "${RELEASE_OPERATION:-}" = recover-0.2.7-preserved ]] \
       || fail 'operation and release mode differ'
     [[ "${RELEASE_WORKFLOW_DRY_RUN:-}" = true || "${RELEASE_WORKFLOW_DRY_RUN:-}" = false ]] \
       || fail 'explicit workflow dry-run boolean required'
@@ -398,7 +398,7 @@ main() {
       "$GITHUB_SHA" "$GITHUB_REF" "$RELEASE_OPERATION" <<'PY'
 import json,os,pathlib,sys
 receipts,root,sha,ref,operation=sys.argv[1:]; source=pathlib.Path(receipts); parent=pathlib.Path(root)
-assert operation in ('recover-0.2.7-retained','recover-0.2.7-retained-404')
+assert operation in ('recover-0.2.7-retained','recover-0.2.7-retained-404','recover-0.2.7-preserved')
 assert parent.is_dir() and not parent.is_symlink()
 destination=parent/'python'; destination.mkdir(mode=0o700)
 records=[json.loads((source/(name+'.result.json')).read_text()) for name in
