@@ -332,6 +332,286 @@ class RetainedTests(unittest.TestCase):
             ],
         }
 
+    def preserved_fixture(self):
+        return self.v.load_json(ROOT / "governance/releases/v0.2.7/PRESERVED-PAYLOAD-TRANSPORT.json", "preserved policy")
+
+    def preserved_observation_fixture(self, minute="00"):
+        p = self.preserved_fixture()
+        anchor = p["anchor"]
+        asset = {**p["asset"], "download_count": 7}
+        release = {k: v for k, v in p["release"].items() if k != "body_sha256"}
+        release.update(body=p["disclosure"], assets=[copy.deepcopy(asset)])
+        data = [
+            {"id": 1116455646, "full_name": "exochain/exochain", "owner": {"id": 129763194}},
+            {"ref": anchor["ref"], "object": {"type": "tag", "sha": anchor["object"]}},
+            {"sha": anchor["object"], "tag": "v0.2.7-custody.1", "object": {"type": "commit", "sha": anchor["commit"]},
+             "verification": {"verified": True, "reason": "valid", "payload": anchor["signed_payload"],
+                              "signature": anchor["signature"]}},
+            release, [copy.deepcopy(asset)], [], asset, {"id": 372519985}]
+        return {"schema": "exochain-preserved-payload-observation-027/v1", "operation": "recover-0.2.7-preserved",
+                "preserved_policy_sha256": self.v.PRESERVED_PAYLOAD_POLICY_SHA256,
+                "requests": [{"endpoint_role": role, "request_started_at": f"2026-10-01T22:{minute}:{2*i:02d}Z",
+                              "request_finished_at": f"2026-10-01T22:{minute}:{2*i+1:02d}Z", "status": 200, "data": value}
+                             for i, (role, value) in enumerate(zip(
+                                 ("repository", "ref", "tag", "release", "assets-first", "assets-terminal", "asset", "latest"), data))]}
+
+    def origin_v3_fixture(self):
+        record, origin = self.origin_v2_fixture((10518086890,))
+        def shift(value):
+            if type(value) is dict:
+                return {k: shift(v) for k, v in value.items()}
+            if type(value) is list:
+                return [shift(v) for v in value]
+            return value.replace("2026-09-25", "2026-10-01") if type(value) is str else value
+        origin["observations"] = shift(origin["observations"])
+        origin["observations"]["operation"] = "recover-0.2.7-preserved"
+        origin.update(schema="exochain-retained-origin-027/v3", operation="recover-0.2.7-preserved",
+                      preserved_policy_sha256=self.v.PRESERVED_PAYLOAD_POLICY_SHA256)
+        for phase, minute in (("controls_before", "00"), ("controls_after", "02")):
+            controls = origin[phase]
+            controls.pop("retained_metadata")
+            controls["custody_metadata"] = copy.deepcopy(record["custody"]["metadata"])
+            controls["preserved_observation"] = self.preserved_observation_fixture(minute)
+            controls["observed_at"] = f"2026-10-01T22:{minute}:16Z"
+        # Original observations follow the complete initial transport read.
+        for phase in ("before", "after"):
+            passage = origin["observations"][phase]
+            passage["observed_at"] = passage["observed_at"].replace("22:00", "22:01")
+            for item in passage["records"]:
+                for key in ("request_started_at", "request_finished_at"):
+                    item[key] = item[key].replace("22:00", "22:01")
+        return record, origin
+
+    def test_preserved_policy_exact_pin_and_types(self):
+        self.assertTrue(callable(getattr(self.v, "validate_preserved_payload_policy", None)), "preserved policy validator missing")
+        record, policy, preserved = self.record(), self.metadata_policy_fixture(), self.preserved_fixture()
+        self.assertEqual(self.v.validate_preserved_payload_policy(self.manifest, record, policy, preserved), preserved)
+        def leaves(value, path=()):
+            if type(value) is dict:
+                for k, v in value.items():
+                    yield from leaves(v, path + (k,))
+            elif type(value) is list:
+                for i, v in enumerate(value):
+                    yield from leaves(v, path + (i,))
+            else:
+                yield path, value
+        for path, value in leaves(preserved):
+            changed = copy.deepcopy(preserved)
+            target = changed
+            for key in path[:-1]:
+                target = target[key]
+            target[path[-1]] = (not value) if type(value) is bool else (True if type(value) is int else value + "x")
+            with self.subTest(path=path), self.assertRaises(self.v.RecoveryError):
+                self.v.validate_preserved_payload_policy(self.manifest, record, policy, changed)
+        changed = copy.deepcopy(preserved); changed["anchor"]["unexpected"] = "unreviewed"
+        with self.assertRaises(self.v.RecoveryError):
+            self.v.validate_preserved_payload_policy(self.manifest, record, policy, changed)
+        self.assertEqual(self.v.load_preserved_payload_policy(self.manifest, record, policy,
+                         ROOT / "governance/releases/v0.2.7/PRESERVED-PAYLOAD-TRANSPORT.json"), preserved)
+
+    def test_preserved_transport_identity_and_inventory(self):
+        self.assertTrue(callable(getattr(self.v, "verify_preserved_payload_observation", None)), "preserved observation validator missing")
+        p, observation = self.preserved_fixture(), self.preserved_observation_fixture()
+        result = self.v.verify_preserved_payload_observation(p, observation)
+        self.assertEqual(result["asset"]["id"], 602278328)
+        mutations = [lambda r: r[0]["data"].update(id=True), lambda r: r[0]["data"]["owner"].update(id=1),
+                     lambda r: r[1]["data"]["object"].update(sha="f"*40),
+                     lambda r: r[2]["data"]["object"].update(sha="f"*40),
+                     lambda r: r[2]["data"]["verification"].update(verified=1),
+                     lambda r: r[2]["data"]["verification"].update(payload="forged"),
+                     lambda r: r[2]["data"]["verification"].update(signature="forged"),
+                     lambda r: r[3]["data"].update(body="forged"), lambda r: r[3]["data"].update(draft=0),
+                     lambda r: r[4]["data"].append(copy.deepcopy(r[4]["data"][0])),
+                     lambda r: r[5]["data"].append(copy.deepcopy(r[4]["data"][0])),
+                     lambda r: r[6]["data"].update(id=602278329), lambda r: r[6]["data"].update(digest="sha256:"+"f"*64),
+                     lambda r: r[7]["data"].update(id=400603306), lambda r: r[0].update(status=404),
+                     lambda r: r[1].update(request_started_at="2026-10-01T21:00:00Z")]
+        for mutate in mutations:
+            changed = copy.deepcopy(observation); mutate(changed["requests"])
+            with self.subTest(mutate=mutate), self.assertRaises(self.v.RecoveryError):
+                self.v.verify_preserved_payload_observation(p, changed)
+        observation["requests"][6]["data"]["download_count"] += 1
+        observation["requests"][7]["data"]["id"] = 400700000
+        self.assertEqual(self.v.verify_preserved_payload_observation(p, observation), result)
+        for key, value in (("schema", "exochain-preserved-payload-observation-027/v2"),
+                           ("operation", "recover-0.2.7-retained-404"), ("preserved_policy_sha256", "f"*64)):
+            changed = copy.deepcopy(observation); changed[key] = value
+            with self.assertRaises(self.v.RecoveryError):
+                self.v.verify_preserved_payload_observation(p, changed)
+
+    def test_preserved_origin_has_no_current_old_payload(self):
+        self.assertTrue(callable(getattr(self.v, "validate_preserved_payload_policy", None)), "preserved origin support missing")
+        record, origin = self.origin_v3_fixture()
+        policy, p = self.metadata_policy_fixture(), self.preserved_fixture()
+        result = self.v.verify_retained_origin(self.manifest, record, origin, "fixture", "fixture", policy=policy, preserved=p)
+        self.assertEqual(result["schema"], "exochain-retained-origin-result-027/v3")
+        self.assertEqual(result["retained_artifacts_verified"], 1)
+        self.assertEqual(len(result["original_vector"]), 9)
+        for mutate in (lambda x: x["controls_before"].update(retained_metadata=[]),
+                       lambda x: x["controls_after"]["custody_metadata"].update(expired=True),
+                       lambda x: x["controls_after"].update(observed_at="2026-10-24T22:00:00Z"),
+                       lambda x: x["observations"]["after"]["records"].pop(),
+                       lambda x: x["controls_after"]["preserved_observation"]["requests"][6]["data"].update(id=1)):
+            changed = copy.deepcopy(origin); mutate(changed)
+            with self.assertRaises(self.v.RecoveryError):
+                self.v.verify_retained_origin(self.manifest, record, changed, "fixture", "fixture", policy=policy, preserved=p)
+        changed = copy.deepcopy(origin)
+        target = next(x for x in changed["observations"]["after"]["records"] if x["id"] not in
+                      [item["id"] for item in policy["unavailable_originals"]])
+        target.update(status=404, variant="unavailable_404"); target.pop("metadata")
+        with self.assertRaises(self.v.RecoveryError):
+            self.v.verify_retained_origin(self.manifest, record, changed, "fixture", "fixture", policy=policy, preserved=p)
+
+    def test_preserved_observation_duration_exact_boundary(self):
+        preserved = self.preserved_fixture()
+        observation = self.preserved_observation_fixture()
+        # All eight requests remain ordered; the last response ends exactly
+        # 300 seconds after the first request, then one second beyond the cap.
+        observation["requests"][-1]["request_finished_at"] = "2026-10-01T22:05:00Z"
+        result = self.v.verify_preserved_payload_observation(preserved, observation)
+        self.assertEqual(result["asset"]["id"], 602278328)
+        observation["requests"][-1]["request_finished_at"] = "2026-10-01T22:05:01Z"
+        with self.assertRaisesRegex(self.v.RecoveryError, "duration"):
+            self.v.verify_preserved_payload_observation(preserved, observation)
+
+    def test_preserved_receipts_reject_v2_and_cross_transport(self):
+        self.assertTrue(callable(getattr(self.v, "validate_preserved_payload_policy", None)), "preserved receipt support missing")
+        record, publications, policy, envelope, receipts = self.v2_receipt_fixture()
+        p = self.preserved_fixture()
+        path = self.write_receipt_fixture(envelope, receipts)
+        with self.assertRaises(self.v.RecoveryError):
+            self.v.verify_retained_receipts(self.manifest, record, publications, envelope, "fixture", "fixture", path,
+                                            policy=policy, preserved=p)
+        record, origin = self.origin_v3_fixture()
+        verified = self.v.verify_retained_origin(self.manifest, record, origin, "fixture", "fixture", policy=policy, preserved=p)
+        context = copy.deepcopy(envelope["context"]); context["checked_at"] = "2026-10-01T22:03:00Z"
+        bindings = self.v.retained_receipt_bindings(self.manifest, record, context, verified, policy=policy, preserved=p)
+        self.assertEqual(bindings["checker_version"], "retained-027/v3")
+        self.assertEqual(bindings["preserved_transport"]["asset"]["id"], 602278328)
+        verified["preserved_transport"]["asset"]["id"] += 1
+        with self.assertRaises(self.v.RecoveryError):
+            self.v.retained_receipt_bindings(self.manifest, record, context, verified, policy=policy, preserved=p)
+
+    def v3_receipt_fixture(self):
+        record, publications, policy, envelope, old_receipts = self.v2_receipt_fixture()
+        record, producer_origin = self.origin_v3_fixture()
+        p = self.preserved_fixture()
+        context = envelope["context"]
+        context.update(checked_at="2026-10-01T22:03:00Z", dry_run=False)
+        producer = envelope["current_jobs"]["jobs"][0]
+        producer.update(started_at="2026-10-01T22:00:00Z", completed_at="2026-10-01T22:04:30Z")
+        producer["steps"][0].update(started_at="2026-10-01T22:00:00Z", completed_at="2026-10-01T22:03:01Z")
+        producer["steps"][1].update(started_at="2026-10-01T22:03:02Z", completed_at="2026-10-01T22:04:00Z")
+        for key in ("metadata_before", "metadata_after"):
+            envelope[key].update(created_at="2026-10-01T22:03:30Z", updated_at="2026-10-01T22:03:30Z")
+        envelope.update(schema="exochain-retained-receipts-input-027/v3", operation="recover-0.2.7-preserved",
+                        preserved_policy_sha256=self.v.PRESERVED_PAYLOAD_POLICY_SHA256, observed_at="2026-10-01T22:08:00Z")
+        writer = copy.deepcopy(producer_origin)
+        writer["observations"]["observer"].update(job_id=110000000001, job_name=self.v.RECEIPT_WRITER_JOB,
+                                                  job_started_at="2026-10-01T22:05:00Z")
+        for phase in ("before", "after"):
+            passage = writer["observations"][phase]
+            passage["observed_at"] = passage["observed_at"].replace("22:01", "22:06")
+            for item in passage["records"]:
+                for key in ("request_started_at", "request_finished_at"):
+                    item[key] = item[key].replace("22:01", "22:06")
+        for phase, minute in (("controls_before", "05"), ("controls_after", "07")):
+            writer[phase]["preserved_observation"] = self.preserved_observation_fixture(minute)
+            writer[phase]["observed_at"] = f"2026-10-01T22:{minute}:16Z"
+        envelope["current_jobs"]["jobs"].append({**copy.deepcopy(producer), "id": 110000000001,
+            "name": self.v.RECEIPT_WRITER_JOB, "status": "in_progress", "conclusion": None,
+            "started_at": "2026-10-01T22:05:00Z", "completed_at": None, "steps": []})
+        envelope["current_jobs"]["total_count"] = 2
+        envelope["origin"] = writer
+        receipts = {}
+        transport = {key: copy.deepcopy(p[key]) for key in ("repository", "anchor", "release", "asset", "asset_ids")}
+        for kind in ("custody", "acceptance"):
+            receipt = copy.deepcopy(old_receipts[f"{kind}-receipt.json"])
+            receipt.update(context)
+            receipt.update(schema=f"exochain-retained-{kind}-receipt-027/v3", mode="recover-0.2.7-preserved",
+                           checker_version="retained-027/v3", preserved_policy_sha256=self.v.PRESERVED_PAYLOAD_POLICY_SHA256,
+                           transports=[{"id": 10780480598, "digest": record["custody"]["metadata"]["digest"]}],
+                           preserved_transport=copy.deepcopy(transport), original_observations=copy.deepcopy(producer_origin["observations"]),
+                           preserved_observations={phase: copy.deepcopy(producer_origin[f"controls_{phase}"]["preserved_observation"])
+                                                   for phase in ("before", "after")})
+            receipts[f"{kind}-receipt.json"] = receipt
+        return record, publications, policy, p, envelope, receipts
+
+    def test_preserved_full_receipts_independent_producer_writer(self):
+        record, publications, policy, p, envelope, receipts = self.v3_receipt_fixture()
+        path = self.write_receipt_fixture(envelope, receipts)
+        result = self.v.verify_retained_receipts(self.manifest, record, publications, envelope, "fixture", "fixture", path,
+                                                policy=policy, preserved=p)
+        self.assertEqual(result["schema"], "exochain-retained-receipts-result-027/v3")
+        self.assertEqual(result["receipts_verified"], 2)
+        self.assertFalse(result["dry_run"])
+        preliminary = {key: value for key, value in envelope.items() if key not in ("origin", "metadata_after")}
+        self.assertEqual(self.v.retained_receipt_provenance(self.manifest, record, policy, preliminary, preserved=p)["profile"]["zip_size"], path.stat().st_size)
+        before = {key: value for key, value in envelope.items() if key != "metadata_after"}
+        self.assertEqual(self.v.retained_receipt_profile(self.manifest, record, publications, before, "fixture", "fixture",
+                                                       policy=policy, preserved=p)[1]["zip_size"], path.stat().st_size)
+        for mutate in (
+            lambda e: e.update(schema="exochain-retained-receipts-input-027/v2"),
+            lambda e: e.update(operation="recover-0.2.7-retained-404"),
+            lambda e: e.update(preserved_policy_sha256="f"*64),
+            lambda e: e["context"].update(run_attempt=3),
+            lambda e: e["context"].update(dry_run=True),
+            lambda e: e["context"].update(checker_sha256="f"*64),
+            lambda e: e["origin"]["observations"]["observer"].update(job_id=110000000000, job_name=self.v.RECEIPT_JOB),
+            lambda e: e["origin"]["controls_before"]["preserved_observation"]["requests"][6]["data"].update(id=1),
+            lambda e: e["metadata_after"].update(expired=True),
+            lambda e: e.update(observed_at="2026-10-25T22:02:30Z"),
+            lambda e: e["upload_outputs"].update(producer_job_id=110000000001),
+            lambda e: e["current_jobs"]["jobs"][0]["steps"][0].update(completed_at="2026-10-01T22:02:59Z"),
+        ):
+            changed = copy.deepcopy(envelope); mutate(changed)
+            with self.subTest(mutation=mutate), self.assertRaises(self.v.RecoveryError):
+                self.v.verify_retained_receipts(self.manifest, record, publications, changed, "fixture", "fixture", path,
+                                                policy=policy, preserved=p)
+        for mutate in (
+            lambda r: r.update(schema="exochain-retained-custody-receipt-027/v2"),
+            lambda r: r["preserved_transport"]["asset"].update(id=1),
+            lambda r: r["preserved_observations"]["before"]["requests"][6]["data"].update(id=1),
+            lambda r: r["preserved_observations"]["before"]["requests"][0].update(request_started_at="2026-10-01T21:59:59Z"),
+            lambda r: r["preserved_observations"]["after"]["requests"][-1].update(request_finished_at="2026-10-01T22:03:01Z"),
+            lambda r: r["original_observations"]["observer"].update(job_id=110000000001),
+        ):
+            changed = copy.deepcopy(receipts)
+            for receipt in changed.values():
+                mutate(receipt)
+            changed_envelope = copy.deepcopy(envelope)
+            changed_path = self.write_receipt_fixture(changed_envelope, changed)
+            with self.subTest(receipt_mutation=mutate), self.assertRaises(self.v.RecoveryError):
+                self.v.verify_retained_receipts(self.manifest, record, publications, changed_envelope, "fixture", "fixture", changed_path,
+                                                policy=policy, preserved=p)
+
+    def test_preserved_writer_cannot_acquire_before_producer_completed(self):
+        record, publications, policy, p, envelope, receipts = self.v3_receipt_fixture()
+        # Valid identities and matching vectors do not make a premature writer
+        # read a current direct handoff from the completed producer.
+        envelope["current_jobs"]["jobs"][0]["completed_at"] = "2026-10-01T22:06:00Z"
+        path = self.write_receipt_fixture(envelope, receipts)
+        with self.assertRaises(self.v.RecoveryError):
+            self.v.verify_retained_receipts(self.manifest, record, publications, envelope, "fixture", "fixture", path,
+                                            policy=policy, preserved=p)
+
+    def test_preserved_completed_writer_bounds_final_transport_and_controls(self):
+        record, publications, policy, preserved, envelope, receipts = self.v3_receipt_fixture()
+        writer = envelope["current_jobs"]["jobs"][1]
+        writer.update(status="completed", conclusion="success", completed_at="2026-10-01T22:07:16Z")
+        path = self.write_receipt_fixture(envelope, receipts)
+        result = self.v.verify_retained_receipts(self.manifest, record, publications, envelope, "fixture", "fixture", path,
+                                                policy=policy, preserved=preserved)
+        self.assertEqual(result["schema"], "exochain-retained-receipts-result-027/v3")
+        # Original observations finish at 22:06:40, transport at 22:07:15,
+        # and final controls at 22:07:16. Neither later boundary may escape
+        # the successful writer lifetime even when original reads fit.
+        for completed_at in ("2026-10-01T22:06:59Z", "2026-10-01T22:07:15Z"):
+            writer["completed_at"] = completed_at
+            with self.subTest(completed_at=completed_at), self.assertRaises(self.v.RecoveryError):
+                self.v.verify_retained_receipts(self.manifest, record, publications, envelope, "fixture", "fixture", path,
+                                                policy=policy, preserved=preserved)
+
     def test_metadata_policy_rejects_nested_tampering_and_operation_confusion(self):
         validator = self.v
         record, policy = self.record(), self.metadata_policy_fixture()
