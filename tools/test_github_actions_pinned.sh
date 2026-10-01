@@ -99,6 +99,88 @@ def formatter_contract?(job, gate, caller, expected_job, expected_caller)
     caller == [expected_caller]
 end
 
+def warning_env_safe?(env)
+  return true if env.nil?
+  return false unless env.is_a?(Hash) && !env.key?("CARGO_ENCODED_RUSTFLAGS")
+
+  !env.key?("RUSTFLAGS") || env["RUSTFLAGS"] == "-D warnings"
+end
+
+def ci_contract?(root, action)
+  jobs = root.fetch("jobs")
+  expected = %w[build test coverage lint deny doc machete integration-tests
+    integration-tests-db consensus-integration state-sync-integration cross-platform
+    zerodentity-coverage root-genesis-coverage root-genesis-portal-coverage
+    build-wasm unaudited-feature-matrix private-file-windows]
+  expected_with = expected.to_h do |name|
+    options = {"toolchain" => "1.98.1"}
+    options["components"] = "rustfmt, clippy" if name == "build"
+    options["components"] = "clippy" if name == "lint"
+    options["targets"] = '${{ matrix.target }}' if name == "cross-platform"
+    options["targets"] = "wasm32-unknown-unknown" if name == "build-wasm"
+    [name, options]
+  end
+  conditional_if = {
+    "integration-tests" => "steps.filter.outputs.gateway == 'true'",
+    "consensus-integration" => "steps.filter.outputs.node == 'true'",
+    "state-sync-integration" => "steps.filter.outputs.sync == 'true'",
+    "unaudited-feature-matrix" => "steps.filter.outputs.crates == 'true'"
+  }
+  installations = Hash.new(0)
+  jobs.each do |name, job|
+    return false unless job.is_a?(Hash) && job["steps"].is_a?(Array)
+    return false unless warning_env_safe?(job["env"])
+    job["steps"].each do |step|
+      return false unless step.is_a?(Hash) && warning_env_safe?(step["env"])
+      uses = step["uses"]
+      next unless uses.is_a?(String) && uses.start_with?("dtolnay/rust-toolchain@")
+
+      installations[name] += 1
+      wanted = expected_with[name] || {
+        "format" => {"toolchain" => "nightly-2026-09-21", "components" => "rustfmt"},
+        "sbom" => {"toolchain" => "1.97.1"}
+      }[name]
+      return false unless wanted
+      expected_step = {"uses" => action, "with" => wanted}
+      expected_step["if"] = conditional_if.fetch(name) if conditional_if.key?(name)
+      return false unless step == expected_step
+    end
+  end
+  return false unless installations == (expected + %w[format sbom]).to_h { |name| [name, 1] }
+  return false unless root.fetch("env")["RUSTFLAGS"] == "-D warnings" &&
+    warning_env_safe?(root.fetch("env"))
+  return false if %w[build private-file-windows].any? { |name|
+    jobs.fetch(name).key?("if") || jobs.fetch(name).key?("continue-on-error") }
+  return false unless jobs.fetch("build").fetch("steps").count { |step|
+    step["run"] == "bash tools/ci_cargo_retry.sh cargo build --workspace --release" &&
+      !step.key?("if") && !step.key?("continue-on-error") } == 1
+  return false unless jobs.fetch("private-file-windows").fetch("steps").count { |step|
+    step["run"] == "cargo test -p exochain-node private_file::tests::windows -- --nocapture" &&
+      !step.key?("if") && !step.key?("continue-on-error") } == 1
+
+  lint = jobs.fetch("lint")
+  return false if lint.key?("if") || lint.key?("continue-on-error")
+  lint_steps = lint.fetch("steps")
+  version_index = lint_steps.index { |step| step["name"] == "Report Rust and Clippy versions" }
+  return false unless version_index && lint_steps[version_index] == {
+    "name" => "Report Rust and Clippy versions",
+    "run" => "rustc --version --verbose\ncargo clippy --version\n"
+  }
+  return false unless lint_steps[version_index + 1] == {
+    "name" => "Clippy (all workspace targets, deny all warnings)",
+    "run" => "cargo clippy --workspace --all-targets -- -D warnings"
+  }
+  hygiene = jobs.fetch("hygiene")
+  gate = jobs.fetch("all-gates")
+  return false if [hygiene, gate].any? { |job| job.key?("if") || job.key?("continue-on-error") }
+  return false unless gate["needs"].is_a?(Array) && gate["needs"].uniq == gate["needs"] &&
+    (expected + %w[hygiene format sbom]).all? { |name| gate["needs"].include?(name) }
+  %w[test_github_actions_pinned test_ci_supply_chain_hardening].all? do |guard|
+    hygiene.fetch("steps").count { |step| step["run"] == "bash tools/#{guard}.sh" &&
+      !step.key?("if") && !step.key?("continue-on-error") } == 1
+  end
+end
+
 expected_action_sha = ARGV.shift
 expected_action = "dtolnay/rust-toolchain@#{expected_action_sha}"
 formatter = "nightly-2026-09-21"
@@ -139,6 +221,103 @@ mutations.each_with_index do |mutate, index|
   mutate.call(*fixture)
   raise "formatter mutation #{index} accepted" if validate.call(*fixture)
 end
+warn "rejected #{mutations.length} formatter contract mutations"
+
+# The contract must reject each realistic weakening before it inspects source.
+fixture_jobs = ("build test coverage lint deny doc machete integration-tests integration-tests-db " \
+  "consensus-integration state-sync-integration cross-platform zerodentity-coverage " \
+  "root-genesis-coverage root-genesis-portal-coverage build-wasm unaudited-feature-matrix " \
+  "private-file-windows format sbom hygiene all-gates").split.to_h do |name|
+  with = {"toolchain" => "1.98.1"}
+  with = {"toolchain" => "nightly-2026-09-21", "components" => "rustfmt"} if name == "format"
+  with = {"toolchain" => "1.97.1"} if name == "sbom"
+  with["components"] = "rustfmt, clippy" if name == "build"
+  with["components"] = "clippy" if name == "lint"
+  with["targets"] = '${{ matrix.target }}' if name == "cross-platform"
+  with["targets"] = "wasm32-unknown-unknown" if name == "build-wasm"
+  steps = %w[hygiene all-gates].include?(name) ? [] : [{"uses" => expected_action, "with" => with}]
+  conditional_if = {
+    "integration-tests" => "steps.filter.outputs.gateway == 'true'",
+    "consensus-integration" => "steps.filter.outputs.node == 'true'",
+    "state-sync-integration" => "steps.filter.outputs.sync == 'true'",
+    "unaudited-feature-matrix" => "steps.filter.outputs.crates == 'true'"
+  }[name]
+  steps.first["if"] = conditional_if if conditional_if
+  steps += [{"name" => "Report Rust and Clippy versions", "run" => "rustc --version --verbose\ncargo clippy --version\n"},
+    {"name" => "Clippy (all workspace targets, deny all warnings)",
+     "run" => "cargo clippy --workspace --all-targets -- -D warnings"}] if name == "lint"
+  steps += %w[test_github_actions_pinned test_ci_supply_chain_hardening].map do |guard|
+    {"run" => "bash tools/#{guard}.sh"}
+  end if name == "hygiene"
+  steps << {"run" => "bash tools/ci_cargo_retry.sh cargo build --workspace --release"} if name == "build"
+  steps << {"run" => "cargo test -p exochain-node private_file::tests::windows -- --nocapture"} if name == "private-file-windows"
+  [name, {"steps" => steps}]
+end
+fixture_jobs["all-gates"]["needs"] = fixture_jobs.keys - ["all-gates"]
+fixture = {"env" => {"RUSTFLAGS" => "-D warnings"}, "jobs" => fixture_jobs}
+raise "valid CI fixture rejected" unless ci_contract?(fixture, expected_action)
+ci_mutations = [
+  ->(x) { x["jobs"].delete("build") },
+  ->(x) { x["jobs"].delete("private-file-windows") },
+  ->(x) { x["jobs"]["build"]["steps"] << x["jobs"]["build"]["steps"][0].dup },
+  ->(x) { x["jobs"]["build"]["steps"][0]["with"]["toolchain"] = "stable" },
+  ->(x) { x["jobs"]["private-file-windows"]["steps"][0]["with"]["toolchain"] = "stable" },
+  ->(x) { x["jobs"]["build"]["steps"][0]["with"]["toolchain"] = "1.99.0" },
+  ->(x) { x["jobs"]["build"]["steps"][0]["with"]["toolchain"] = '${{ inputs.rust }}' },
+  ->(x) { x["jobs"]["test"]["steps"] << {"uses" => expected_action, "with" => {"toolchain" => "stable"}} },
+  ->(x) { x["jobs"]["lint"]["steps"].last["run"] += " || true" },
+  ->(x) { x["jobs"]["lint"]["steps"].last["run"] = "cargo clippy --workspace -- -D warnings" },
+  ->(x) { x["jobs"]["lint"]["steps"].last["if"] = "false" },
+  ->(x) { x["jobs"]["build"]["steps"].last["run"] += " || true" },
+  ->(x) { x["jobs"]["private-file-windows"]["steps"].last["run"] += " || true" },
+  ->(x) { x["jobs"]["build"]["if"] = "false" },
+  ->(x) { x["jobs"]["private-file-windows"]["if"] = "false" },
+  ->(x) { x["env"]["RUSTFLAGS"] = "-A warnings" },
+  ->(x) { x["jobs"]["format"]["steps"][0]["with"]["toolchain"] = "nightly" },
+  ->(x) { x["jobs"]["sbom"]["steps"][0]["with"]["toolchain"] = "stable" },
+  ->(x) { x["jobs"]["hygiene"]["if"] = "false" },
+  ->(x) { x["jobs"]["hygiene"]["steps"].first["if"] = "false" },
+  ->(x) { x["jobs"]["all-gates"]["needs"].delete("hygiene") },
+  ->(x) { x["jobs"]["all-gates"]["if"] = "always()" },
+  ->(x) { x["jobs"]["build"]["steps"].first["if"] = "false" },
+  ->(x) { x["jobs"]["private-file-windows"]["steps"].first["continue-on-error"] = "true" },
+  ->(x) { x["jobs"]["integration-tests"]["steps"].first.delete("if") },
+  ->(x) { x["jobs"]["consensus-integration"]["steps"].first["if"] = "always()" },
+  ->(x) { x["jobs"]["state-sync-integration"]["steps"].first["if"] = "false" },
+  ->(x) { x["jobs"]["unaudited-feature-matrix"]["steps"].first["if"] = "steps.filter.outputs.other == 'true'" },
+  ->(x) { x["jobs"]["test"]["steps"].first["env"] = {"RUSTFLAGS" => "-A warnings"} },
+  ->(x) { x["jobs"]["lint"]["steps"].first["name"] = "optional toolchain" },
+  ->(x) { x["jobs"]["test"]["env"] = {"RUSTFLAGS" => "-A warnings"} },
+  ->(x) { x["jobs"]["build"]["steps"].last["env"] = {"RUSTFLAGS" => "-A warnings"} },
+  ->(x) { x["jobs"]["lint"]["steps"].last["env"] = {"RUSTFLAGS" => "-A warnings"} },
+  ->(x) { x["env"]["CARGO_ENCODED_RUSTFLAGS"] = "-A warnings" },
+  ->(x) { x["jobs"]["doc"]["env"] = {"CARGO_ENCODED_RUSTFLAGS" => "-A warnings"} },
+  ->(x) { x["jobs"]["build"]["steps"].last["env"] = {"CARGO_ENCODED_RUSTFLAGS" => "-A warnings"} }
+]
+allowed_warning_override = Marshal.load(Marshal.dump(fixture))
+allowed_warning_override["jobs"]["build"]["env"] = {"RUSTFLAGS" => "-D warnings"}
+allowed_warning_override["jobs"]["build"]["steps"].last["env"] = {"RUSTFLAGS" => "-D warnings"}
+raise "exact warning-denial override rejected" unless ci_contract?(allowed_warning_override, expected_action)
+ci_mutations.each_with_index do |mutate, index|
+  changed = Marshal.load(Marshal.dump(fixture))
+  mutate.call(changed)
+  raise "CI mutation #{index} accepted" if ci_contract?(changed, expected_action)
+end
+duplicate_rejected = begin
+  plain_node(Psych.parse("jobs:\n  build: one\n  build: two\n").root)
+  false
+rescue RuntimeError
+  true
+end
+raise "duplicate YAML job key accepted" unless duplicate_rejected
+malformed_rejected = begin
+  Psych.parse("jobs: [\n")
+  false
+rescue Psych::SyntaxError
+  true
+end
+raise "malformed YAML accepted" unless malformed_rejected
+warn "rejected #{ci_mutations.length} CI contract mutations, duplicate YAML job and malformed YAML"
 
 ARGV.each do |workflow|
   document = Psych.parse_file(workflow)
@@ -147,6 +326,9 @@ ARGV.each do |workflow|
     caller = File.readlines("tools/repo_truth.sh", chomp: true).select { |line| line.start_with?("FMT_OK=") }
     unless validate.call(jobs["format"], jobs["all-gates"], caller)
       puts "#{workflow}: full-workspace formatter and repo_truth must use #{formatter}, without skips or suppressed failures"
+    end
+    unless ci_contract?(plain_node(document.root), expected_action)
+      puts "#{workflow}: exact 18-job Rust 1.98.1 inventory, full lint, hygiene and aggregator contract required"
     end
   end
   walk(document) do |node|

@@ -314,27 +314,33 @@ See [docs/guides/ARCHON-INTEGRATION.md](docs/guides/ARCHON-INTEGRATION.md) for s
 
 ### Prerequisites
 
-* **Rust 1.85+** (`rustup update stable`)
+* **Rust 1.85+** is the minimum supported compiler; install the exact CI validation compiler with `rustup toolchain install 1.98.1 --profile minimal --component clippy`.
 * Clang (for crypto extensions)
 
 ### Build & Test
 
+The commands below reproduce the pinned Rust 1.98.1 CI validation toolchain;
+they do not establish Rust 1.99 compatibility. The formatter uses its separate
+dated nightly toolchain.
+
 ```bash
 # Build all crates
-cargo build --workspace --all-targets
+cargo +1.98.1 build --workspace --all-targets
 
 # Run the workspace test gate
-cargo test --workspace
+cargo +1.98.1 test --workspace
 
 # Lint (strict — no warnings allowed)
-cargo clippy --workspace --all-targets -- -D warnings
+cargo +1.98.1 clippy --workspace --all-targets -- -D warnings
 
 # Format check
 rustup toolchain install nightly-2026-09-21 --profile minimal --component rustfmt
 cargo +nightly-2026-09-21 fmt --all -- --check
 
-# Dependency audit (requires cargo-deny)
-cargo deny check
+# Dependency policy (install the CI-pinned cargo-deny release first)
+CI_CARGO_RETRY_ATTEMPTS=1 bash tools/ci_cargo_retry.sh cargo +1.98.1 install cargo-deny --version 0.19.2 --locked
+cargo +1.98.1 deny --version # Must report cargo-deny 0.19.2
+CARGO_NET_GIT_FETCH_WITH_CLI=false cargo +1.98.1 deny --log-level warn --manifest-path ./Cargo.toml --all-features check
 
 # Regenerate truth baseline
 bash tools/repo_truth.sh

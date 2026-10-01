@@ -69,7 +69,7 @@ graph LR
 * **Threat Modeling**: If you are touching `exo-core` or `exo-gatekeeper`, you must reference the relevant [Threat Model](governance/threat_matrix.md) entry.
 
 ### Phase B: Executive (The Code)
-* **Rust 1.85+**: We use modern, stable Rust. Ensure your toolchain is up to date.
+* **Rust 1.85+** is the MSRV. Reproduce CI with the named Rust 1.98.1 toolchain described below; a floating `stable` toolchain is not equivalent.
 * **Signed Commits**: All commits **MUST** be GPG/SSH signed. Unsigned commits will be rejected by the gatekeeper.
 * **Linear History**: No merge commits. Rebase on `main`.
 * **Post-Quantum Awareness**: Cryptographic code must use the `Signature` enum (Ed25519/PostQuantum/Hybrid). Direct signature construction is forbidden.
@@ -85,7 +85,7 @@ graph LR
 ## 3. Development Environment
 
 ### Prerequisites
-* **Rust 1.85+**: `rustup update stable`
+* **Rust 1.85+** is the MSRV. For the exact CI validation compiler, run `rustup toolchain install 1.98.1 --profile minimal --component clippy`; this pinned check makes no Rust 1.99 compatibility claim.
 * Clang: Required for `exo-core` crypto extensions.
 
 For a complete setup walkthrough, see [docs/guides/GETTING-STARTED.md](docs/guides/GETTING-STARTED.md).
@@ -109,12 +109,12 @@ See [docs/guides/ARCHON-INTEGRATION.md](docs/guides/ARCHON-INTEGRATION.md) for d
 
 ```bash
 # Verify your environment
-cargo --version   # Must be 1.85+
+cargo +1.98.1 --version   # Exact CI validation toolchain; MSRV remains 1.85
 clang --version
 
 # Run the full test suite
-cargo test --workspace --lib
-cargo test --workspace --all-features
+cargo +1.98.1 test --workspace --lib
+cargo +1.98.1 test --workspace --all-features
 ```
 
 ### The "Quality Gate" Script
@@ -123,19 +123,22 @@ Before pushing, you **MUST** pass the local quality gate:
 
 ```bash
 # 1. Format
-cargo fmt --all -- --check
+rustup toolchain install nightly-2026-09-21 --profile minimal --component rustfmt
+cargo +nightly-2026-09-21 fmt --all -- --check
 
 # 2. Lint (Strict — no warnings, no float arithmetic)
-cargo clippy --workspace --all-targets -- -D warnings
+cargo +1.98.1 clippy --workspace --all-targets -- -D warnings
 
 # 3. Test (library tests)
-cargo test --workspace --lib
+cargo +1.98.1 test --workspace --lib
 
 # 4. Doc Test
-cargo test --workspace --doc
+cargo +1.98.1 test --workspace --doc
 
 # 5. Dependency Check (license compliance, advisories, banned crates)
-cargo deny check
+CI_CARGO_RETRY_ATTEMPTS=1 bash tools/ci_cargo_retry.sh cargo +1.98.1 install cargo-deny --version 0.19.2 --locked
+cargo +1.98.1 deny --version # Must report cargo-deny 0.19.2
+CARGO_NET_GIT_FETCH_WITH_CLI=false cargo +1.98.1 deny --log-level warn --manifest-path ./Cargo.toml --all-features check
 
 # 6. Security Audit
 cargo audit
@@ -151,13 +154,13 @@ Your Pull Request is a legal brief explaining why your code deserves to be part 
 
 All of the following must pass before a PR can be merged:
 
-- [ ] `cargo build --workspace --all-targets` succeeds
-- [ ] `cargo test --workspace --lib` passes (0 failures)
-- [ ] `cargo fmt --all -- --check` passes
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings` passes
-- [ ] `cargo deny check` passes
+- [ ] `cargo +1.98.1 build --workspace --all-targets` succeeds
+- [ ] `cargo +1.98.1 test --workspace --lib` passes (0 failures)
+- [ ] `cargo +nightly-2026-09-21 fmt --all -- --check` passes
+- [ ] `cargo +1.98.1 clippy --workspace --all-targets -- -D warnings` passes
+- [ ] `CARGO_NET_GIT_FETCH_WITH_CLI=false cargo +1.98.1 deny --log-level warn --manifest-path ./Cargo.toml --all-features check` passes with cargo-deny 0.19.2
 - [ ] `cargo audit` passes
-- [ ] `cargo doc --no-deps` succeeds
+- [ ] `cargo +1.98.1 doc --no-deps` succeeds
 - [ ] Coverage >= 90% (verified by CI)
 
 Once your change passes the PR checklist, see
