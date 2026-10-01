@@ -457,11 +457,12 @@ requirements. Assessments are stored in `governance/`.
 
 3. Run the full quality gate check locally:
    ```bash
-   cargo build --workspace --release
-   cargo test --workspace
-   cargo clippy --workspace --all-targets -- -D warnings
+   rustup toolchain install 1.98.1 --profile minimal --component clippy
+   cargo +1.98.1 build --workspace --release
+   cargo +1.98.1 test --workspace
+   cargo +1.98.1 clippy --workspace --all-targets -- -D warnings
    cargo +nightly-2026-09-21 fmt --all -- --check
-   cargo doc --workspace --no-deps
+   cargo +1.98.1 doc --workspace --no-deps
    ```
 
 4. Run the cross-implementation consistency test:
@@ -536,24 +537,29 @@ with a detailed violation report.
 The GitHub Actions pipeline (`.github/workflows/ci.yml`) enforces CR-001
 Section 8.8 quality gates. All must pass:
 
-1. **Build** — `cargo build --workspace --release`
-2. **Test** — `cargo test --workspace` (debug and release)
+1. **Build** — `cargo +1.98.1 build --workspace --release`
+2. **Test** — `cargo +1.98.1 test --workspace` (debug and release)
 3. **Coverage** — cargo-tarpaulin, scoped minimum 90% line coverage under the
    exclusions configured in `tarpaulin.toml`
-4. **Lint** — `cargo clippy --workspace -- -D warnings`
+4. **Lint** — `cargo +1.98.1 clippy --workspace --all-targets -- -D warnings`
 5. **Format** — `cargo +nightly-2026-09-21 fmt --all -- --check`
 6. **Audit** — `cargo audit` (no known vulnerabilities)
-7. **Deny** — `cargo deny check` (license and advisory compliance)
-8. **Doc** — `cargo doc --workspace --no-deps` (no warnings)
+7. **Deny** — cargo-deny 0.19.2, `CARGO_NET_GIT_FETCH_WITH_CLI=false cargo +1.98.1 deny --log-level warn --manifest-path ./Cargo.toml --all-features check` (license and advisory compliance)
+8. **Doc** — `cargo +1.98.1 doc --workspace --no-deps` (no warnings)
 
-Run all gates locally before pushing:
+Install Rust 1.98.1 with
+`rustup toolchain install 1.98.1 --profile minimal --component clippy`, and
+install the Deny binary with
+`CI_CARGO_RETRY_ATTEMPTS=1 bash tools/ci_cargo_retry.sh cargo +1.98.1 install cargo-deny --version 0.19.2 --locked`.
+Verify `cargo +1.98.1 deny --version`
+prints `cargo-deny 0.19.2`. Run all gates locally before pushing:
 
 ```bash
-cargo build --workspace --release && \
-cargo test --workspace && \
-cargo clippy --workspace --all-targets -- -D warnings && \
+cargo +1.98.1 build --workspace --release && \
+cargo +1.98.1 test --workspace && \
+cargo +1.98.1 clippy --workspace --all-targets -- -D warnings && \
 cargo +nightly-2026-09-21 fmt --all -- --check && \
-cargo doc --workspace --no-deps
+cargo +1.98.1 doc --workspace --no-deps
 ```
 
 ## Common Patterns
@@ -659,14 +665,15 @@ those, do not duplicate them here.
 
 ### Toolchain
 
-- The workspace is Rust **edition 2024** and needs **rustc 1.85+**. The base VM
-  image may pin an older stable (e.g. 1.83) as the default toolchain, so the
-  update script runs `rustup default stable` after updating — without that,
-  `cargo build` fails with an edition2024 error. Nightly + `rustfmt` are
-  installed only for the formatting gate. Install the same dated formatter as CI
+- The workspace is Rust **edition 2024** and has MSRV **rustc 1.85+**. The base
+  VM image may pin an older default toolchain (e.g. 1.83), so install CI's
+  exact validation compiler with `rustup toolchain install 1.98.1 --profile minimal --component clippy`
+  and use explicit `cargo +1.98.1` for build, test, lint, and documentation.
+  This pinned validation does not establish Rust 1.99 compatibility. Nightly +
+  `rustfmt` are installed only for the formatting gate. Install the same dated formatter as CI
   with `rustup toolchain install nightly-2026-09-21 --profile minimal --component rustfmt`;
-  run `cargo +nightly-2026-09-21 fmt --all -- --check`. Do not replace the stable
-  build/test compiler or substitute a floating nightly formatter.
+  run `cargo +nightly-2026-09-21 fmt --all -- --check`. Do not substitute a
+  floating nightly formatter.
 - The full `cargo test --workspace` gate is slow. Derive the current package
   inventory with
   `cargo metadata --no-deps --format-version 1 | jq '.packages | length'` and
