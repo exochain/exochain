@@ -1,0 +1,16 @@
+docs/superpowers/plans/2026-08-14-covenant-spine-reuse-ttm.md
+intelwar/apps/intelwar-net/src/components/ai/JoinPanel.jsx
+intelwar/apps/intelwar-net/src/components/net/LogSignals.jsx
+intelwar/apps/intelwar-net/src/components/net/OperatorTokenField.jsx
+intelwar/apps/intelwar-net/src/components/tv/CampaignZeroRail.jsx
+intelwar/apps/intelwar-net/src/lib/join.js
+intelwar/apps/intelwar-net/src/lib/operator.js
+intelwar/docs/QUALITY_MATRIX.md
+intelwar/docs/SPIRAL_PLAN.md
+intelwar/services/log-api/consent-durability.test.js
+intelwar/services/log-api/join.js
+intelwar/services/log-api/join.test.js
+intelwar/services/log-api/odentity.js
+intelwar/services/log-api/odentity.test.js
+intelwar/services/log-api/security.js
+intelwar/services/log-api/security.test.js

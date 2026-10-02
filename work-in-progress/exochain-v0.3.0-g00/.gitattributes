@@ -1,0 +1,3 @@
+# Byte-exact preservation material retains source whitespace.
+governing/** -whitespace
+current-worktrees/**/*.patch -whitespace
