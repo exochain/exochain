@@ -1039,7 +1039,8 @@ elif 'fsck' not in args: raise SystemExit(94)
                 expected_values.append(expected)
                 return original_preflight(provider,expected,assets,rebind,predecessor=predecessor)
             predecessor=helper.fixed_empty_predecessor(self.manifest,publications,record,policy) if selected else None
-            with patch.object(self.i,'load_module',return_value=helper),patch.object(helper,'GitHub',return_value=Provider(predecessor)), \
+            with patch.object(self.i,'load_module',return_value=helper), \
+                 patch.object(helper,'GitHub',return_value=Provider(predecessor)) as github_client, \
                  patch.object(helper,'release_assets',return_value={'fixture':b'x'}), \
                  patch.object(helper,'authenticate_failed_predecessor',return_value=predecessor), \
                  patch.object(helper,'preflight',side_effect=recorded_preflight), \
@@ -1047,6 +1048,7 @@ elif 'fsck' not in args: raise SystemExit(94)
                  patch.dict(self.i.os.environ,{'GITHUB_SHA':'a'*40,'GITHUB_REF':'refs/tags/v0.2.7-recover.3','RELEASE_GITHUB_TOKEN':'fixture'},clear=True):
                 self.i.retained_github_preflight(self.root,self.custody,self.manifest,publications,record,self.root,evidence,
                     policy=selected)
+            github_client.assert_called_once_with('fixture', self.custody.parse_json, read_only=True)
             self.assertEqual(events,['files','lookup','files'])
             self.assertIs(json.loads((evidence/'github-preflight.json').read_text())['mutation_attempted'],False)
             if selected:

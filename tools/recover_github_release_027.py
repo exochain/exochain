@@ -452,14 +452,20 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class GitHub:
-    def __init__(self, token, parser, *, budget=None):
+    def __init__(self, token, parser, *, budget=None, read_only=False):
         self.token = token
         self.parser = parser
         self.budget = budget
+        self.read_only = read_only
         # Do not inherit proxy environment or an arbitrary redirect policy.
         self.transport = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
 
     def request(self, method, url, data=None, binary=False, auth=True, limit=4*1024*1024, binary_body=False):
+        # Acceptance preflight must observe drafts. GitHub lists those only for
+        # a push-capable token, so the job permission is contents: write. This
+        # client still refuses every mutation before a request is built.
+        if self.read_only and method != "GET":
+            raise ValueError("read-only GitHub client forbids release mutation")
         parsed = urllib.parse.urlsplit(url)
         require(parsed.scheme == "https" and not parsed.username and not parsed.password and not parsed.fragment, "unsafe provider URL")
         if auth:

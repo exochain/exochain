@@ -78,7 +78,10 @@ def retained_policy(value):
     for name, environment in [('approve', 'release'), ('approve-second', 'release-second')]:
         require(jobs[name]['environment'] == environment and jobs[name]['needs'] == ['ci', 'validate-release-inputs'])
     require(jobs['verify-signed-tag']['needs'] == ['approve', 'approve-second', 'validate-release-inputs'])
-    require(acceptance['permissions'] == {'contents':'read', 'actions':'read', 'attestations':'read'})
+    require(acceptance['permissions'] == {'contents':'write', 'actions':'read', 'attestations':'read'})
+    acceptance_client = (ROOT / 'tools/import_release_recovery_027.sh').read_text()
+    require("github.GitHub(os.environ['RELEASE_GITHUB_TOKEN'],custody.parse_json,read_only=True)" in acceptance_client)
+    require(acceptance_client.count('read_only=True') == 1)
     require(writer['permissions'] == {'contents':'write', 'actions':'read'})
     require(writer.get('timeout-minutes') == 240)
     require(writer['environment'] == 'release')
@@ -172,7 +175,7 @@ class RecoveryWorkflowTests(unittest.TestCase):
         self.assertIn("needs.validate-release-inputs.outputs.operation == 'recover-0.2.7-preserved'",
             jobs['retained-github']['if'])
         self.assertEqual(jobs['retained-acceptance']['permissions'],
-                         {'contents':'read','actions':'read','attestations':'read'})
+                         {'contents':'write','actions':'read','attestations':'read'})
         self.assertEqual(jobs['retained-github']['permissions'],{'contents':'write','actions':'read'})
         self.assertEqual(jobs['retained-github']['environment'],'release')
         self.assertIn('!inputs.dry_run',jobs['retained-github']['if'])
@@ -183,7 +186,7 @@ class RecoveryWorkflowTests(unittest.TestCase):
         workflow = parsed_workflow(self.text)
         retained_policy(workflow)
         producer, writer = (workflow['jobs'][name] for name in RETAINED)
-        self.assertEqual(producer['permissions'], {'contents':'read','actions':'read','attestations':'read'})
+        self.assertEqual(producer['permissions'], {'contents':'write','actions':'read','attestations':'read'})
         self.assertEqual(writer['permissions'], {'contents':'write','actions':'read'})
         self.assertEqual(writer['environment'], 'release')
         for name in ('artifact_id','artifact_digest','producer_job_id','receipt_members','receipt_context'):

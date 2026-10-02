@@ -223,8 +223,10 @@ boundaries, sizes, CRCs and SHA256s are checked before exposing files; the
 unchanged original 96 MiB ZIP bound is not widened. Missing or changed evidence,
 expired retained artifacts or ambiguous ZIPs stop the operation.
 
-`retained-acceptance` has read-only contents/actions/attestations permissions,
-no publisher secret or job OIDC, and runs in both dry and live requests after
+`retained-acceptance` has contents write plus actions and attestations read,
+because GitHub lists draft releases only for tokens with push access. It has
+no publisher secret or job OIDC. Its GitHub client is constructed read-only
+and sends only GET. It runs in both dry and live requests after
 full CI, both approval jobs and signed-tag verification. It reuses canonical
 checks for all 32 public Rust versions and five mapped npm/Python files, including
 genuine public-byte and cryptographic identity checks, without upload, staging
@@ -351,7 +353,9 @@ or signed-URL logging. No caller-selected asset or local-file fallback exists.
 V3 carries actual new transport observations, never fabricated fresh old-payload
 metadata. Completed-writer controls must fall within that writer's lifetime.
 
-The producer remains read-only, without publisher credentials or OIDC. Fresh
+The producer GitHub client remains read-only and sends only GET. The job token
+has contents write so GitHub will list draft release 400420101. The job has no
+publisher credentials or OIDC. Fresh
 native, package and Rust verification, direct same-attempt receipts, source and
 per-mutation transport checks precede the existing guarded body-only transition
 of empty product draft `400420101`. Exactly 35 product assets, no overwrite,
