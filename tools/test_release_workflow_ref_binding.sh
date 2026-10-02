@@ -241,7 +241,7 @@ expected_permissions = {
   "recovery-sdk" => { "contents" => "read", "id-token" => "write" },
   "recovery-python" => { "contents" => "read", "id-token" => "write" },
   "recovery-github" => { "contents" => "write" },
-  "retained-acceptance" => { "contents" => "read", "actions" => "read", "attestations" => "read" },
+  "retained-acceptance" => { "contents" => "write", "actions" => "read", "attestations" => "read" },
   "retained-github" => { "contents" => "write", "actions" => "read" }
 }
 
@@ -1318,6 +1318,11 @@ jobs = workflow.fetch("jobs")
 retained_condition = "(needs.validate-release-inputs.outputs.operation == 'recover-0.2.7-retained' || needs.validate-release-inputs.outputs.operation == 'recover-0.2.7-retained-404' || needs.validate-release-inputs.outputs.operation == 'recover-0.2.7-preserved')"
 retained_producer = jobs.fetch("retained-acceptance")
 retained_writer = jobs.fetch("retained-github")
+acceptance_client = File.read("tools/import_release_recovery_027.sh")
+read_only_client = "github.GitHub(os.environ['RELEASE_GITHUB_TOKEN'],custody.parse_json,read_only=True)"
+unless acceptance_client.include?(read_only_client) && acceptance_client.scan("read_only=True").length == 1
+  raise "#{workflow_path}: retained acceptance must use one read-only GitHub client"
+end
 unless retained_producer.fetch("if") == "${{ #{retained_condition} }}" &&
        retained_writer.fetch("if") == "${{ #{retained_condition} && !inputs.dry_run }}"
   raise "#{workflow_path}: retained operations must share the producer and live-only writer"
