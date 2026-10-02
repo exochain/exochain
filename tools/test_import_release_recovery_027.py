@@ -1691,6 +1691,31 @@ elif 'fsck' not in args: raise SystemExit(94)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("publication credentials and OIDC", result.stderr)
 
+    def test_embedded_import_failure_reports_bootstrap_stage_without_exception_details(self):
+        source = SCRIPT.read_text().split("# BEGIN RECOVERY_IMPORT_PYTHON\n", 1)[1].split(
+            "# END RECOVERY_IMPORT_PYTHON", 1)[0]
+        missing_capture = self.root / "provider-secret-must-not-leak"
+        result = subprocess.run(
+            [sys.executable, "-I", "-B", "-c", source, str(missing_capture)],
+            env={}, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(
+            result.stderr,
+            "release recovery import failed: FileNotFoundError; stage=bootstrap\n")
+        self.assertNotIn("provider-secret-must-not-leak", result.stderr)
+
+    def test_import_failure_rejects_unallowlisted_stage_and_exception_text(self):
+        error = ValueError("provider body and signed redirect must not leak")
+        self.i._DIAGNOSTIC_STAGE = "hostile-stage\nprovider-body"
+        stderr = io.StringIO()
+        entrypoint = getattr(self.i, "run_main", None)
+        self.assertIsNotNone(entrypoint, "importer must expose its sanitized failure entrypoint")
+        with patch.object(self.i, "main", side_effect=error), patch.object(self.i.sys, "stderr", stderr):
+            result = entrypoint()
+        self.assertEqual(result, 1)
+        self.assertEqual(stderr.getvalue(), "release recovery import failed: ValueError; stage=unknown\n")
+        self.assertNotIn(str(error), stderr.getvalue())
+
     def test_import_rejects_wrong_producer_or_zip_without_exposing_outputs(self):
         for fault in ("producer", "zip"):
             runner = self.root / fault; runner.mkdir()

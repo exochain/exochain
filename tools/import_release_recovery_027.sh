@@ -1076,9 +1076,42 @@ def assert_captured_inputs(capture, custody, *, policy=None, preserved=None, bud
                 "captured controller helper or governance input changed")
 
 
+DIAGNOSTIC_STAGES = frozenset({
+    "bootstrap",
+    "load-inputs",
+    "controller-preflight",
+    "original-acquisition",
+    "retained-acquisition",
+    "rust-publication-readback",
+    "package-validation",
+    "native-attestation-verification",
+    "publication-acceptance",
+    "github-release-preflight",
+    "final-file-verification",
+    "controller-final-recheck",
+    "retained-observation-finalization",
+    "retained-file-recheck",
+    "retained-source-recheck",
+    "current-receipt-context",
+    "current-receipt-construction",
+    "atomic-handoff",
+    "complete",
+})
+_DIAGNOSTIC_STAGE = "bootstrap"
+
+
+def set_diagnostic_stage(stage):
+    global _DIAGNOSTIC_STAGE
+    if stage not in DIAGNOSTIC_STAGES:
+        raise ImportFailure("invalid internal diagnostic stage")
+    _DIAGNOSTIC_STAGE = stage
+
+
 def main():
+    set_diagnostic_stage("bootstrap")
     capture = Path(sys.argv[1])
     custody = load_module(capture, "verify_release_recovery_027")
+    set_diagnostic_stage("load-inputs")
     manifest_path = capture / "RECOVERY-MANIFEST.json"
     manifest = custody.load_manifest(manifest_path)
     runner_temp, destination = Path(os.environ["RUNNER_TEMP"]), Path(os.environ["RELEASE_RECOVERY_DIRECTORY"])
@@ -1100,12 +1133,14 @@ def main():
     require(Path(node).is_absolute() and Path(node).resolve().is_file(), "invalid pinned Node executable")
     require(shutil.disk_usage(runner_temp).free >= 4 * 1024**3, "import requires at least four GiB free")
     before = custody.load_json(capture / "identity-before.json", "initial identity")
+    set_diagnostic_stage("controller-preflight")
     if retained:
         assert_captured_inputs(capture, custody, policy=policy, **extra)
     summary = {"controller_sha":before["controller_sha"],"controller_ref":before["controller_ref"],
                "product":manifest["product"]}
     helper = [python, "-I", "-B", str(capture / "verify_release_recovery_027.py")]
     if retained:
+        set_diagnostic_stage("retained-acquisition")
         if policy is not None:
             observer = capture_observer(custody, transport, capture, evidence, "retained-acceptance")
         else:
@@ -1113,6 +1148,7 @@ def main():
         summary["origin"], summary["retained_transport"] = acquire_retained(manifest, record, custody, transport, evidence, archives,
                                               candidate, capture / "retaining-workflow.yml", policy=policy, observer=observer, **extra)
     else:
+        set_diagnostic_stage("original-acquisition")
         summary["origin"] = fetch_origin(manifest, custody, transport, evidence)
         command(helper + ["origin", "--manifest", str(manifest_path), "--run", str(evidence / "run.json"),
                       "--jobs", str(evidence / "jobs.json"), "--artifact-metadata", str(evidence / "artifact-metadata")], evidence / "origin-check.json")
@@ -1120,22 +1156,29 @@ def main():
             transport.archive(artifact, archives / f"{artifact['id']}.zip")
         command(helper + ["artifacts", "--manifest", str(manifest_path), "--archives", str(archives),
                       "--destination", str(candidate)], evidence / "artifact-custody-check.json")
+    set_diagnostic_stage("rust-publication-readback")
     summary["rust"] = fetch_rust(manifest, custody, transport, evidence)
     command(helper + ["rust-registry", "--manifest", str(manifest_path), "--responses", str(evidence / "rust-responses")],
             evidence / "rust-registry-check.json")
+    set_diagnostic_stage("package-validation")
     summary["packages"] = validate_packages(manifest, candidate, capture, evidence, python, node)
     summary["native_attestations"] = []
+    set_diagnostic_stage("native-attestation-verification")
     for artifact in manifest["artifacts"]:
         if artifact["lane"].startswith("native-"):
             summary["native_attestations"].append(verify_attestation(manifest, artifact,
                 candidate / artifact["lane"] / artifact["files"][0]["path"], evidence, token, custody))
     if retained:
         publications = custody.load_publications(manifest, capture / "PUBLICATION-IDENTITIES.json")
+        set_diagnostic_stage("publication-acceptance")
         checked_publications = accept_publications(custody, publications, candidate, capture, evidence, runner_temp)
+        set_diagnostic_stage("github-release-preflight")
         retained_github_preflight(capture,custody,manifest,publications,record,candidate,evidence,policy=policy,**extra)
+    set_diagnostic_stage("final-file-verification")
     command(helper + ["files", "--manifest", str(manifest_path), "--directory", str(candidate)], evidence / "final-file-check.json")
     # No package was executed. Recheck source, signatures and authoritative
     # remote tags immediately before exposing accepted data to later jobs.
+    set_diagnostic_stage("controller-final-recheck")
     with (evidence / "identity-after.json").open("xb") as output:
         result = subprocess.run(["/bin/bash", "--noprofile", "--norc", "-p", str(capture / "verify_release_recovery_027.sh")],
                                 env=dict(os.environ), stdout=output, timeout=240, check=False)
@@ -1145,6 +1188,7 @@ def main():
             "identity changed during read-only import")
     if retained:
         if policy is not None:
+            set_diagnostic_stage("retained-observation-finalization")
             initial_input = custody.load_json(evidence / "acquisition-origin-input.json", "complete acquisition origin")
             final_input = finalize_retained_observations(manifest, record, policy, custody, transport, evidence,
                 archives / f"{record['custody']['metadata']['id']}.zip", capture / "retaining-workflow.yml",
@@ -1154,10 +1198,14 @@ def main():
             if preserved is not None:
                 summary["origin_input"] = final_input
         # Verify fixed files after the last identity checker, not just before it.
+        set_diagnostic_stage("retained-file-recheck")
         summary["files"] = custody.verify_files(manifest, candidate)
+        set_diagnostic_stage("retained-source-recheck")
         assert_captured_inputs(capture, custody, policy=policy, **extra)
+        set_diagnostic_stage("current-receipt-context")
         context = current_receipt_context(custody, transport, capture, evidence, python, node,
             observer=observer, checked_at=utc_now() if policy is not None else None)
+        set_diagnostic_stage("current-receipt-construction")
         members = create_retained_receipts(custody, manifest, record, context, summary, checked_publications,
             evidence, policy=policy, **extra)
     shutil.copyfile(capture / "identity-before.json", evidence / "identity-before.json")
@@ -1166,6 +1214,7 @@ def main():
     # Everything executed before this point is a read or local private write.
     # Fresh-runner ownership and absent destinations are mandatory. No reuse or
     # merge of an earlier import tree is supported.
+    set_diagnostic_stage("atomic-handoff")
     output_path = Path(os.environ["GITHUB_OUTPUT"])
     descriptor = os.open(output_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
     exposed = []
@@ -1239,6 +1288,7 @@ def main():
             os.close(staged_descriptor)
         if descriptor is not None:
             os.close(descriptor)
+    set_diagnostic_stage("complete")
     # GITHUB_OUTPUT is the handoff. A closed diagnostic stdout must not turn
     # an already committed atomic handoff into a reported failed operation.
     try:
@@ -1248,12 +1298,19 @@ def main():
         pass
 
 
-if __name__ == "__main__":
+def run_main():
     try:
         main()
+        return 0
     except (ValueError, OSError, KeyError, TypeError, subprocess.SubprocessError) as error:
         # Provider bodies, tokens and signed redirect URLs never become errors.
-        print("release recovery import failed: " + (str(error) if isinstance(error, ImportFailure) else type(error).__name__), file=sys.stderr)
-        sys.exit(1)
+        stage = _DIAGNOSTIC_STAGE if _DIAGNOSTIC_STAGE in DIAGNOSTIC_STAGES else "unknown"
+        kind = str(error) if isinstance(error, ImportFailure) else type(error).__name__
+        print(f"release recovery import failed: {kind}; stage={stage}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(run_main())
 # END RECOVERY_IMPORT_PYTHON
 RECOVERY_IMPORT_PYTHON
