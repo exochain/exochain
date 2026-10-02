@@ -480,3 +480,49 @@ review and a newly frozen full gate run follow; an older candidate's 92-command
 result cannot validate this correction. Hosted DRY/LIVE, human reviews and
 environment approvals, fresh native2/public5/Rust32 acceptance, actual own-attempt
 receipts and final published 35-byte verification remain distinct requirements.
+
+## October 2 preserved dry failure and sanitized diagnostic validation
+
+Protected dry run `36918765585`, attempt 1, was bound to signed controller
+`1133afa3491c0ac2d058226a31150dafbb0c6c02` at
+`refs/tags/v0.2.7-recover.5`. Both configured human environment gates passed.
+The complete attempt inventory contains 70 jobs: 41 successful, 28 skipped and
+one failed. Producer job `110666226586`, `Verify Retained 0.2.7 Custody and
+Publications`, failed after its source and signed-tag checks. The retained
+acceptance receipt upload was skipped, all writers were skipped, and no live run
+was dispatched. This is a failed dry acceptance, not release evidence.
+
+The hosted log reported only `release recovery import failed: ValueError`.
+That proves an exception escaped the read-only importer but does not identify
+which acquisition, provider, cryptographic, preflight, finalization or handoff
+check raised it. No custody, expiry, permission, network or publication cause is
+inferred from the exception class or elapsed time. The previous handler
+intentionally suppressed arbitrary exception text to prevent provider bodies,
+tokens and signed redirect URLs from entering logs, but it also discarded the
+constant execution boundary needed for root-cause isolation.
+
+The bounded correction adds only allowlisted top-level stage identifiers. It
+does not print traceback frames, exception text for generic failures, locals,
+environment values, URLs, response bodies or credentials. An unallowlisted or
+mutated stage is rendered as `unknown`. Existing `ImportFailure` messages retain
+their reviewed bounded text, now paired with the same fixed stage identifier.
+No release input, provider request, credential, receipt, publication condition,
+human gate or mutation behavior changes.
+
+Regression tests were written and observed failing before implementation: the
+embedded importer omitted `stage=bootstrap`, and no sanitized failure entrypoint
+existed. After the correction, both focused tests pass. The complete importer
+suite passes 62 tests. The custody suite passes 53 tests with three named
+external-evidence cases skipped; the writer suite passes 64 tests with three
+external-evidence cases skipped. Workflow parsing passes 17 tests, npm recovery
+passes 36 tests, and Python orchestration plus release ref-binding, signed-tag,
+version-input and publication-boundary guards pass. The ref-binding guard's two
+tiny Cargo upload probes remained dry-run aborts. These local results validate
+the diagnostic boundary only; they do not explain the hosted `ValueError` or
+constitute protected dry acceptance.
+
+Any new hosted diagnosis requires normal reviewed integration, fresh exact-head
+CI and human reviews, a new unused signed `v0.2.7-recover.N`, and a separately
+protected dry dispatch. The new dry run must expose one fixed stage on failure
+or complete the current producer receipt and keep every writer skipped. A live
+run remains prohibited until a dry run is fully accepted.
