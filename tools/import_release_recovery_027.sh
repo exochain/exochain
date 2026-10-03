@@ -983,7 +983,7 @@ def retained_github_preflight(capture, custody, manifest, publications, record, 
     receipt, expected = github.retained_release_metadata(manifest,publications,record,
         os.environ['GITHUB_SHA'],os.environ['GITHUB_REF'],policy=policy,**extra)
     assets = github.release_assets(custody,manifest,candidate,receipt)
-    provider = github.GitHub(os.environ['RELEASE_GITHUB_TOKEN'],custody.parse_json)
+    provider = github.GitHub(os.environ['RELEASE_GITHUB_TOKEN'],custody.parse_json,read_only=True)
     predecessor = None
     if policy is not None:
         transport = Transport(capture,os.environ['RELEASE_GITHUB_TOKEN'],manifest,record,policy=policy,**extra)

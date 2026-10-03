@@ -5430,8 +5430,12 @@ jobs:
     name: "Verify Retained 0.2.7 Custody and Publications"
     runs-on: ubuntu-24.04
     needs: [ci, approve, approve-second, verify-signed-tag, validate-release-inputs]
+    # GitHub lists draft releases only for tokens with push access.
+    # contents: write is that Actions permission. The acceptance client is
+    # constructed read_only=True and sends only GET. Product mutation stays
+    # in retained-github.
     permissions:
-      contents: read
+      contents: write
       actions: read
       attestations: read
     outputs:

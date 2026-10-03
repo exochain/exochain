@@ -43,8 +43,10 @@ success erases the uncertain request or its journal.
 
 ## Canonical operation and fail-closed ordering
 
-The existing read-only producer preflight may recognize only the exact approved
-predecessor after authenticating its history. It does not update the release.
+The producer preflight may recognize only the exact approved predecessor after
+authenticating its history. GitHub omits that draft from release listings
+unless the token has push access, so the producer job uses contents write and
+a GitHub client that refuses every non-GET. It does not update the release.
 The old `recover-0.2.7` and `recover-0.2.7-retained` modes remain strict.
 
 The protected final writer must first complete the unchanged actual same-attempt

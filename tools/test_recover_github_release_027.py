@@ -1011,6 +1011,24 @@ class GithubRecoveryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.v.preflight(FakeProvider(dict(predecessor)),self.expected,self.assets,lambda:None)
 
+    def test_omitted_draft_listing_fails_closed_before_any_create(self):
+        predecessor = self.fixed_predecessor()
+        provider = FakeProvider(None)
+        with self.assertRaisesRegex(ValueError, r'^pinned retained draft is missing or replaced$'):
+            self.v.preflight(provider, self.expected, self.assets, lambda: None, predecessor=predecessor)
+        self.assertEqual(provider.mutations, [])
+
+    def test_read_only_github_client_refuses_mutation_before_opening_a_request(self):
+        opened = []
+        client = self.v.GitHub('SECRET_SENTINEL', lambda raw, label: json.loads(raw), read_only=True)
+        client.transport = types.SimpleNamespace(open=lambda *args, **kwargs: opened.append(args))
+        for method in ('POST', 'PATCH', 'PUT', 'DELETE'):
+            with self.subTest(method=method):
+                with self.assertRaisesRegex(ValueError, r'^read-only GitHub client forbids release mutation$') as caught:
+                    client.request(method, 'https://api.github.com/repos/exochain/exochain/releases', data=b'{}')
+                self.assertNotIn('SECRET_SENTINEL', str(caught.exception))
+        self.assertEqual(opened, [])
+
     def test_retained_transition_runs_after_all_gates_and_before_recovery(self):
         events=[]
         provider=FakeProvider()
