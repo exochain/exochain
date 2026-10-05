@@ -30,6 +30,8 @@ HISTORICAL_MEMBER_SHA256 = '0c248f93130119592d029253f6f7e370651713054228dae55133
 HISTORICAL_MEMBER = 'exochain-retained-github.5gehyybi/mutation-journal.jsonl'
 PRESERVED_RELEASE_FIELDS = ('id','node_id','tag_name','target_commitish','name',
     'draft','prerelease','published_at','created_at','immutable','url','upload_url')
+# GitHub replaces an omitted release tag_name with untagged-<20 hex chars>.
+DETACHED_TAG = re.compile(r'untagged-[0-9a-f]{20}\Z')
 RATE_URL = 'https://api.github.com/rate_limit'
 
 
@@ -370,7 +372,7 @@ def recover(provider, expected, assets, rebind, journal=None, *, required_releas
         release_guard(current)
     require(validate_release(current, expected) == identifier, "release identity changed")
     if current["draft"]:
-        mutate("publish_release", {"release_id":identifier}, lambda:provider.publish(identifier))
+        mutate("publish_release", {"release_id":identifier}, lambda:provider.publish(identifier, expected["body"]))
         rebind()
     final = provider.lookup()
     if release_guard is not None:
@@ -409,6 +411,83 @@ def validate_empty_predecessor(provider, release, predecessor):
     return 400420101
 
 
+def detached_product_tag(value):
+    return type(value) is str and DETACHED_TAG.fullmatch(value) is not None
+
+
+def release_update(body, *, draft):
+    """Reassert the existing product tag. GitHub detaches a release when tag_name is omitted."""
+    require(type(body) is str and 0 < len(body.encode()) <= 65536, 'invalid release body')
+    payload = {
+        'tag_name': 'v0.2.7',
+        'target_commitish': PRODUCT_SHA,
+        'name': 'EXOCHAIN v0.2.7',
+        'body': body,
+        'draft': draft,
+        'prerelease': False,
+    }
+    if draft is False:
+        payload['make_latest'] = 'true'
+    return payload
+
+
+def current_product_release(provider):
+    """Use a provider's pinned-id resolver when the v0.2.7 listing no longer shows the draft."""
+    resolver = getattr(provider, 'pinned_product_release', None)
+    if resolver is not None:
+        return resolver()
+    return provider.lookup()
+
+
+def validate_detached_draft(provider, release, predecessor):
+    """Same empty draft after GitHub replaced an omitted tag_name with untagged-<20 hex>."""
+    require(type(predecessor) is dict and type(release) is dict, 'missing fixed predecessor')
+    require(detached_product_tag(release.get('tag_name')),
+            'detached draft tag is not a generated untagged name')
+    for field in (*PRESERVED_RELEASE_FIELDS, 'body', 'updated_at'):
+        require(field in release and field in predecessor, 'missing detached predecessor ' + field)
+        if field in ('tag_name', 'body', 'updated_at'):
+            continue
+        wanted = predecessor[field]
+        require(type(release[field]) is type(wanted) and release[field] == wanted,
+                'detached draft changed ' + field)
+    require(type(release.get('body')) is str and 0 < len(release['body'].encode()) <= 65536,
+            'detached draft body is invalid')
+    updated = release.get('updated_at')
+    require(type(updated) is str and re.fullmatch(
+            r'20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z', updated) is not None
+            and updated >= predecessor['updated_at'], 'detached draft timestamp regressed')
+    require(predecessor['id'] == 400420101 and predecessor['draft'] is True and
+            predecessor['prerelease'] is False and predecessor['published_at'] is None and
+            predecessor['updated_at'] == '2026-09-30T20:40:08Z' and
+            predecessor['created_at'] == '2026-09-17T18:17:09Z' and
+            predecessor['node_id'] == 'RE_kwDOQovC3s4X3e0F' and
+            predecessor['immutable'] is False and
+            predecessor['target_commitish'] == PRODUCT_SHA and
+            predecessor['tag_name'] == 'v0.2.7' and predecessor['name'] == 'EXOCHAIN v0.2.7' and
+            hashlib.sha256(predecessor['body'].encode()).hexdigest() ==
+            '27ec3297363af0b6d50246237d9eb1bde7084893953505f674058bebeb27da1d',
+            'invalid predecessor pin')
+    require(type(release.get('assets')) is list and release['assets'] == [],
+            'embedded detached assets are not empty')
+    require(provider.list_assets(400420101) == [], 'listed detached assets are not empty')
+    return 400420101
+
+
+def repairable_predecessor(provider, release, expected, predecessor):
+    """Exact approved predecessor, already-described draft, or the known detached draft."""
+    require(type(release) is dict, 'pinned retained draft is missing or replaced')
+    tag = release.get('tag_name')
+    body = release.get('body')
+    if tag == 'v0.2.7' and body == expected.get('body'):
+        return 'continued', validate_continued_release(release, expected, predecessor)
+    if tag == 'v0.2.7' and body == predecessor.get('body'):
+        return 'exact', validate_empty_predecessor(provider, release, predecessor)
+    if detached_product_tag(tag):
+        return 'detached', validate_detached_draft(provider, release, predecessor)
+    raise ValueError('pinned retained draft is not the approved predecessor')
+
+
 def validate_continued_release(release, expected, predecessor):
     identifier = validate_release(release, expected)
     require(identifier == 400420101, 'transitioned release ID differs')
@@ -427,20 +506,20 @@ def validate_continued_release(release, expected, predecessor):
 def preflight(provider, expected, assets, rebind, *, predecessor=None):
     """Read the full draft/public inventory without entering any mutation path."""
     rebind()
-    release = provider.lookup()
+    release = current_product_release(provider) if predecessor is not None else provider.lookup()
     found = set()
     identifier = None
     if predecessor is not None:
         require(type(release) is dict and type(release.get('id')) is int and
                 release['id'] == 400420101, 'pinned retained draft is missing or replaced')
-    if release is not None:
-        if predecessor is not None and release.get('body') != expected['body']:
-            identifier = validate_empty_predecessor(provider, release, predecessor)
-        else:
-            identifier = (validate_continued_release(release, expected, predecessor)
-                          if predecessor is not None else validate_release(release, expected))
+        kind, identifier = repairable_predecessor(provider, release, expected, predecessor)
+        if kind == 'continued':
             found = verified_assets(provider, identifier, assets)
             require(release['draft'] or found == set(assets), 'incomplete already-public release')
+    elif release is not None:
+        identifier = validate_release(release, expected)
+        found = verified_assets(provider, identifier, assets)
+        require(release['draft'] or found == set(assets), 'incomplete already-public release')
     rebind()
     return {'release_id':identifier, 'existing_assets':len(found),
             'missing_assets':[name for name in assets if name not in found], 'mutation_attempted':False}
@@ -556,6 +635,19 @@ class GitHub:
                 return matches[0] if matches else None
         raise ValueError("release pagination exceeded the bounded inventory")
 
+    def pinned_product_release(self):
+        """Return the v0.2.7 release, or draft 400420101 after GitHub detached that tag."""
+        listed = self.lookup()
+        if listed is not None:
+            require(type(listed.get('id')) is int and listed['id'] == 400420101,
+                    'v0.2.7 release is not the pinned draft')
+            return listed
+        pinned = self.json('GET', '/releases/400420101')
+        require(type(pinned) is dict and pinned.get('id') == 400420101,
+                'pinned retained draft missing')
+        require(self.lookup() is None, 'product tag release appeared during pinned read')
+        return pinned
+
     def list_assets(self, identifier):
         first = self.json("GET", f"/releases/{identifier}/assets?per_page=100&page=1")
         require(type(first) is list and len(first) < 100, "unexpected asset pagination")
@@ -589,12 +681,15 @@ class GitHub:
                 raise GitHubUploadError(status,response,headers,operation='asset upload response') from None
             raise
 
-    def publish(self, identifier):
-        return self.json("PATCH", f"/releases/{identifier}", {"draft":False, "make_latest":"true"})
+    def publish(self, identifier, body):
+        require(type(identifier) is int and 0 < identifier < 10**15, 'invalid publication target')
+        return self.json("PATCH", f"/releases/{identifier}", release_update(body, draft=False))
 
     def update_body(self, identifier, body):
         require(identifier == 400420101 and type(body) is str, 'invalid transition target')
-        data = json.dumps({'body':body}, separators=(',', ':')).encode()
+        # tag_name must be sent. A body-only PATCH makes GitHub replace v0.2.7
+        # with a generated untagged-<20 hex> name and leaves the git tag in place.
+        data = json.dumps(release_update(body, draft=True), separators=(',', ':')).encode()
         status, raw, headers = self.request('PATCH', API + '/releases/400420101', data)
         if status != 200:
             raise GitHubUploadError(status, raw, headers, operation='release body transition')
@@ -1096,12 +1191,26 @@ def validate_transitioned_release(provider, release, expected, predecessor):
     return updated
 
 
+def begin_predecessor_transition(provider, expected, predecessor, rebind, journal):
+    """Continue a described v0.2.7 draft, or rebind the detached pinned draft first."""
+    current = current_product_release(provider)
+    if (type(current) is dict and current.get('tag_name') == 'v0.2.7'
+            and current.get('body') == expected['body']):
+        require(validate_continued_release(current, expected, predecessor) == 400420101,
+                'already-transitioned release ID differs')
+        return 400420101, False, lambda release: validate_continued_release(release, expected, predecessor)
+    identifier = transition_empty_draft(provider, expected, predecessor, rebind, journal)
+    return identifier, True, lambda release: validate_continued_release(release, expected, predecessor)
+
+
 def transition_empty_draft(provider, expected, predecessor, rebind, journal):
-    """Single body-only mutation; an uncertain result stops this attempt."""
+    """One identity-preserving description update; an uncertain result stops this attempt."""
     rebind()
-    current = provider.lookup()
-    identifier = validate_empty_predecessor(provider, current, predecessor)
+    current = current_product_release(provider)
+    kind, identifier = repairable_predecessor(provider, current, expected, predecessor)
+    require(kind in ('exact', 'detached'), 'transition target is not an empty pinned draft')
     event = {'operation':'transition_controller_body', 'product_tag':'v0.2.7',
+             'reasserted_tag':'v0.2.7',
              'release_id':identifier,
              'historical_run_id':36653810772, 'historical_run_attempt':1,
              'historical_writer_job_id':109921191171,
@@ -1306,13 +1415,7 @@ def retained_main():
         predecessor = authenticate_failed_predecessor(transport,custody,importer,evidence,
             manifest,publications,record,policy)
         rebind()
-        current = provider.lookup()
-        if current is not None and current.get('body') == expected['body']:
-            require(validate_continued_release(current,expected,predecessor) == 400420101,
-                    'already-transitioned release ID differs')
-            return 400420101, False, lambda release:validate_continued_release(release,expected,predecessor)
-        identifier = transition_empty_draft(provider,expected,predecessor,rebind,journal)
-        return identifier, True, lambda release:validate_continued_release(release,expected,predecessor)
+        return begin_predecessor_transition(provider,expected,predecessor,rebind,journal)
     journal = Journal(capture/'mutation-journal.jsonl',{'controller_sha':sha,'controller_ref':ref,
         'run_id':handoff[0]['run_id'],'run_attempt':handoff[0]['run_attempt'],'original_source':PRODUCT_SHA})
     print('GitHub retained mutation journal: '+str(journal.path),flush=True)

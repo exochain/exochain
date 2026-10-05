@@ -40,7 +40,7 @@ class FakeProvider:
     def upload(self, release_id, name, data):
         self.mutations.append("upload:" + name)
         self.assets[name] = data
-    def publish(self, release_id):
+    def publish(self, release_id, body=None):
         self.mutations.append("publish")
         self.release["draft"] = False
         self.release['published_at'] = '2026-09-30T21:00:00Z'
@@ -634,11 +634,11 @@ class GithubRecoveryTests(unittest.TestCase):
             return ordinary_upload(identifier,name,data)
         provider.upload=upload
         ordinary_publish=provider.publish
-        def publish(identifier):
+        def publish(identifier, body=None):
             if fault=='unknown-publish':
                 provider.mutations.append('publish')
                 raise OSError('publication response uncertain')
-            return ordinary_publish(identifier)
+            return ordinary_publish(identifier, body)
         provider.publish=publish
         journal=[]
         saved_policy=(h.capture/'PRESERVED-PAYLOAD-TRANSPORT.json').read_bytes()
@@ -718,13 +718,7 @@ class GithubRecoveryTests(unittest.TestCase):
                 self.v.fixed_empty_predecessor(h.manifest,h.publications,h.record,h.policy))
             self.assertEqual(predecessor,h.predecessor)
             rebind()
-            current=provider.lookup()
-            if current is not None and current.get('body')==h.expected['body']:
-                return 400420101,False,lambda release:self.v.validate_continued_release(
-                    release,h.expected,predecessor)
-            identifier=self.v.transition_empty_draft(provider,h.expected,predecessor,rebind,journal.append)
-            return identifier,True,lambda release:self.v.validate_continued_release(
-                release,h.expected,predecessor)
+            return self.v.begin_predecessor_transition(provider,h.expected,predecessor,rebind,journal.append)
         def readback_gate():
             state['events'].append('final-fresh-v3-payload' if h.actual else 'fixture-readback-boundary')
             if h.actual:
@@ -1180,7 +1174,7 @@ class GithubRecoveryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.v.preflight(client,self.expected,self.assets,lambda:None,predecessor=predecessor)
 
-    def test_body_transition_uses_only_exact_patch_payload_and_requires_http_200(self):
+    def test_body_transition_reasserts_product_tag_and_requires_http_200(self):
         client=self.v.GitHub('test-only-token',lambda raw,label:json.loads(raw))
         calls=[]
         def request(method,url,data=None,**kwargs):
@@ -1190,9 +1184,139 @@ class GithubRecoveryTests(unittest.TestCase):
         client.request=request
         client.update_body(400420101,self.expected['body'])
         self.assertEqual(calls,[('PATCH','https://api.github.com/repos/exochain/exochain/releases/400420101',
-                                 b'{"body":"fixed reviewed identity"}')])
+            b'{"tag_name":"v0.2.7","target_commitish":"666c578f719d1e54fce95d6831a3af92ea80df93",'
+            b'"name":"EXOCHAIN v0.2.7","body":"fixed reviewed identity","draft":true,"prerelease":false}')])
+        calls.clear()
+        client.publish(400420101,self.expected['body'])
+        self.assertEqual(calls,[('PATCH','https://api.github.com/repos/exochain/exochain/releases/400420101',
+            b'{"tag_name":"v0.2.7","target_commitish":"666c578f719d1e54fce95d6831a3af92ea80df93",'
+            b'"name":"EXOCHAIN v0.2.7","body":"fixed reviewed identity","draft":false,"prerelease":false,'
+            b'"make_latest":"true"}')])
         client.request=lambda *args,**kwargs:(201,b'{}',{})
         with self.assertRaises(ValueError): client.update_body(400420101,'body')
+
+    def test_untagged_transition_response_stops_before_any_asset_upload(self):
+        predecessor=self.fixed_predecessor()
+        provider=FakeProvider(dict(predecessor))
+        journal=[]
+        def update(identifier,body):
+            provider.mutations.append('patch')
+            provider.release={**predecessor,'body':body,
+                'tag_name':'untagged-5dbc4793108251330e78','updated_at':'2026-10-05T17:46:15Z'}
+            return dict(provider.release)
+        provider.update_body=update
+        with self.assertRaisesRegex(ValueError,'conflicting release tag_name'):
+            self.v.complete_retained(provider,self.expected,self.assets,lambda:None,
+                lambda:None,lambda:None,journal.append,prepare_gate=lambda:None,
+                acquire_gate=lambda:None,final_gate=lambda:None,
+                transition_gate=lambda:self.v.begin_predecessor_transition(
+                    provider,self.expected,predecessor,lambda:None,journal.append))
+        self.assertEqual(provider.mutations,['patch'])
+        self.assertEqual(journal[-1]['outcome'],'unknown')
+        self.assertNotIn('upload_asset',[row['operation'] for row in journal])
+
+    def test_detached_pinned_draft_is_read_only_until_tag_is_reasserted(self):
+        predecessor=self.fixed_predecessor()
+        detached={**predecessor,'tag_name':'untagged-5dbc4793108251330e78',
+            'body':'recover.7 controller body already stored','updated_at':'2026-10-05T17:46:15Z'}
+        provider=FakeProvider(dict(detached))
+        result=self.v.preflight(provider,self.expected,self.assets,lambda:None,predecessor=predecessor)
+        self.assertEqual(result['release_id'],400420101)
+        self.assertEqual(result['existing_assets'],0)
+        self.assertIs(result['mutation_attempted'],False)
+        self.assertEqual(provider.mutations,[])
+        journal=[]
+        def update(identifier,body):
+            provider.mutations.append('patch')
+            self.assertEqual((identifier,body),(400420101,self.expected['body']))
+            provider.release={**provider.release,'body':body,'tag_name':'v0.2.7',
+                'updated_at':'2026-10-05T18:00:00Z'}
+            return dict(provider.release)
+        provider.update_body=update
+        self.v.complete_retained(provider,self.expected,self.assets,lambda:None,
+            lambda:None,lambda:None,journal.append,prepare_gate=lambda:None,
+            acquire_gate=lambda:None,final_gate=lambda:None,
+            transition_gate=lambda:self.v.begin_predecessor_transition(
+                provider,self.expected,predecessor,lambda:None,journal.append))
+        self.assertEqual(provider.release['tag_name'],'v0.2.7')
+        self.assertEqual(provider.release['id'],400420101)
+        self.assertEqual(provider.mutations[0],'patch')
+        self.assertIn('upload:archive.tar.gz',provider.mutations)
+        self.assertEqual([row['outcome'] for row in journal if row['operation']=='transition_controller_body'],
+            ['intent','response_received_not_yet_accepted','accepted'])
+
+    def test_detached_draft_rejects_foreign_identity_before_patch(self):
+        predecessor=self.fixed_predecessor()
+        base={**predecessor,'tag_name':'untagged-5dbc4793108251330e78',
+            'body':'stored','updated_at':'2026-10-05T17:46:15Z'}
+        for change in ({'tag_name':'untagged-GGGG'},{'tag_name':'v0.2.7-recover.7'},
+                {'id':400420102},{'node_id':'other'},{'assets':[{'name':'x'}]},
+                {'draft':False},{'target_commitish':'main'},
+                {'updated_at':'2026-09-30T20:40:07Z'}):
+            with self.subTest(change=change):
+                provider=FakeProvider({**base,**change})
+                provider.update_body=lambda *args:provider.mutations.append('patch')
+                with self.assertRaises(ValueError):
+                    self.v.preflight(provider,self.expected,self.assets,lambda:None,
+                        predecessor=predecessor)
+                self.assertEqual(provider.mutations,[])
+
+    def test_real_client_rebinds_detached_draft_by_id(self):
+        predecessor=self.fixed_predecessor()
+        detached={**predecessor,'tag_name':'untagged-5dbc4793108251330e78',
+            'body':'recover.7 body','updated_at':'2026-10-05T17:46:15Z'}
+        controller={'id':402544806,'tag_name':'v0.2.7-recover.7','name':'','draft':False,'prerelease':False}
+        custody={'id':400603306,'tag_name':'v0.2.7-custody.1','draft':False,'prerelease':True}
+        state={'release':dict(detached)}
+        client=self.v.GitHub('test-only-token',lambda raw,label:json.loads(raw))
+        calls=[]
+        def request(method,url,data=None,**kwargs):
+            calls.append((method,url,data))
+            if method=='PATCH' and url.endswith('/releases/400420101'):
+                payload=json.loads(data)
+                self.assertEqual(payload['tag_name'],'v0.2.7')
+                self.assertEqual(payload['target_commitish'],self.v.PRODUCT_SHA)
+                self.assertIs(payload['draft'],True)
+                self.assertNotIn('make_latest',payload)
+                state['release']={**state['release'],'tag_name':'v0.2.7','body':payload['body'],
+                    'updated_at':'2026-10-05T18:00:00Z'}
+                return 200,json.dumps(state['release']).encode(),{}
+            if '/assets?' in url:
+                return 200,b'[]',{}
+            if method=='GET' and url.endswith('/releases/400420101'):
+                return 200,json.dumps(state['release']).encode(),{}
+            if '/releases?' in url:
+                page=url.rsplit('page=',1)[1]
+                payload=[state['release'],controller,custody] if page=='1' else []
+                return 200,json.dumps(payload).encode(),{}
+            raise AssertionError(method+' '+url)
+        client.request=request
+        client.read_only=True
+        result=self.v.preflight(client,self.expected,self.assets,lambda:None,predecessor=predecessor)
+        self.assertEqual(result['release_id'],400420101)
+        self.assertIs(result['mutation_attempted'],False)
+        self.assertFalse(any(method=='PATCH' for method,_,_ in calls))
+        self.assertTrue(any(method=='GET' and url.endswith('/releases/400420101') for method,url,_ in calls))
+        client.read_only=False
+        calls.clear()
+        journal=[]
+        identifier=self.v.transition_empty_draft(client,self.expected,predecessor,lambda:None,journal.append)
+        self.assertEqual(identifier,400420101)
+        self.assertEqual(state['release']['tag_name'],'v0.2.7')
+        self.assertEqual(state['release']['id'],400420101)
+        self.assertEqual([row['outcome'] for row in journal],
+            ['intent','response_received_not_yet_accepted','accepted'])
+        self.assertEqual(sum(method=='PATCH' for method,_,_ in calls),1)
+
+    def test_different_v027_release_is_not_adopted(self):
+        predecessor=self.fixed_predecessor()
+        other={**predecessor,'id':402544806,'tag_name':'v0.2.7','name':''}
+        client=self.v.GitHub('test-only-token',lambda raw,label:json.loads(raw))
+        def response(method,path,**kwargs):
+            return [other] if path.endswith('page=1') else []
+        client.json=response
+        with self.assertRaisesRegex(ValueError,'not the pinned draft'):
+            client.pinned_product_release()
 
     def test_transition_route_does_not_create_if_pinned_draft_disappears(self):
         provider=FakeProvider()
@@ -1593,9 +1717,9 @@ class GithubRecoveryTests(unittest.TestCase):
         def observed_lookup():
             events.append('lookup')
             return lookup()
-        def observed_publish(identifier):
+        def observed_publish(identifier, body=None):
             events.append('publish')
-            return publish(identifier)
+            return publish(identifier, body)
         provider.lookup = observed_lookup
         provider.publish = observed_publish
         self.v.recover(provider,self.expected,self.assets,lambda:events.append('rebind'))
