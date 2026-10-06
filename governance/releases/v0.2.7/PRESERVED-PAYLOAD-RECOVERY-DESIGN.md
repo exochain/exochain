@@ -218,8 +218,11 @@ evidence. No historical upload failure cause is inferred from these limits.
 
 Preserve draft ID **400420101**, historical unknown SBOM upload and four-row journal.
 Freshly authenticate the fixed predecessor evidence and exact empty unpublished
-draft before the already authorized **body-only** controller/transport description
-transition. No delete/recreate or asset overwrite. The new stable public custody
+draft before the controller/transport description transition. That PATCH reasserts
+the existing product `tag_name`, `target_commitish`, and `name` in the same
+request as the body. Omitting `tag_name` makes GitHub detach the draft as
+`untagged-` plus 20 hex characters without moving the signed git tag. No
+delete/recreate or asset overwrite. The new stable public custody
 receipt identifies historical product/publishers, current acceptance controller
 and preserved transport honestly. Exactly 35 product assets remain: two original
 native archives, 32 original SBOMs and that stable custody receipt.

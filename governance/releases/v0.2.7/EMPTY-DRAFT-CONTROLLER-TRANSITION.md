@@ -102,3 +102,29 @@ and coverage gates. Save actual command output, exit status, source hashes,
 failures and review dispositions. Fixture results are not cryptographic or
 hosted release acceptance. This document specifies requirements and does not
 assert that any test, transition or release execution has completed.
+
+## Amendment: reassert the existing product tag
+
+Live run `37335182018` (`v0.2.7-recover.7`, operation `recover-0.2.7-preserved`)
+authenticated the exact empty predecessor, then PATCHED release `400420101`
+with only `body`. GitHub accepted that request at `2026-10-05T17:46:15Z` and
+replaced the omitted `tag_name` with `untagged-5dbc4793108251330e78`. The
+signed git tag `v0.2.7` was not moved. The writer then rejected its own
+response with `conflicting release tag_name` and uploaded nothing. The empty
+published release `402544806` on `v0.2.7-recover.7` does not own `v0.2.7` and
+was not the conflict.
+
+The body transition and the later publish PATCH must both reassert
+`tag_name` `v0.2.7`, `target_commitish` equal to the existing product peel,
+`name` `EXOCHAIN v0.2.7`, and `prerelease` false. The description update keeps
+`draft` true and does not send `make_latest`. Publish sends `draft` false and
+`make_latest` true together with that same tag. This reattaches release
+metadata to the existing signed tag. It does not delete, recreate, or move
+git refs, custody release `400603306`, or release `402544806`.
+
+A pinned draft whose only drift is that generated `untagged-` plus 20 hex
+character tag, a newer `updated_at`, and a replaced description may be
+repaired by that same PATCH. Every other identity field, the empty asset
+inventory, and the unpublished state must still match. Dry-run preflight
+observes that state and does not write. The next controller does not need a
+manual rebind before dispatch.
