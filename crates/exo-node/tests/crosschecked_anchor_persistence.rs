@@ -69,6 +69,28 @@ impl CountingDurableSigner {
         self.fail_next.store(1, Ordering::SeqCst);
     }
 
+    /// Consumes one injected failure when the budget is non-zero.
+    ///
+    /// Same result as `fetch_update(SeqCst, SeqCst, |remaining| remaining.checked_sub(1)).is_ok()`.
+    /// Rust 1.99 deprecates `fetch_update`; `try_update` is newer than MSRV 1.85.
+    fn consume_failure_injection(&self) -> bool {
+        let mut remaining = self.fail_next.load(Ordering::SeqCst);
+        loop {
+            let Some(next) = remaining.checked_sub(1) else {
+                return false;
+            };
+            match self.fail_next.compare_exchange_weak(
+                remaining,
+                next,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => return true,
+                Err(observed) => remaining = observed,
+            }
+        }
+    }
+
     fn unique_calls(&self) -> usize {
         self.unique_calls.load(Ordering::SeqCst)
     }
@@ -105,13 +127,7 @@ impl DurableAnchorSigner for CountingDurableSigner {
     }
 
     fn sign_once(&self, operation_id: Hash256, payload: &[u8]) -> Result<Signature, SignOnceError> {
-        if self
-            .fail_next
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
-                remaining.checked_sub(1)
-            })
-            .is_ok()
-        {
+        if self.consume_failure_injection() {
             return Err(SignOnceError::Unavailable(
                 "injected pre-commit failure".into(),
             ));

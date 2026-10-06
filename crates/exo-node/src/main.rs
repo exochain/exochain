@@ -440,12 +440,7 @@ fn spawn_event_fanout(
                 }
                 NetworkEvent::PeerLost { peer_id } => {
                     tracing::debug!(%peer_id, "Peer lost");
-                    // Saturating subtract via fetch_update.
-                    let _ = metrics.peer_count.fetch_update(
-                        std::sync::atomic::Ordering::Relaxed,
-                        std::sync::atomic::Ordering::Relaxed,
-                        |v| Some(v.saturating_sub(1)),
-                    );
+                    metrics::saturating_decrement(&metrics.peer_count);
                 }
             }
 
