@@ -233,12 +233,17 @@ jobs:
 
   # -----------------------------------------------------------------------
   # Gate 6: Audit (dependency vulnerabilities)
+  # Uses the same 1.98.1 pin as the compile gates. cargo install/audit must
+  # not follow the runner image's preinstalled Rust.
   # -----------------------------------------------------------------------
   audit:
     name: "Gate 6 — Cargo Audit"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0
+        with:
+          toolchain: 1.98.1
       - name: Install cargo-audit
         run: bash tools/ci_cargo_retry.sh cargo install cargo-audit --version 0.22.1 --locked
       - name: Audit dependencies (strict — vulnerabilities, unsound, unmaintained)
@@ -298,6 +303,8 @@ jobs:
 
   # -----------------------------------------------------------------------
   # Gate 9: Repo Hygiene (no generated dirs, no secrets)
+  # `tools/test_repo_truth.sh` compiles the workspace test list, so this job
+  # uses the same 1.98.1 pin as the other compile gates.
   # -----------------------------------------------------------------------
   hygiene:
     name: "Gate 9 — Repo Hygiene"
@@ -306,6 +313,9 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0
+        with:
+          toolchain: 1.98.1
       - name: No tracked node_modules
         run: |
           if git ls-files --error-unmatch node_modules/ 2>/dev/null; then
