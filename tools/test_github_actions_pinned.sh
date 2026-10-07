@@ -111,7 +111,7 @@ def ci_contract?(root, action)
   expected = %w[build test coverage lint deny doc machete integration-tests
     integration-tests-db consensus-integration state-sync-integration cross-platform
     zerodentity-coverage root-genesis-coverage root-genesis-portal-coverage
-    build-wasm unaudited-feature-matrix private-file-windows]
+    build-wasm unaudited-feature-matrix private-file-windows hygiene audit]
   expected_with = expected.to_h do |name|
     options = {"toolchain" => "1.98.1"}
     options["components"] = "rustfmt, clippy" if name == "build"
@@ -227,7 +227,7 @@ warn "rejected #{mutations.length} formatter contract mutations"
 fixture_jobs = ("build test coverage lint deny doc machete integration-tests integration-tests-db " \
   "consensus-integration state-sync-integration cross-platform zerodentity-coverage " \
   "root-genesis-coverage root-genesis-portal-coverage build-wasm unaudited-feature-matrix " \
-  "private-file-windows format sbom hygiene all-gates").split.to_h do |name|
+  "private-file-windows format sbom hygiene audit all-gates").split.to_h do |name|
   with = {"toolchain" => "1.98.1"}
   with = {"toolchain" => "nightly-2026-09-21", "components" => "rustfmt"} if name == "format"
   with = {"toolchain" => "1.97.1"} if name == "sbom"
@@ -235,7 +235,7 @@ fixture_jobs = ("build test coverage lint deny doc machete integration-tests int
   with["components"] = "clippy" if name == "lint"
   with["targets"] = '${{ matrix.target }}' if name == "cross-platform"
   with["targets"] = "wasm32-unknown-unknown" if name == "build-wasm"
-  steps = %w[hygiene all-gates].include?(name) ? [] : [{"uses" => expected_action, "with" => with}]
+  steps = name == "all-gates" ? [] : [{"uses" => expected_action, "with" => with}]
   conditional_if = {
     "integration-tests" => "steps.filter.outputs.gateway == 'true'",
     "consensus-integration" => "steps.filter.outputs.node == 'true'",
@@ -277,6 +277,11 @@ ci_mutations = [
   ->(x) { x["jobs"]["sbom"]["steps"][0]["with"]["toolchain"] = "stable" },
   ->(x) { x["jobs"]["hygiene"]["if"] = "false" },
   ->(x) { x["jobs"]["hygiene"]["steps"].first["if"] = "false" },
+  ->(x) { x["jobs"]["hygiene"]["steps"].first["with"]["toolchain"] = "stable" },
+  ->(x) { x["jobs"]["hygiene"]["steps"].first["with"]["toolchain"] = "1.99.0" },
+  ->(x) { x["jobs"]["hygiene"]["steps"].shift },
+  ->(x) { x["jobs"]["audit"]["steps"].first["with"]["toolchain"] = "stable" },
+  ->(x) { x["jobs"]["audit"]["steps"].shift },
   ->(x) { x["jobs"]["all-gates"]["needs"].delete("hygiene") },
   ->(x) { x["jobs"]["all-gates"]["if"] = "always()" },
   ->(x) { x["jobs"]["build"]["steps"].first["if"] = "false" },
@@ -328,7 +333,7 @@ ARGV.each do |workflow|
       puts "#{workflow}: full-workspace formatter and repo_truth must use #{formatter}, without skips or suppressed failures"
     end
     unless ci_contract?(plain_node(document.root), expected_action)
-      puts "#{workflow}: exact 18-job Rust 1.98.1 inventory, full lint, hygiene and aggregator contract required"
+      puts "#{workflow}: Rust 1.98.1 compile inventory including hygiene and audit, full lint, and aggregator contract required"
     end
   end
   walk(document) do |node|

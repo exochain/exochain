@@ -167,6 +167,24 @@ impl Default for NodeMetrics {
     }
 }
 
+/// Decrements `counter` by one and stops at zero.
+///
+/// This is the same update as
+/// `fetch_update(Relaxed, Relaxed, |value| Some(value.saturating_sub(1)))`.
+/// Rust 1.99 deprecates `fetch_update` in favor of `try_update`, which has
+/// been stable only since 1.95. The compare-exchange loop keeps MSRV 1.85 and
+/// stays warning-clean on both 1.98.1 and 1.99.
+pub(crate) fn saturating_decrement(counter: &AtomicU64) {
+    let mut current = counter.load(Ordering::Relaxed);
+    loop {
+        let next = current.saturating_sub(1);
+        match counter.compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => break,
+            Err(observed) => current = observed,
+        }
+    }
+}
+
 /// Shared handle to the node metrics.
 pub type SharedMetrics = Arc<NodeMetrics>;
 
