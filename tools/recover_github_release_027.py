@@ -147,7 +147,7 @@ class ProviderBudget:
                 self.admission_requests += 1
         self.inflight = True
 
-    def finish(self, headers, status, authenticated):
+    def finish(self, headers, status, authenticated, *, absent_rate_allowed=False):
         self.inflight = False
         self.check()
         if not authenticated:
@@ -164,6 +164,12 @@ class ProviderBudget:
                     require(key not in values and type(value) is str and len(value) <= 32,
                             'duplicate or malformed rate header')
                     values[key] = value
+            # uploads.github.com omits primary rate-limit headers on a normal
+            # 201. begin() already decremented local allowance; do not restore it.
+            if not values:
+                require(absent_rate_allowed is True, 'unexpected rate resource')
+                require(status not in (403,429), 'provider denied request; no retry')
+                return
             require(values.get('x-ratelimit-resource') == 'core', 'unexpected rate resource')
             numbers = []
             for name in ('limit','remaining','used','reset'):
@@ -289,6 +295,25 @@ def validate_release(value, expected):
     require(type(value.get("id")) is int and 0 < value["id"] < 10**15, "invalid release ID")
     require(type(value.get("draft")) is bool and value.get("prerelease") is False, "unexpected release state")
     return value["id"]
+
+
+def release_asset_ids(items, assets):
+    """Name to ID for an uploaded subset of the expected inventory."""
+    require(type(items) is list and len(items) <= len(assets), 'unexpected release asset count')
+    found = {}
+    seen = set()
+    for asset in items:
+        require(type(asset) is dict, 'malformed release asset')
+        name = asset.get('name')
+        identifier = asset.get('id')
+        require(type(name) is str and name in assets and name not in found, 'unknown or duplicate release asset')
+        require(type(identifier) is int and 0 < identifier < 10**15 and identifier not in seen,
+                'duplicate or invalid asset ID')
+        require(type(asset.get('size')) is int and asset['size'] == len(assets[name]) and
+                asset.get('state') == 'uploaded', 'release asset size or state differs')
+        found[name] = identifier
+        seen.add(identifier)
+    return found
 
 
 def verified_assets(provider, release_id, expected, verified=None):
@@ -474,8 +499,76 @@ def validate_detached_draft(provider, release, predecessor):
     return 400420101
 
 
-def repairable_predecessor(provider, release, expected, predecessor):
-    """Exact approved predecessor, already-described draft, or the known detached draft."""
+CONTROLLER_CITATION = re.compile(
+    r'Acceptance and GitHub Release controller: `([0-9a-f]{40})` at `(refs/tags/v0\.2\.7-recover\.[1-9][0-9]*)`\.'
+)
+
+
+def prior_controller_body(body, successor_body, predecessor_body, rebuild):
+    """True only when body is exactly an earlier recover controller's public text."""
+    if type(body) is not str or body == successor_body or body == predecessor_body:
+        return False
+    found = CONTROLLER_CITATION.findall(body)
+    if len(found) != 1:
+        return False
+    sha, ref = found[0]
+    if sha == PRODUCT_SHA:
+        return False
+    return rebuild(sha, ref) == body
+
+
+def controller_body_authenticator(manifest, publications, record, policy, preserved,
+                                  successor_body, predecessor_body):
+    """Authenticate a stored body against this writer's own earlier controller text."""
+    def rebuild(sha, ref):
+        _, metadata = retained_release_metadata(manifest, publications, record, sha, ref,
+                                                policy=policy, preserved=preserved)
+        return metadata['body']
+    def accept(body):
+        return prior_controller_body(body, successor_body, predecessor_body, rebuild)
+    return accept
+
+
+def validate_partial_draft(provider, release, expected, predecessor, assets):
+    """Same pinned draft after an earlier controller rewrote the body and maybe uploaded."""
+    require(type(predecessor) is dict and type(release) is dict and type(assets) is dict,
+            'missing partial predecessor')
+    require(release.get('tag_name') == 'v0.2.7', 'partial draft lost the product tag')
+    for field in (*PRESERVED_RELEASE_FIELDS, 'body', 'updated_at'):
+        require(field in release and field in predecessor, 'missing partial predecessor ' + field)
+        if field in ('body', 'updated_at'):
+            continue
+        wanted = predecessor[field]
+        require(type(release[field]) is type(wanted) and release[field] == wanted,
+                'partial draft changed ' + field)
+    body = release.get('body')
+    require(type(body) is str and body not in (predecessor.get('body'), expected.get('body')) and
+            0 < len(body.encode()) <= 65536, 'partial draft body is invalid')
+    updated = release.get('updated_at')
+    require(type(updated) is str and re.fullmatch(
+            r'20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z', updated) is not None
+            and updated >= predecessor['updated_at'], 'partial draft timestamp regressed')
+    require(predecessor['id'] == 400420101 and predecessor['draft'] is True and
+            predecessor['prerelease'] is False and predecessor['published_at'] is None and
+            predecessor['updated_at'] == '2026-09-30T20:40:08Z' and
+            predecessor['created_at'] == '2026-09-17T18:17:09Z' and
+            predecessor['node_id'] == 'RE_kwDOQovC3s4X3e0F' and
+            predecessor['immutable'] is False and
+            predecessor['target_commitish'] == PRODUCT_SHA and
+            predecessor['tag_name'] == 'v0.2.7' and predecessor['name'] == 'EXOCHAIN v0.2.7' and
+            hashlib.sha256(predecessor['body'].encode()).hexdigest() ==
+            '27ec3297363af0b6d50246237d9eb1bde7084893953505f674058bebeb27da1d',
+            'invalid predecessor pin')
+    listed = provider.list_assets(400420101)
+    baseline = release_asset_ids(release.get('assets'), assets)
+    require(baseline == release_asset_ids(listed, assets), 'embedded and listed release assets differ')
+    require(verified_assets(provider, 400420101, assets) == set(baseline),
+            'partial draft asset bytes differ')
+    return 400420101
+
+
+def repairable_predecessor(provider, release, expected, predecessor, *, assets=None, prior_controller=None):
+    """Exact approved predecessor, already-described draft, detached draft, or a prior controller."""
     require(type(release) is dict, 'pinned retained draft is missing or replaced')
     tag = release.get('tag_name')
     body = release.get('body')
@@ -485,6 +578,9 @@ def repairable_predecessor(provider, release, expected, predecessor):
         return 'exact', validate_empty_predecessor(provider, release, predecessor)
     if detached_product_tag(tag):
         return 'detached', validate_detached_draft(provider, release, predecessor)
+    if (tag == 'v0.2.7' and assets is not None and callable(prior_controller) and
+            prior_controller(body) is True):
+        return 'partial', validate_partial_draft(provider, release, expected, predecessor, assets)
     raise ValueError('pinned retained draft is not the approved predecessor')
 
 
@@ -503,7 +599,7 @@ def validate_continued_release(release, expected, predecessor):
     return identifier
 
 
-def preflight(provider, expected, assets, rebind, *, predecessor=None):
+def preflight(provider, expected, assets, rebind, *, predecessor=None, prior_controller=None):
     """Read the full draft/public inventory without entering any mutation path."""
     rebind()
     release = current_product_release(provider) if predecessor is not None else provider.lookup()
@@ -512,8 +608,9 @@ def preflight(provider, expected, assets, rebind, *, predecessor=None):
     if predecessor is not None:
         require(type(release) is dict and type(release.get('id')) is int and
                 release['id'] == 400420101, 'pinned retained draft is missing or replaced')
-        kind, identifier = repairable_predecessor(provider, release, expected, predecessor)
-        if kind == 'continued':
+        kind, identifier = repairable_predecessor(provider, release, expected, predecessor,
+                                                  assets=assets, prior_controller=prior_controller)
+        if kind in ('continued', 'partial'):
             found = verified_assets(provider, identifier, assets)
             require(release['draft'] or found == set(assets), 'incomplete already-public release')
     elif release is not None:
@@ -587,7 +684,9 @@ class GitHub:
                 raise ValueError('bounded provider response failed or unknown') from None
             if self.budget is not None:
                 try:
-                    self.budget.finish(response.headers,response.status,auth)
+                    host = urllib.parse.urlsplit(request.full_url).netloc
+                    self.budget.finish(response.headers,response.status,auth,
+                        absent_rate_allowed=host == 'uploads.github.com')
                 except Exception:
                     if method != 'GET':
                         raise GitHubUploadError(response.status,payload,response.headers,
@@ -1177,11 +1276,12 @@ def complete_retained(provider, expected, assets, rebind, receipt_gate, public_g
         release_guard=release_guard,final_acceptance_gate=readback_gate)
 
 
-def validate_transitioned_release(provider, release, expected, predecessor):
+def validate_transitioned_release(provider, release, expected, predecessor, *, allow_existing_assets=False):
     identifier = validate_release(release, expected)
-    require(identifier == 400420101 and release['draft'] is True and
-            release.get('assets') == [] and provider.list_assets(identifier) == [],
-            'transitioned draft is not the same empty unpublished release')
+    require(identifier == 400420101 and release['draft'] is True, 'transitioned release is not the pinned draft')
+    if allow_existing_assets is not True:
+        require(release.get('assets') == [] and provider.list_assets(identifier) == [],
+                'transitioned draft is not the same empty unpublished release')
     for field in PRESERVED_RELEASE_FIELDS:
         require(field in release and type(release[field]) is type(predecessor[field]) and
                 release[field] == predecessor[field], 'transition changed release ' + field)
@@ -1191,24 +1291,44 @@ def validate_transitioned_release(provider, release, expected, predecessor):
     return updated
 
 
-def begin_predecessor_transition(provider, expected, predecessor, rebind, journal):
-    """Continue a described v0.2.7 draft, or rebind the detached pinned draft first."""
+def begin_predecessor_transition(provider, expected, predecessor, rebind, journal, *,
+                                 assets=None, prior_controller=None):
+    """Continue a described v0.2.7 draft, or rebind a detached or prior-controller draft first."""
     current = current_product_release(provider)
+    guard = lambda release: validate_continued_release(release, expected, predecessor)
     if (type(current) is dict and current.get('tag_name') == 'v0.2.7'
             and current.get('body') == expected['body']):
-        require(validate_continued_release(current, expected, predecessor) == 400420101,
-                'already-transitioned release ID differs')
-        return 400420101, False, lambda release: validate_continued_release(release, expected, predecessor)
-    identifier = transition_empty_draft(provider, expected, predecessor, rebind, journal)
-    return identifier, True, lambda release: validate_continued_release(release, expected, predecessor)
+        require(guard(current) == 400420101, 'already-transitioned release ID differs')
+        return 400420101, False, guard
+    identifier = transition_empty_draft(provider, expected, predecessor, rebind, journal,
+                                        assets=assets, prior_controller=prior_controller)
+    # An asset left by the previous controller must be verified, not treated as a new draft.
+    return identifier, provider.list_assets(identifier) == [], guard
 
 
-def transition_empty_draft(provider, expected, predecessor, rebind, journal):
+def transition_empty_draft(provider, expected, predecessor, rebind, journal, *,
+                           assets=None, prior_controller=None):
     """One identity-preserving description update; an uncertain result stops this attempt."""
     rebind()
     current = current_product_release(provider)
-    kind, identifier = repairable_predecessor(provider, current, expected, predecessor)
-    require(kind in ('exact', 'detached'), 'transition target is not an empty pinned draft')
+    kind, identifier = repairable_predecessor(provider, current, expected, predecessor,
+                                             assets=assets, prior_controller=prior_controller)
+    require(kind in ('exact', 'detached', 'partial') and identifier == 400420101,
+            'transition target is not the pinned draft')
+    asset_ids = None
+    if kind == 'partial':
+        asset_ids = release_asset_ids(current.get('assets'), assets)
+        require(asset_ids == release_asset_ids(provider.list_assets(identifier), assets),
+                'embedded and listed release assets differ')
+    def accept(observed):
+        updated = validate_transitioned_release(provider, observed, expected, predecessor,
+                                                allow_existing_assets=kind == 'partial')
+        if asset_ids is not None:
+            require(release_asset_ids(observed.get('assets'), assets) == asset_ids,
+                    'transition changed release assets')
+            require(release_asset_ids(provider.list_assets(identifier), assets) == asset_ids,
+                    'transition changed listed assets')
+        return updated
     event = {'operation':'transition_controller_body', 'product_tag':'v0.2.7',
              'reasserted_tag':'v0.2.7',
              'release_id':identifier,
@@ -1223,12 +1343,12 @@ def transition_empty_draft(provider, expected, predecessor, rebind, journal):
         journal({**event, 'outcome':'intent'})
     try:
         changed = provider.update_body(identifier, expected['body'])
-        response_updated = validate_transitioned_release(provider,changed,expected,predecessor)
+        response_updated = accept(changed)
         if journal is not None:
             journal({**event, 'outcome':'response_received_not_yet_accepted'})
         rebind()
         observed = provider.lookup()
-        readback_updated = validate_transitioned_release(provider,observed,expected,predecessor)
+        readback_updated = accept(observed)
         require(readback_updated == response_updated, 'transition changed after response')
     except Exception as error:
         if journal is not None:
@@ -1415,7 +1535,10 @@ def retained_main():
         predecessor = authenticate_failed_predecessor(transport,custody,importer,evidence,
             manifest,publications,record,policy)
         rebind()
-        return begin_predecessor_transition(provider,expected,predecessor,rebind,journal)
+        authenticator = controller_body_authenticator(manifest,publications,record,policy,preserved,
+            expected['body'],predecessor['body'])
+        return begin_predecessor_transition(provider,expected,predecessor,rebind,journal,
+            assets=assets,prior_controller=authenticator)
     journal = Journal(capture/'mutation-journal.jsonl',{'controller_sha':sha,'controller_ref':ref,
         'run_id':handoff[0]['run_id'],'run_attempt':handoff[0]['run_attempt'],'original_source':PRODUCT_SHA})
     print('GitHub retained mutation journal: '+str(journal.path),flush=True)

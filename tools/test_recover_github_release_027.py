@@ -2152,5 +2152,178 @@ class GithubRecoveryTests(unittest.TestCase):
         self.assertEqual(calls[0].get_header("Accept"), "application/octet-stream")
         self.assertIsNone(calls[0].get_header("Content-type"))
 
+    def test_live_upload_201_without_rate_headers_is_accepted_and_api_host_is_not(self):
+        # Exact asset object returned by the recover.9 upload that run 37649006650 rejected.
+        body = (
+            b'{"url":"https://api.github.com/repos/exochain/exochain/releases/assets/619480612",'
+            b'"id":619480612,"node_id":"RA_kwDOQovC3s4k7IYk","name":"exochain-0.2.7-exochain-api.cdx.json",'
+            b'"label":"","uploader":{"login":"github-actions[bot]","id":41898282,'
+            b'"node_id":"MDM6Qm90NDE4OTgyODI=","avatar_url":"https://avatars.githubusercontent.com/in/15368?v=4",'
+            b'"gravatar_id":"","url":"https://api.github.com/users/github-actions%5Bbot%5D",'
+            b'"html_url":"https://github.com/apps/github-actions",'
+            b'"followers_url":"https://api.github.com/users/github-actions%5Bbot%5D/followers",'
+            b'"following_url":"https://api.github.com/users/github-actions%5Bbot%5D/following{/other_user}",'
+            b'"gists_url":"https://api.github.com/users/github-actions%5Bbot%5D/gists{/gist_id}",'
+            b'"starred_url":"https://api.github.com/users/github-actions%5Bbot%5D/starred{/owner}{/repo}",'
+            b'"subscriptions_url":"https://api.github.com/users/github-actions%5Bbot%5D/subscriptions",'
+            b'"organizations_url":"https://api.github.com/users/github-actions%5Bbot%5D/orgs",'
+            b'"repos_url":"https://api.github.com/users/github-actions%5Bbot%5D/repos",'
+            b'"events_url":"https://api.github.com/users/github-actions%5Bbot%5D/events{/privacy}",'
+            b'"received_events_url":"https://api.github.com/users/github-actions%5Bbot%5D/received_events",'
+            b'"type":"Bot","user_view_type":"public","site_admin":false},"content_type":"application/octet-stream",'
+            b'"state":"uploaded","size":77306,'
+            b'"digest":"sha256:e83a76ed74897d9b314f65005d3c7eec6df87add00d2efc0d9485531d4176c52",'
+            b'"download_count":0,"created_at":"2026-10-07T18:35:21Z","updated_at":"2026-10-07T18:35:21Z",'
+            b'"browser_download_url":"https://github.com/exochain/exochain/releases/download/'
+            b'untagged-38320051a3d07f9c500c/exochain-0.2.7-exochain-api.cdx.json"}'
+        )
+        self.assertEqual(len(body), 1695)
+        self.assertEqual(hashlib.sha256(body).hexdigest(),
+                         '0081366cb7f25746b05778fb3c01eac377452ad2c1885a026cb3a3b8e21c7c57')
+        asset = json.loads(body)
+        self.assertEqual(asset['state'], 'uploaded')
+        self.assertEqual(asset['digest'], 'sha256:e83a76ed74897d9b314f65005d3c7eec6df87add00d2efc0d9485531d4176c52')
+
+        def upload_headers(extra=()):
+            header = Message()
+            header['Cache-Control'] = 'no-cache'
+            header['Content-Type'] = 'application/json; charset=utf-8'
+            header['X-GitHub-Request-Id'] = 'F400:177F46:FA3D:15750:6AC690E8'
+            for key, value in extra:
+                header[key] = value
+            return header
+
+        budget, client, clock, _ = self.budget_fixture()
+        budget.admit(client, 'upload-host')
+        remaining = budget.remaining
+        def created(request, timeout):
+            self.assertEqual(request.method, 'POST')
+            self.assertTrue(request.full_url.startswith('https://uploads.github.com/repos/exochain/exochain/'))
+            result = io.BytesIO(body)
+            result.status = 201
+            result.headers = upload_headers()
+            return result
+        client.transport.open = created
+        client.upload(400420101, asset['name'], b'x' * asset['size'])
+        self.assertFalse(budget.stopped)
+        self.assertEqual(budget.remaining, remaining - 1)
+
+        budget, client, clock, _ = self.budget_fixture()
+        budget.admit(client, 'api-host')
+        def unrated(request, timeout):
+            result = io.BytesIO(b'{}')
+            result.status = 200
+            result.headers = upload_headers()
+            return result
+        client.transport.open = unrated
+        with self.assertRaisesRegex(self.v.GitHubUploadError, r'release mutation failed or unknown with HTTP 200'):
+            client.request('PATCH', self.v.API + '/releases/400420101', b'{}')
+        self.assertTrue(budget.stopped)
+
+        for extra, status in (((), 403), ((('X-RateLimit-Resource', 'search'),), 201),
+                              ((('X-RateLimit-Resource', 'core'),), 201)):
+            with self.subTest(extra=extra, status=status):
+                budget, client, clock, _ = self.budget_fixture()
+                budget.admit(client, 'rejected-upload')
+                def rejected(request, timeout, extra=extra, status=status):
+                    result = io.BytesIO(body)
+                    result.status = status
+                    result.headers = upload_headers(extra)
+                    return result
+                client.transport.open = rejected
+                with self.assertRaisesRegex(self.v.GitHubUploadError, r'release mutation failed or unknown with HTTP ' + str(status)):
+                    client.upload(400420101, asset['name'], b'x' * asset['size'])
+                self.assertTrue(budget.stopped)
+
+    def test_prior_controller_draft_keeps_uploaded_asset_and_rejects_partial_or_foreign_bytes(self):
+        manifest, publications, record, policy, preserved = self.preserved_inputs()
+        predecessor = self.fixed_predecessor()
+        _, prior = self.v.retained_release_metadata(manifest, publications, record,
+            '601383caec1ce20b559cfe7c8e0f2786ba299132', 'refs/tags/v0.2.7-recover.9',
+            policy=policy, preserved=preserved)
+        _, successor = self.v.retained_release_metadata(manifest, publications, record,
+            'b' * 40, 'refs/tags/v0.2.7-recover.10', policy=policy, preserved=preserved)
+        self.assertEqual(hashlib.sha256(prior['body'].encode()).hexdigest(),
+                         '38711d33e3b370816035e0c30c7a12394669002aac11ecdb3ac8dbe09437de0e')
+        self.assertNotEqual(prior['body'], successor['body'])
+        self.assertIn('refs/tags/v0.2.7-recover.10', successor['body'])
+        authenticator = self.v.controller_body_authenticator(manifest, publications, record, policy, preserved,
+            successor['body'], predecessor['body'])
+        self.assertIs(authenticator(prior['body']), True)
+        self.assertIs(authenticator('foreign'), False)
+        self.assertIs(authenticator(prior['body'] + '\n'), False)
+        name = 'exochain-0.2.7-exochain-api.cdx.json'
+        payload = b'abc'
+        assets = {name: payload, 'RECOVERY-CUSTODY.json': b'{}'}
+        embedded = {'id':619480612, 'name':name, 'size':len(payload), 'state':'uploaded',
+                    'digest':'sha256:' + hashlib.sha256(payload).hexdigest()}
+        html_url = 'https://github.com/exochain/exochain/releases/tag/untagged-38320051a3d07f9c500c'
+
+        def provider_for(body, asset_rows, stored):
+            release = {**predecessor, 'body':body, 'updated_at':'2026-10-07T18:35:21Z',
+                       'html_url':html_url, 'assets':[dict(row) for row in asset_rows]}
+            provider = FakeProvider(release, dict(stored))
+            provider.list_assets = lambda identifier: [dict(row) for row in asset_rows]
+            provider.update_body = lambda *args: provider.mutations.append('patch')
+            return provider
+
+        ready = provider_for(prior['body'], [embedded], {name: payload})
+        preview = self.v.preflight(ready, successor, assets, lambda:None, predecessor=predecessor,
+                                   prior_controller=authenticator)
+        self.assertEqual(preview['release_id'], 400420101)
+        self.assertEqual(preview['existing_assets'], 1)
+        self.assertEqual(preview['missing_assets'], ['RECOVERY-CUSTODY.json'])
+        self.assertIs(preview['mutation_attempted'], False)
+        self.assertEqual(ready.mutations, [])
+        self.assertEqual(ready.release['html_url'], html_url)
+        self.assertEqual(ready.release['tag_name'], 'v0.2.7')
+
+        journal = []
+        ids = {name:619480612, 'RECOVERY-CUSTODY.json':700000001}
+        def list_assets(identifier):
+            return [{'id':ids[item], 'name':item, 'size':len(data), 'state':'uploaded'}
+                    for item, data in ready.assets.items()]
+        ready.list_assets = list_assets
+        def update(identifier, body):
+            ready.mutations.append('patch')
+            self.assertEqual((identifier, body), (400420101, successor['body']))
+            ready.release = {**ready.release, 'body':body, 'tag_name':'v0.2.7',
+                             'updated_at':'2026-10-07T18:40:00Z', 'assets':[{
+                                 'id':619480612, 'name':name, 'size':len(payload), 'state':'uploaded'}]}
+            return dict(ready.release)
+        ready.update_body = update
+        self.v.complete_retained(ready, successor, assets, lambda:None, lambda:None, lambda:None, journal.append,
+            prepare_gate=lambda:None, acquire_gate=lambda:None, final_gate=lambda:None,
+            transition_gate=lambda:self.v.begin_predecessor_transition(
+                ready, successor, predecessor, lambda:None, journal.append,
+                assets=assets, prior_controller=authenticator))
+        self.assertEqual(ready.mutations, ['patch', 'upload:RECOVERY-CUSTODY.json', 'publish'])
+        self.assertNotIn('upload:' + name, ready.mutations)
+        self.assertEqual(ready.release['id'], 400420101)
+        self.assertEqual(ready.release['tag_name'], 'v0.2.7')
+        self.assertEqual(ready.assets[name], payload)
+        self.assertEqual([row['outcome'] for row in journal if row['operation'] == 'transition_controller_body'],
+                         ['intent', 'response_received_not_yet_accepted', 'accepted'])
+        uploaded = [row for row in journal if row['operation'] == 'upload_asset']
+        self.assertEqual([row['asset'] for row in uploaded], ['RECOVERY-CUSTODY.json', 'RECOVERY-CUSTODY.json'])
+        self.assertEqual([row['outcome'] for row in uploaded], ['intent', 'response_received_not_yet_accepted'])
+
+        for label, body, rows, stored, message in (
+                ('starter', prior['body'], [{**embedded, 'state':'starter'}], {name:payload}, 'size or state'),
+                ('bytes', prior['body'], [embedded], {name:b'xyz'}, 'replacement forbidden'),
+                ('foreign', 'foreign', [embedded], {name:payload}, 'not the approved predecessor'),
+                ('detached-with-asset', prior['body'], [embedded], {name:payload}, 'not empty')):
+            with self.subTest(label=label):
+                current_rows = rows
+                if label == 'detached-with-asset':
+                    current = provider_for(body, current_rows, stored)
+                    current.release['tag_name'] = 'untagged-38320051a3d07f9c500c'
+                else:
+                    current = provider_for(body, current_rows, stored)
+                with self.assertRaisesRegex(ValueError, message):
+                    self.v.preflight(current, successor, assets, lambda:None, predecessor=predecessor,
+                                     prior_controller=authenticator)
+                self.assertEqual(current.mutations, [])
+
 
 if __name__ == "__main__": unittest.main()

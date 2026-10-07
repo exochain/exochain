@@ -1035,9 +1035,10 @@ elif 'fsck' not in args: raise SystemExit(94)
             evidence=self.root/('github-v2' if selected else 'github-v1');evidence.mkdir()
             expected_values=[]
             original_preflight=helper.preflight
-            def recorded_preflight(provider,expected,assets,rebind,*,predecessor=None):
+            def recorded_preflight(provider,expected,assets,rebind,*,predecessor=None,prior_controller=None):
                 expected_values.append(expected)
-                return original_preflight(provider,expected,assets,rebind,predecessor=predecessor)
+                return original_preflight(provider,expected,assets,rebind,predecessor=predecessor,
+                                          prior_controller=prior_controller)
             predecessor=helper.fixed_empty_predecessor(self.manifest,publications,record,policy) if selected else None
             with patch.object(self.i,'load_module',return_value=helper), \
                  patch.object(helper,'GitHub',return_value=Provider(predecessor)) as github_client, \

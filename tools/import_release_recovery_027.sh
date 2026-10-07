@@ -985,13 +985,16 @@ def retained_github_preflight(capture, custody, manifest, publications, record, 
     assets = github.release_assets(custody,manifest,candidate,receipt)
     provider = github.GitHub(os.environ['RELEASE_GITHUB_TOKEN'],custody.parse_json,read_only=True)
     predecessor = None
+    prior_controller = None
     if policy is not None:
         transport = Transport(capture,os.environ['RELEASE_GITHUB_TOKEN'],manifest,record,policy=policy,**extra)
         predecessor = github.authenticate_failed_predecessor(transport,custody,
             SimpleNamespace(API=API,JSON_LIMIT=JSON_LIMIT,utc_now=utc_now),
             evidence,manifest,publications,record,policy)
+        prior_controller = github.controller_body_authenticator(manifest,publications,record,policy,
+            preserved,expected['body'],predecessor['body'])
     result = github.preflight(provider,expected,assets,lambda:custody.verify_files(manifest,candidate),
-                              predecessor=predecessor)
+                              predecessor=predecessor,prior_controller=prior_controller)
     dump(evidence/'github-preflight.json',result)
 
 
