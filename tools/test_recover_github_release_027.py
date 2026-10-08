@@ -44,6 +44,8 @@ class FakeProvider:
         self.mutations.append("publish")
         self.release["draft"] = False
         self.release['published_at'] = '2026-09-30T21:00:00Z'
+        # GitHub immutable-releases protection sets this when the draft is published.
+        self.release['immutable'] = True
 
 
 class GithubRecoveryTests(unittest.TestCase):
@@ -790,8 +792,10 @@ class GithubRecoveryTests(unittest.TestCase):
                                          'asset_count':35,'published':True})
         self.assertEqual(outcome.provider.patches,[(400420101,h.expected['body'])])
         for field in self.v.PRESERVED_RELEASE_FIELDS:
-            if field not in ('draft','published_at'):
+            if field not in ('draft','published_at','immutable'):
                 self.assertEqual(outcome.provider.release[field],h.predecessor[field],field)
+        self.assertIs(outcome.provider.release['draft'], False)
+        self.assertIs(outcome.provider.release['immutable'], True)
         self.assertEqual(outcome.provider.mutations,
             ['patch']+['upload:'+name for name in h.assets]+['publish'])
         self.assertEqual(set(outcome.provider.assets),set(h.assets))
@@ -1164,6 +1168,124 @@ class GithubRecoveryTests(unittest.TestCase):
                     predecessor,lambda:None,journal.append),True,
                     lambda release:self.v.validate_continued_release(release,self.expected,predecessor)))
         self.assertEqual(provider.mutations,['patch'])
+
+    def test_published_immutable_flip_is_expected_and_other_drift_still_fails(self):
+        """Run 37723643025 failed because publish sets immutable true."""
+        predecessor=self.fixed_predecessor()
+        described={**predecessor,'body':self.expected['body'],'updated_at':'2026-10-08T17:20:00Z'}
+        published={**described,'draft':False,'published_at':'2026-10-08T17:28:52Z',
+                   'updated_at':'2026-10-08T17:28:52Z','immutable':True}
+        self.assertEqual(self.v.validate_continued_release(described,self.expected,predecessor),400420101)
+        self.assertEqual(self.v.validate_continued_release(published,self.expected,predecessor),400420101)
+
+        def finish(provider):
+            journal=[]
+            result=self.v.complete_retained(provider,self.expected,self.assets,lambda:None,
+                lambda:None,lambda:None,journal.append,prepare_gate=lambda:None,
+                acquire_gate=lambda:None,final_gate=lambda:None,
+                transition_gate=lambda:self.v.begin_predecessor_transition(
+                    provider,self.expected,predecessor,lambda:None,journal.append))
+            return journal,result
+
+        provider=FakeProvider(dict(published),dict(self.assets))
+        journal,result=finish(provider)
+        self.assertEqual(provider.mutations,[])
+        self.assertEqual(result,{'tag':'v0.2.7','release_id':400420101,'asset_count':2,'published':True})
+        self.assertEqual(journal[-1]['operation'],'final_readback')
+        self.assertEqual(journal[-1]['outcome'],'accepted')
+
+        provider=FakeProvider(dict(described),dict(self.assets))
+        journal,result=finish(provider)
+        self.assertEqual(provider.mutations,['publish'])
+        self.assertIs(provider.release['immutable'],True)
+        self.assertIs(provider.release['draft'],False)
+        self.assertEqual(journal[-1]['outcome'],'accepted')
+
+        provider=FakeProvider(dict(described),dict(self.assets))
+        ordinary=provider.publish
+        def publish_without_immutable(identifier,body=None):
+            ordinary(identifier,body)
+            provider.release['immutable']=False
+        provider.publish=publish_without_immutable
+        journal=[]
+        with self.assertRaisesRegex(ValueError,
+                r'^published release stayed mutable under immutable-releases protection$'):
+            self.v.complete_retained(provider,self.expected,self.assets,lambda:None,
+                lambda:None,lambda:None,journal.append,prepare_gate=lambda:None,
+                acquire_gate=lambda:None,final_gate=lambda:None,
+                transition_gate=lambda:self.v.begin_predecessor_transition(
+                    provider,self.expected,predecessor,lambda:None,journal.append))
+        self.assertEqual(provider.mutations,['publish'])
+        self.assertNotIn('final_readback',[row['operation'] for row in journal])
+
+        early={**described,'immutable':True}
+        with self.assertRaisesRegex(ValueError,r'^draft became immutable before publication$'):
+            self.v.validate_continued_release(early,self.expected,predecessor)
+        with self.assertRaisesRegex(ValueError,r'^transition changed release immutable$'):
+            self.v.validate_transitioned_release(FakeProvider(dict(early)),early,self.expected,predecessor)
+        provider=FakeProvider(dict(early),dict(self.assets))
+        with self.assertRaisesRegex(ValueError,r'^draft became immutable before publication$'):
+            self.v.begin_predecessor_transition(provider,self.expected,predecessor,lambda:None,None)
+        self.assertEqual(provider.mutations,[])
+
+        stayed={**published,'immutable':False}
+        with self.assertRaisesRegex(ValueError,
+                r'^published release stayed mutable under immutable-releases protection$'):
+            self.v.validate_continued_release(stayed,self.expected,predecessor)
+        provider=FakeProvider(dict(stayed),dict(self.assets))
+        with self.assertRaisesRegex(ValueError,
+                r'^published release stayed mutable under immutable-releases protection$'):
+            self.v.begin_predecessor_transition(provider,self.expected,predecessor,lambda:None,None)
+        self.assertEqual(provider.mutations,[])
+
+        for bad in (None,'true',1):
+            with self.subTest(immutable=bad):
+                with self.assertRaisesRegex(ValueError,r'^release immutable flag is not boolean$'):
+                    self.v.validate_continued_release({**published,'immutable':bad},
+                                                     self.expected,predecessor)
+        with self.assertRaisesRegex(ValueError,r'^predecessor immutability pin differs$'):
+            self.v.validate_continued_release(dict(published),self.expected,
+                                              {**predecessor,'immutable':True})
+        for field,value in (
+                ('node_id','RE_other'),
+                ('created_at','2026-09-17T18:17:10Z'),
+                ('url',self.v.API+'/releases/400420102'),
+                ('upload_url',self.v.UPLOADS+'/releases/400420102/assets{?name,label}'),
+                ('target_commitish','main')):
+            with self.subTest(field=field):
+                with self.assertRaisesRegex(ValueError,
+                        r'^transitioned release metadata differs: '+field+r'$'):
+                    self.v.validate_continued_release({**published,field:value},
+                                                     self.expected,predecessor)
+        with self.assertRaisesRegex(ValueError,r'^transitioned release ID differs$'):
+            self.v.validate_continued_release({**published,'id':400420102},self.expected,predecessor)
+        with self.assertRaisesRegex(ValueError,r'^unexpected release state$'):
+            self.v.validate_continued_release({**published,'prerelease':True},self.expected,predecessor)
+        with self.assertRaisesRegex(ValueError,r'^conflicting release body$'):
+            self.v.validate_continued_release({**published,'body':'foreign'},self.expected,predecessor)
+
+        provider=FakeProvider(dict(described),dict(self.assets))
+        original=provider.lookup
+        def drifted_lookup():
+            current=original()
+            if provider.mutations and current.get('draft') is False:
+                return {**current,'node_id':'RE_other'}
+            return current
+        provider.lookup=drifted_lookup
+        journal=[]
+        with self.assertRaisesRegex(ValueError,r'^transitioned release metadata differs: node_id$'):
+            self.v.complete_retained(provider,self.expected,self.assets,lambda:None,
+                lambda:None,lambda:None,journal.append,prepare_gate=lambda:None,
+                acquire_gate=lambda:None,final_gate=lambda:None,
+                transition_gate=lambda:self.v.begin_predecessor_transition(
+                    provider,self.expected,predecessor,lambda:None,journal.append))
+        self.assertEqual(provider.mutations,['publish'])
+        self.assertNotIn('final_readback',[row['operation'] for row in journal])
+
+        mismatched=FakeProvider(dict(published),{'archive.tar.gz':b'xyz','RECOVERY-CUSTODY.json':b'{}'})
+        with self.assertRaisesRegex(ValueError,r'existing asset bytes differ'):
+            finish(mismatched)
+        self.assertEqual(mismatched.mutations,[])
 
     def test_preflight_rejects_duplicate_same_tag_releases(self):
         predecessor=self.fixed_predecessor()
