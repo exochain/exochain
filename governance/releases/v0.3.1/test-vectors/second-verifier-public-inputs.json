@@ -1,0 +1,17 @@
+{
+  "allowed_inputs": [
+    "evidence-bundle.json",
+    "evidence-bundle.cbor",
+    "detached-signatures",
+    "rfc3161-token.der",
+    "spki-pin.hex"
+  ],
+  "forbidden_inputs": [
+    "DATABASE_URL",
+    "bearer_token",
+    "admin_token",
+    "azure_client_secret",
+    "exochain_private_key",
+    "seed"
+  ]
+}

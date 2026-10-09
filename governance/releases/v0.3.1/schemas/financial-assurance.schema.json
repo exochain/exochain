@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://exochain.io/schemas/proposal/v0.3.1/financial-assurance.schema.json",
+  "title": "EXOCHAIN v0.3.1 financial-assurance interface",
+  "description": "PROPOSAL. Interface only. EXOCHAIN does not provide insurance, surety, or bonding. This schema is not coverage.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "coverage_claim",
+    "exochain_is_obligor",
+    "instrument_family",
+    "issuer_did",
+    "subject_bundle_hash",
+    "limit_minor",
+    "currency",
+    "terms_hash",
+    "statement"
+  ],
+  "properties": {
+    "schema": { "const": "exo.market.assurance.interface.v1" },
+    "coverage_claim": { "const": "none" },
+    "exochain_is_obligor": { "const": false },
+    "instrument_family": {
+      "enum": ["surety", "insurance", "bonding", "reinsurance", "unspecified"]
+    },
+    "issuer_did": { "type": "string" },
+    "subject_bundle_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "limit_minor": { "type": "integer", "minimum": 0 },
+    "currency": { "type": "string", "minLength": 3, "maxLength": 8 },
+    "terms_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "statement": {
+      "const": "Interface only. EXOCHAIN does not provide insurance, surety, or bonding. No coverage is in force."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "issuer_did": { "const": "" } },
+        "required": ["issuer_did"]
+      },
+      "then": {
+        "properties": { "limit_minor": { "const": 0 } }
+      }
+    }
+  ]
+}

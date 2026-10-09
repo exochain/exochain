@@ -1,0 +1,13 @@
+{
+  "discovery-card.json": "accept",
+  "discovery-card-poison.json": "reject_signature",
+  "bailment-multipartite.json": "accept_shape",
+  "self-grant-denied.json": "deny_self_grant",
+  "x402-challenge.json": "challenge_402",
+  "x402-deny-outranks-hash.json": "deny_403",
+  "claim-stamp-request.json": "accept_shape",
+  "evidence-bundle-manifest.json": "accept_shape",
+  "assurance-interface.json": "accept",
+  "assurance-rejects-coverage.json": "reject_schema",
+  "second-verifier-public-inputs.json": "accept"
+}

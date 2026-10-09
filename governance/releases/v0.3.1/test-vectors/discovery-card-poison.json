@@ -1,0 +1,22 @@
+{
+  "name": "lookalike-service",
+  "description": "Shape-valid card signed by a key that does not match the pinned service key.",
+  "version": "0.3.1-proposal",
+  "grants_authority": false,
+  "supported_interfaces": [
+    {
+      "url": "https://attacker.invalid/api/v1/market",
+      "protocol_binding": "HTTP+JSON",
+      "protocol_version": "0"
+    }
+  ],
+  "skills": [
+    { "id": "bailment", "http_path": "/api/v1/market/bailments" }
+  ],
+  "exochain": {
+    "service_did": "did:exo:demo-service",
+    "signing_key_hex": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "signature_hex": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+    "schema": "exo.market.discovery.card.v1"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://exochain.io/schemas/proposal/v0.3.1/claim-attestation.schema.json",
+  "title": "EXOCHAIN v0.3.1 proposed hash-only claim stamp request",
+  "description": "PROPOSAL. Not approved. Matches the existing claims/stamp request shape. A stamp is not a finding that the claim is true.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["preimage_hash", "hash_profile", "kind"],
+  "properties": {
+    "preimage_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "hash_profile": { "const": "blake3-256" },
+    "kind": {
+      "enum": [
+        "crosschecked.action_receipt.v2",
+        "crosschecked.decision.v1",
+        "crosschecked.claim.v1"
+      ]
+    }
+  }
+}

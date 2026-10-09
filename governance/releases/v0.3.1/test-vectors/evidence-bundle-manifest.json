@@ -1,0 +1,48 @@
+{
+  "schema": "exo.market.evidence_bundle.v1",
+  "identity": {
+    "principal_did": "did:exo:demo-principal",
+    "agent_did": "did:exo:demo-agent",
+    "credential_hash": "7777777777777777777777777777777777777777777777777777777777777777"
+  },
+  "authority": {
+    "chain_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+    "pdp_evidence_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+    "decision": "Allow"
+  },
+  "agreement": {
+    "transcript_id": "demo-transcript-1",
+    "terms_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+    "party_dids": [
+      "did:exo:demo-principal",
+      "did:exo:demo-agent",
+      "did:exo:demo-service"
+    ]
+  },
+  "payment": {
+    "payment_evidence_hash": "5555555555555555555555555555555555555555555555555555555555555555",
+    "reason": "bound"
+  },
+  "execution": {
+    "fulfillment_hash": "3333333333333333333333333333333333333333333333333333333333333333",
+    "reason": "fulfilled"
+  },
+  "outcome": {
+    "discharge_hash": "4444444444444444444444444444444444444444444444444444444444444444",
+    "reason": "discharged"
+  },
+  "timestamp": {
+    "proof_kind": "Rfc3161",
+    "authority_did": "did:exo:microsoft-public-rsa-tsa",
+    "policy_oid": "1.3.6.1.4.1.601.10.3.1",
+    "message_imprint_sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+    "token_der_base64": "",
+    "spki_pin_hex": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "tsa_url": "http://timestamp.acs.microsoft.com"
+  },
+  "assurance": {
+    "coverage_claim": "none",
+    "exochain_is_obligor": false,
+    "statement": "Interface only. EXOCHAIN does not provide insurance, surety, or bonding. No coverage is in force."
+  }
+}

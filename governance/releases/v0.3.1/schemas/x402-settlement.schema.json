@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://exochain.io/schemas/proposal/v0.3.1/x402-settlement.schema.json",
+  "title": "EXOCHAIN v0.3.1 proposed x402 verify observation",
+  "description": "PROPOSAL. Not approved. EXOCHAIN does not move money. A header is not payment.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "decision",
+    "http_status",
+    "payment_evidence_hash",
+    "payment_signature_header_present",
+    "never_moves_money",
+    "mandate_hash",
+    "terms_hash",
+    "amount_minor",
+    "currency"
+  ],
+  "properties": {
+    "decision": { "enum": ["Allow", "Deny", "Challenge"] },
+    "http_status": { "enum": [200, 402, 403] },
+    "payment_evidence_hash": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "payment_signature_header_present": { "type": "boolean" },
+    "never_moves_money": { "const": true },
+    "mandate_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "terms_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "amount_minor": { "type": "integer", "minimum": 0 },
+    "currency": { "type": "string", "minLength": 3, "maxLength": 8 }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "decision": { "const": "Deny" } },
+        "required": ["decision"]
+      },
+      "then": {
+        "properties": { "http_status": { "const": 403 } }
+      }
+    },
+    {
+      "if": {
+        "properties": { "decision": { "const": "Challenge" } },
+        "required": ["decision"]
+      },
+      "then": {
+        "properties": {
+          "http_status": { "const": 402 },
+          "payment_evidence_hash": { "type": "null" }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://exochain.io/schemas/proposal/v0.3.1/bailment-negotiation.schema.json",
+  "title": "EXOCHAIN v0.3.1 proposed bailment negotiation message",
+  "description": "PROPOSAL. Not approved. A valid message is not an authorization.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "transcript_id",
+    "kind",
+    "prev_hash",
+    "terms_hash",
+    "hlc_physical_ms",
+    "hlc_logical",
+    "actor_did",
+    "grantor_did",
+    "parties",
+    "threshold",
+    "permission_ceiling",
+    "requested_permissions",
+    "amount_minor",
+    "currency",
+    "signature_hex"
+  ],
+  "properties": {
+    "transcript_id": { "type": "string", "minLength": 1 },
+    "kind": {
+      "enum": [
+        "proposal",
+        "counteroffer",
+        "commit",
+        "fulfillment",
+        "discharge",
+        "dispute",
+        "reject",
+        "revoke"
+      ]
+    },
+    "prev_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "terms_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "hlc_physical_ms": { "type": "integer", "minimum": 1 },
+    "hlc_logical": { "type": "integer", "minimum": 0 },
+    "actor_did": { "type": "string", "pattern": "^did:exo:[A-Za-z0-9._:-]+$" },
+    "grantor_did": { "type": "string", "pattern": "^did:exo:[A-Za-z0-9._:-]+$" },
+    "parties": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["did", "role"],
+        "properties": {
+          "did": { "type": "string", "pattern": "^did:exo:[A-Za-z0-9._:-]+$" },
+          "role": {
+            "enum": ["bailor", "bailee", "beneficiary", "service", "witness"]
+          },
+          "agent_for": { "type": "string", "pattern": "^did:exo:[A-Za-z0-9._:-]+$" }
+        }
+      }
+    },
+    "threshold": { "type": "integer", "minimum": 2 },
+    "permission_ceiling": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "requested_permissions": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "amount_minor": { "type": "integer", "minimum": 0 },
+    "currency": { "type": "string", "minLength": 3, "maxLength": 8 },
+    "signature_hex": { "type": "string", "pattern": "^[0-9a-f]{128}$" }
+  }
+}
