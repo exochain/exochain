@@ -38,10 +38,19 @@ The workspace version is set in `Cargo.toml`:
 version = "0.2.7"
 ```
 
-This repository state is the intended, unpublished `0.2.7` release-correction
-candidate, superseding the failed `v0.2.6` release attempt. The existing signed
-`v0.2.6` tag and its source remain unchanged as historical evidence. A signed tag
-identifies source; it does not establish successful publication.
+GitHub Release `v0.2.7` was published at `2026-10-08T17:28:52Z` (release id
+`400420101`). A registry observation at `2026-10-09T00:42:24Z` recorded `0.2.7`
+on crates.io for the 32 publishable Rust crates, on npm for
+`@exochain/sdk`, `@exochain/exochain-wasm`, and `@exochain/llm-proxy`, and on
+PyPI for `exochain`. The reviewed crates.io and npm snapshot is
+`governance/releases/published-release-snapshot.json`. PyPI is outside that
+snapshot schema.
+
+`0.2.7` is a beta (`0.x`) library release, not general availability. Its
+GitHub Release states that native archives contain 29 legacy `libexo_*.rlib`
+libraries each, not server executables, and claims no runtime deployment.
+The signed `v0.2.6` tag and its source remain historical evidence. A signed tag
+identifies source; it does not by itself establish publication.
 
 Historical read-only provider checks at `2026-08-29T03:44:56Z` found no `v0.2.5`
 remote tag or GitHub Release, HTTP 404 for `0.2.5` across all 32 publishable Rust packages,

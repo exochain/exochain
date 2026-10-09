@@ -38,7 +38,7 @@ export default function Page() {
       <AppPageHead
         eyebrow="Extranet · revocations"
         title="Revocations"
-        lede="Each revocation cascades through the credential graph. Step-up auth required to commit a revocation in v0.5+."
+        lede="Each revocation cascades through the credential graph. This mock console does not commit a live revocation."
       />
       <DataTable columns={cols} rows={mockRevocations} empty="No revocations recorded." />
       <AuditNote>Submitting a revocation writes to the audit log and broadcasts a revocation event.</AuditNote>

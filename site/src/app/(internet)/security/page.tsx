@@ -44,7 +44,7 @@ export default function Page() {
               <p className="text-sm">
                 <code>security@exochain.io</code>{' '}
                 <span className="text-ink/60 dark:text-vellum-soft/60">
-                  (PGP key fingerprint published with v0.5)
+                  (no PGP fingerprint is published on this page)
                 </span>
               </p>
             </CardBody>

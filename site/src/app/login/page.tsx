@@ -71,7 +71,7 @@ export default function Page({
   return (
     <div className="min-h-dvh grid place-items-center px-6">
       <Section width="prose" className="py-12 w-full">
-        <Eyebrow>Extranet · alpha</Eyebrow>
+        <Eyebrow>Extranet · beta</Eyebrow>
         <H1 className="mt-3">Sign in to EXOCHAIN.</H1>
         <Lede className="mt-4">
           Local development login is explicitly enabled for this environment.

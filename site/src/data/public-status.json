@@ -1,0 +1,84 @@
+{
+  "maturity": "beta",
+  "maturity_summary": "Beta means a published 0.x library line. The public API may change between minor versions. This is not general availability, and it is not a claim that a public network is in production.",
+  "spec": {
+    "normative_version": "2.2",
+    "normative_document": "EXOCHAIN_Specification_v2.2.pdf",
+    "authority_record": "docs/adr/ADR-001-authority-of-text.md",
+    "engineering_version": "2.1",
+    "engineering_document": "EXOCHAIN-FABRIC-PLATFORM.md",
+    "v2_3_present_in_repository": false
+  },
+  "publication": {
+    "version": "0.2.7",
+    "observed_at": "2026-10-09T00:42:24Z",
+    "github_published_at": "2026-10-08T17:28:52Z",
+    "github_url": "https://github.com/exochain/exochain/releases/tag/v0.2.7",
+    "native_archive_contents": "29 legacy libexo_*.rlib libraries each, not server executables",
+    "runtime_deployment_claimed": false,
+    "pypi_package": "exochain"
+  },
+  "gap_registry": {
+    "path": "GAP-REGISTRY.md",
+    "header_amended": "2026-07-02",
+    "header_records_release": "v0.2.0-beta",
+    "note": "GAP-REGISTRY.md is the systemic integrity ledger. Its header was amended on 2026-07-02 and still records the v0.2.0-beta runtime snapshot, so that header is not the 0.2.7 publication record. Named gap rows remain the ledger for unfinished claims. The default-off features below are the current source boundary for unaudited surfaces."
+  },
+  "default_off_features": [
+    {
+      "package": "exochain-proofs",
+      "feature": "unaudited-pedagogical-proofs",
+      "boundary": "SNARK, STARK, and ZKML entry points refuse to run unless this feature is enabled. The crate is a pedagogical skeleton, not production cryptography."
+    },
+    {
+      "package": "exochain-node",
+      "feature": "unaudited-admin-governance-shortcut",
+      "boundary": "Bearer-token validator-set changes stay refused. Enabling the feature does not complete quorum governance."
+    },
+    {
+      "package": "exochain-node",
+      "feature": "unaudited-crosschecked-receipt-anchor",
+      "boundary": "Compatibility feature name only. It does not authorize a live CrossChecked anchor, and POST /api/v1/receipts returns 410 in every build."
+    },
+    {
+      "package": "exochain-node",
+      "feature": "unaudited-mcp-simulation-tools",
+      "boundary": "MCP tools that would return success without persisting governance state stay refused."
+    },
+    {
+      "package": "exochain-node",
+      "feature": "unaudited-zerodentity-first-touch-onboarding",
+      "boundary": "First-touch 0dentity claim creation stays refused until an approved proof-of-possession contract exists."
+    },
+    {
+      "package": "exochain-node",
+      "feature": "unaudited-infrastructure-holons",
+      "boundary": "Infrastructure Holons stay off. The default build has no external attestation source for their root authority."
+    },
+    {
+      "package": "exochain-node",
+      "feature": "unaudited-zerodentity-device-behavioral-axes",
+      "boundary": "Device-fingerprint and behavioral-biometric axes stay off. There is no public ingestion path that persists those samples."
+    },
+    {
+      "package": "exochain-node",
+      "feature": "conformance-test-root",
+      "boundary": "Hermetic AVC tests may swap root-trust constants. Production ceremony constants stay compiled either way, and this feature must stay off for a production build."
+    },
+    {
+      "package": "exochain-gateway",
+      "feature": "unaudited-gateway-graphql-api",
+      "boundary": "The GraphQL API stays off. Its resolvers include unaudited mutations, fabricated consent evaluation, and proof-verification scaffolding."
+    }
+  ],
+  "bounded_capabilities": [
+    {
+      "name": "RISC Zero execution-receipt verifier",
+      "posture": "exochain-proofs compiles risc0-verifier by default. Receipt verification is not production-reviewed. Pedagogical SNARK, STARK, and ZKML proofs remain behind unaudited-pedagogical-proofs."
+    },
+    {
+      "name": "Gateway readiness",
+      "posture": "GET /ready is served by exo-gateway and reports CARGO_PKG_VERSION plus database probe state. The v0.2.7 GitHub Release claims no runtime deployment, so a live probe describes that process only."
+    }
+  ]
+}

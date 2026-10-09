@@ -125,9 +125,10 @@ export default function Page() {
 
       <Section className="py-8">
         <Disclaimer>
-          EXOCHAIN is in alpha. Nothing on this page should be read as a
-          claim of completed third-party audit or regulatory approval unless
-          a linked artifact says otherwise.
+          EXOCHAIN is in beta (0.x), not general availability. Nothing on
+          this page should be read as a claim of completed third-party audit,
+          regulatory approval, or a deployed production network unless a
+          linked artifact says otherwise.
         </Disclaimer>
       </Section>
     </>

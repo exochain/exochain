@@ -42,8 +42,8 @@ export default function Page() {
         <Card>
           <CardHeader title="Multi-factor authentication" />
           <CardBody>
-            <p className="text-sm">WebAuthn (passkey) <Pill tone="signal">v0.5</Pill></p>
-            <p className="text-sm mt-2">TOTP <Pill tone="signal">v0.5</Pill></p>
+            <p className="text-sm">WebAuthn (passkey) <Pill tone="signal">not on this console</Pill></p>
+            <p className="text-sm mt-2">TOTP <Pill tone="signal">not on this console</Pill></p>
           </CardBody>
         </Card>
         <Card>

@@ -333,7 +333,7 @@ export const mockNodes: NodeRecord[] = [
     operatorOrgId: 'aperture',
     kind: 'node',
     endpoint: 'node-aperture-01.exochain.io',
-    version: 'v0.4.2-alpha',
+    version: 'mock',
     status: 'healthy',
     lastHeight: 124803,
     region: 'us-east'
@@ -343,7 +343,7 @@ export const mockNodes: NodeRecord[] = [
     operatorOrgId: 'northwind',
     kind: 'validator',
     endpoint: 'val-northwind-02.exochain.io',
-    version: 'v0.4.2-alpha',
+    version: 'mock',
     status: 'healthy',
     lastHeight: 124803,
     region: 'eu-west'
@@ -353,7 +353,7 @@ export const mockNodes: NodeRecord[] = [
     operatorOrgId: 'northwind',
     kind: 'validator',
     endpoint: 'val-northwind-03.exochain.io',
-    version: 'v0.4.2-alpha',
+    version: 'mock',
     status: 'degraded',
     lastHeight: 124781,
     region: 'ap-south'
@@ -363,7 +363,7 @@ export const mockNodes: NodeRecord[] = [
     operatorOrgId: 'aperture',
     kind: 'node',
     endpoint: 'node-aperture-02.exochain.io',
-    version: 'v0.4.1-alpha',
+    version: 'mock',
     status: 'syncing',
     lastHeight: 124020,
     region: 'us-west'
@@ -440,15 +440,15 @@ export const mockProposals: Proposal[] = [
   }
 ];
 
-// Mock network metrics for the public status page. Always shown with a
-// `mock` label. Wire to exo-gateway status feed in v0.5.
+// Intranet-only mock metrics. The public status page does not use this
+// object. Counts below are fixtures and must stay labeled `mock`.
 export const mockNetworkMetrics = {
-  networkMode: 'alpha-testnet',
+  networkMode: 'mock-console',
   validatorCount: 7,
   peerCount: 19,
   committedHeight: 124803,
   uptimeWindow: '30d',
   uptimePercent: 99.86,
-  lastReleaseTag: 'v0.4.2-alpha',
+  lastReleaseTag: 'see /status',
   lastSeenISO: '2026-05-03T14:00:00Z'
 } as const;

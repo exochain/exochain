@@ -43,7 +43,7 @@ single ergonomic API.
 | [`exo-messaging`](./exo-messaging/)         | End-to-end encrypted messaging with X25519 key exchange.                                   |
 | [`exo-tenant`](./exo-tenant/)               | Multi-tenant isolation, cold storage, sharding.                                            |
 | [`exo-dag`](./exo-dag/)                     | Append-only DAG with BFT consensus and Merkle structures.                                  |
-| [`exo-proofs`](./exo-proofs/)               | Zero-knowledge proof system — SNARK, STARK, ZKML verifier.                                 |
+| [`exo-proofs`](./exo-proofs/)               | Unaudited pedagogical SNARK, STARK, and ZKML skeleton. Default-off. Not production cryptography. |
 | [`exo-consensus`](./exo-consensus/)         | Consensus machinery layered on top of the DAG and the legal record.                        |
 | [`exo-api`](./exo-api/)                     | P2P networking and external API types.                                                     |
 | [`exo-gateway`](./exo-gateway/)             | HTTP gateway server with default-deny pattern.                                             |

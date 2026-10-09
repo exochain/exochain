@@ -29,10 +29,12 @@ export default function Page() {
           This is a v0 placeholder. Counsel will review and finalize before
           public launch.
         </Disclaimer>
-        <h2>Alpha</h2>
+        <h2>Beta</h2>
         <p>
-          EXOCHAIN is in alpha. Use of the protocol, the public site, and
-          the authenticated surfaces is subject to change without notice.
+          EXOCHAIN is in beta (0.x), not general availability. The public
+          API may change between minor versions. Use of the protocol, the
+          public site, and the authenticated surfaces is subject to change
+          without notice.
         </p>
         <h2>No advice</h2>
         <p>

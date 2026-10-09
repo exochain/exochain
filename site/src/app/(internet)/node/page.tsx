@@ -39,9 +39,11 @@ export default function Page() {
             <CardHeader title="Node operator" />
             <CardBody>
               <p className="text-sm">
-                Lower bar. Runs the binary, exposes the gateway surface,
-                propagates blocks. Does not require hardware attestation in
-                alpha. Onboard at <Link href="/app/nodes" className="underline">/app/nodes</Link>.
+                This public page does not operate a validator set and does
+                not grant operator status. The extranet node console is a
+                mock. Hardware-attestation requirements are defined by the
+                node and governance documents. See{' '}
+                <Link href="/status" className="underline">/status</Link>.
               </p>
             </CardBody>
           </Card>

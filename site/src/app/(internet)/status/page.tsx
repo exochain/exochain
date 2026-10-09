@@ -15,86 +15,122 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Section, Eyebrow, H1, H2, Lede } from '@/components/ui/Section';
-import { Card, CardBody, CardHeader } from '@/components/ui/Card';
-import { KPI } from '@/components/ui/KPI';
 import { Pill } from '@/components/ui/Pill';
-import { StatusPill } from '@/components/ui/StatusPill';
-import { DataTable, type Column } from '@/components/ui/DataTable';
-import { mockIncidents, mockNetworkMetrics } from '@/lib/mock-data';
-import { fmtDate } from '@/lib/format';
-import type { Incident } from '@/lib/types';
+import { LiveGatewayProbe } from '@/components/status/LiveGatewayProbe';
+import publicStatus from '@/data/public-status.json';
 
 export const metadata = { title: 'Status' };
 
-const incidentCols: Column<Incident>[] = [
-  { key: 'severity', header: 'Severity', render: (r) => <Pill tone={r.severity === 'sev1' ? 'alert' : r.severity === 'sev2' ? 'signal' : 'roadmap'}>{r.severity.toUpperCase()}</Pill> },
-  { key: 'title', header: 'Incident' },
-  { key: 'status', header: 'Status', render: (r) => <StatusPill status={r.status} /> },
-  { key: 'startedAt', header: 'Started', render: (r) => <span className="font-mono text-xs">{fmtDate(r.startedAt)}</span> },
-  { key: 'resolvedAt', header: 'Resolved', render: (r) => <span className="font-mono text-xs">{r.resolvedAt ? fmtDate(r.resolvedAt) : '—'}</span> }
-];
-
 export default function Page() {
-  const m = mockNetworkMetrics;
+  const release = publicStatus.publication;
   return (
     <>
       <Section className="pt-16 pb-8">
         <Eyebrow>Status</Eyebrow>
         <H1 className="mt-3">EXOCHAIN public status.</H1>
-        <Lede className="mt-5 max-w-prose">
-          Network mode and recent incident history. Numeric metrics on this
-          page are sourced from the gateway when available; until the live
-          status feed is wired they are labeled <em>mock</em>.
-        </Lede>
+        <Lede className="mt-5 max-w-prose">{publicStatus.maturity_summary}</Lede>
         <div className="mt-4 flex flex-wrap gap-2">
-          <Pill tone="signal">alpha</Pill>
-          <Pill tone="custody">network: {m.networkMode}</Pill>
+          <Pill tone="signal">{publicStatus.maturity}</Pill>
+          <Pill tone="custody">spec v{publicStatus.spec.normative_version}</Pill>
+          <Pill tone="neutral">v{release.version}</Pill>
         </div>
       </Section>
 
       <Section className="py-8">
-        <H2>Network</H2>
-        <div className="mt-5 grid grid-cols-2 md:grid-cols-4 gap-3">
-          <KPI label="Validators" value={m.validatorCount} mock />
-          <KPI label="Peers" value={m.peerCount} mock />
-          <KPI label="Committed height" value={m.committedHeight.toLocaleString()} mock />
-          <KPI label={`Uptime · ${m.uptimeWindow}`} value={`${m.uptimePercent}%`} mock />
+        <H2>Published release</H2>
+        <div className="mt-4 max-w-prose space-y-3 text-sm">
+          <p>
+            Reviewed snapshot <span className="font-mono">v{release.version}</span>,
+            observed <span className="font-mono">{release.observed_at}</span>.
+            GitHub Release published{' '}
+            <span className="font-mono">{release.github_published_at}</span>:{' '}
+            <a className="underline" href={release.github_url}>
+              {release.github_url}
+            </a>
+            .
+          </p>
+          <p>
+            Native archives contain {release.native_archive_contents}. Runtime
+            deployment claimed by that release:{' '}
+            <span className="font-mono">
+              {release.runtime_deployment_claimed ? 'yes' : 'no'}
+            </span>
+            .
+          </p>
+          <p>
+            PyPI package <span className="font-mono">{release.pypi_package}</span>{' '}
+            was observed at the same version. crates.io and npm package names are
+            in{' '}
+            <span className="font-mono">
+              governance/releases/published-release-snapshot.json
+            </span>
+            .
+          </p>
         </div>
-        <p className="mt-4 text-xs text-ink/60 dark:text-vellum-soft/60">
-          Last seen <span className="font-mono">{fmtDate(m.lastSeenISO)}</span>.
-          Last release <span className="font-mono">{m.lastReleaseTag}</span>.
+      </Section>
+
+      <Section className="py-8">
+        <H2>Specification</H2>
+        <p className="mt-4 max-w-prose text-sm">
+          Normative specification v{publicStatus.spec.normative_version} (
+          <span className="font-mono">{publicStatus.spec.normative_document}</span>
+          ), recorded in{' '}
+          <span className="font-mono">{publicStatus.spec.authority_record}</span>.
+          Engineering elaboration v{publicStatus.spec.engineering_version} (
+          <span className="font-mono">{publicStatus.spec.engineering_document}</span>
+          ) is subordinate to that specification. A v2.3 specification is{' '}
+          {publicStatus.spec.v2_3_present_in_repository ? 'present' : 'not present'}{' '}
+          in this repository.
         </p>
       </Section>
 
       <Section className="py-8">
-        <H2>Service health</H2>
-        <div className="mt-5 grid md:grid-cols-3 gap-5">
-          {[
-            { name: 'Gateway · public', status: 'healthy' as const },
-            { name: 'Node API · public', status: 'healthy' as const },
-            { name: 'Public docs', status: 'healthy' as const }
-          ].map((s) => (
-            <Card key={s.name}>
-              <CardHeader title={s.name} right={<StatusPill status={s.status} />} />
-              <CardBody>
-                <p className="text-sm">
-                  Synthetic checks every 60s. <Pill tone="mock">mock</Pill>
-                </p>
-              </CardBody>
-            </Card>
-          ))}
-        </div>
+        <H2>Same-origin gateway probe</H2>
+        <p className="mt-4 max-w-prose text-sm">
+          <span className="font-mono">GET /ready</span> is served by exo-gateway,
+          not by this Next.js site, and its version field is the binary&apos;s{' '}
+          <span className="font-mono">CARGO_PKG_VERSION</span>. The text below is
+          the raw same-origin response. A 404 means this website process is not
+          the gateway. This page does not invent validator counts, peer counts,
+          committed height, uptime percent, or incidents.
+        </p>
+        <LiveGatewayProbe />
       </Section>
 
       <Section className="py-8">
-        <H2>Recent incidents</H2>
-        <div className="mt-5">
-          <DataTable
-            columns={incidentCols}
-            rows={mockIncidents}
-            empty="No incidents to report."
-          />
-        </div>
+        <H2>Default-off boundaries</H2>
+        <ul className="mt-4 max-w-prose space-y-3 text-sm">
+          {publicStatus.default_off_features.map((feature) => (
+            <li key={`${feature.package}/${feature.feature}`}>
+              <span className="font-mono">
+                {feature.package}/{feature.feature}
+              </span>
+              {' — '}
+              {feature.boundary}
+            </li>
+          ))}
+        </ul>
+      </Section>
+
+      <Section className="py-8">
+        <H2>Bounded capabilities</H2>
+        <ul className="mt-4 max-w-prose space-y-3 text-sm">
+          {publicStatus.bounded_capabilities.map((capability) => (
+            <li key={capability.name}>
+              <strong>{capability.name}.</strong> {capability.posture}
+            </li>
+          ))}
+        </ul>
+      </Section>
+
+      <Section className="py-8">
+        <H2>Gap ledger</H2>
+        <p className="mt-4 max-w-prose text-sm">{publicStatus.gap_registry.note}</p>
+        <p className="mt-3 max-w-prose text-xs text-ink/60 dark:text-vellum-soft/60">
+          <span className="font-mono">{publicStatus.gap_registry.path}</span> header
+          amended {publicStatus.gap_registry.header_amended}; that header records{' '}
+          {publicStatus.gap_registry.header_records_release}.
+        </p>
       </Section>
     </>
   );

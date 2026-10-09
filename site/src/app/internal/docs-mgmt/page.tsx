@@ -33,7 +33,7 @@ export default function Page() {
       <IntPageHead
         eyebrow="Intranet · docs"
         title="Documentation management"
-        lede="Docs editor with publish workflow. Migrating to MDX in v0.5."
+        lede="Docs editor with publish workflow. This console does not publish the public site."
       />
       <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
         {DOCS.map(p => (

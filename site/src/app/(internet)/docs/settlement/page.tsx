@@ -32,7 +32,7 @@ export default function Page() {
       </p>
       <h2>ZeroFeeReason</h2>
       <ul>
-        <li><code>launch_policy_zero</code> — the default during alpha.</li>
+        <li><code>launch_policy_zero</code> — the default under the current beta launch policy.</li>
         <li><code>governance_subsidy</code> — issued under specific governance amendments.</li>
         <li><code>humanitarian_carve_out</code> — declared scopes (see governance).</li>
       </ul>

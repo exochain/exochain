@@ -30,7 +30,7 @@ interface Flag {
 
 const FLAGS: Flag[] = [
   { id: 'f_001', key: 'pricing.future_config_editor', scope: 'global', state: 'staged', notes: 'Quorum + step-up gated.' },
-  { id: 'f_002', key: 'webhooks.signed_payloads_v2', scope: 'global', state: 'staged', notes: 'Rolls forward in v0.5.' },
+  { id: 'f_002', key: 'webhooks.signed_payloads_v2', scope: 'global', state: 'staged', notes: 'Mock flag. Not a live rollout.' },
   { id: 'f_003', key: 'docs.mdx_renderer', scope: 'public-site', state: 'off', notes: 'TSX docs in v0.' }
 ];
 

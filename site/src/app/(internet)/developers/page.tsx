@@ -30,13 +30,14 @@ export default function DevelopersPage() {
         <Eyebrow>Developers</Eyebrow>
         <H1 className="mt-3">Build on EXOCHAIN.</H1>
         <Lede className="mt-5 max-w-prose">
-          Issue and validate AVCs. Generate trust receipts. Run a node. The
-          Rust SDK is the reference; Node/TypeScript and Python are on the
-          roadmap.
+          The published SDKs are libraries. Install them from crates.io, npm,
+          or PyPI. API examples live in each package README. This page does
+          not show a sample client, because an earlier sample was not the
+          SDK API.
         </Lede>
         <div className="mt-6 flex flex-wrap gap-2">
-          <Pill tone="signal">alpha</Pill>
-          <Pill tone="unstable">unstable APIs</Pill>
+          <Pill tone="signal">beta</Pill>
+          <Pill tone="unstable">0.x APIs may change</Pill>
         </div>
       </Section>
 
@@ -44,83 +45,39 @@ export default function DevelopersPage() {
         <H2>Quickstart</H2>
         <div className="mt-6 grid lg:grid-cols-2 gap-5">
           <Card>
-            <CardHeader eyebrow="01" title="Install the SDK" />
+            <CardHeader eyebrow="01" title="Rust" />
             <CardBody>
-              <Pre>
-{`# Cargo (Rust reference)
-cargo add exochain-sdk
-
-# Roadmap
-# npm install @exochain/sdk    (v0.5)
-# pip install exochain         (v0.5)`}
-              </Pre>
+              <Pre>{`cargo add exochain-sdk`}</Pre>
+              <p className="mt-3 text-sm">
+                Crate README:{' '}
+                <a className="underline" href="https://github.com/exochain/exochain/blob/main/crates/exochain-sdk/README.md">
+                  crates/exochain-sdk/README.md
+                </a>
+              </p>
             </CardBody>
           </Card>
           <Card>
-            <CardHeader eyebrow="02" title="Register an actor" />
+            <CardHeader eyebrow="02" title="TypeScript" />
             <CardBody>
-              <Pre>
-{`use exochain_sdk::{Client, ActorKind};
-
-let client = Client::connect_default().await?;
-let actor = client.register_actor(
-  ActorKind::Agent,
-  "Aperture Procurement Agent",
-  parent_org_id,
-).await?;`}
-              </Pre>
+              <Pre>{`npm install @exochain/sdk`}</Pre>
+              <p className="mt-3 text-sm">
+                Package README:{' '}
+                <a className="underline" href="https://github.com/exochain/exochain/blob/main/packages/exochain-sdk/README.md">
+                  packages/exochain-sdk/README.md
+                </a>
+              </p>
             </CardBody>
           </Card>
           <Card>
-            <CardHeader eyebrow="03" title="Issue an AVC" />
+            <CardHeader eyebrow="03" title="Python" />
             <CardBody>
-              <Pre>
-{`let avc = client.issue_avc(IssueAvcParams {
-  subject: actor.id,
-  policy_domain: "aperture.procurement".into(),
-  scope: vec!["procure.search","procure.quote","procure.purchase"],
-  constraints: serde_json::json!({"ceiling_usd": 50_000}),
-  not_after: now + Duration::days(180),
-}).await?;`}
-              </Pre>
-            </CardBody>
-          </Card>
-          <Card>
-            <CardHeader eyebrow="04" title="Validate, then act" />
-            <CardBody>
-              <Pre>
-{`let v = client.validate_avc(&avc.token).await?;
-match v {
-  Validation::Pass(scope) => agent.act(scope).await?,
-  Validation::Fail(reason) => abort(reason),
-}`}
-              </Pre>
-            </CardBody>
-          </Card>
-          <Card>
-            <CardHeader eyebrow="05" title="Generate a trust receipt" />
-            <CardBody>
-              <Pre>
-{`let receipt = client.emit_trust_receipt(EmitParams {
-  avc_id: avc.id,
-  action_descriptor: "procure.purchase:po-2026-0234",
-  outcome: Outcome::Permitted,
-}).await?;`}
-              </Pre>
-            </CardBody>
-          </Card>
-          <Card>
-            <CardHeader
-              eyebrow="06"
-              title="Settlement (zero-priced launch policy)"
-            />
-            <CardBody>
-              <Pre>
-{`let quote = client.settlement_quote(receipt.id).await?;
-assert_eq!(quote.amount, "0");           // launch_policy_zero
-let sr = client.commit_settlement(quote).await?;
-assert_eq!(sr.amount, "0");`}
-              </Pre>
+              <Pre>{`pip install exochain`}</Pre>
+              <p className="mt-3 text-sm">
+                Package README:{' '}
+                <a className="underline" href="https://github.com/exochain/exochain/blob/main/packages/exochain-py/README.md">
+                  packages/exochain-py/README.md
+                </a>
+              </p>
             </CardBody>
           </Card>
         </div>
@@ -192,11 +149,15 @@ assert_eq!(sr.amount, "0");`}
             <CardHeader title="Source" />
             <CardBody>
               <p className="text-sm mb-3">
-                Apache-2.0 reference implementation. The public repository
-                link is forthcoming.
+                Apache-2.0 applies to EXOCHAIN core primitives. The public
+                repository is{' '}
+                <a className="underline" href="https://github.com/exochain/exochain">
+                  github.com/exochain/exochain
+                </a>
+                .
               </p>
-              <LinkButton href="/contact" size="sm" variant="secondary">
-                Request access
+              <LinkButton href="https://github.com/exochain/exochain" size="sm" variant="secondary" external>
+                View source
               </LinkButton>
             </CardBody>
           </Card>

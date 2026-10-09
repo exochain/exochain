@@ -28,7 +28,7 @@ const POSTS = [
   },
   {
     date: '2026-04-12',
-    title: 'Validator attestation, the alpha way',
+    title: 'Validator attestation is not a finished public program',
     excerpt:
       'A practical writeup on what hardware attestation we are checking, what we are not yet checking, and how the observation period catches surprises before quorum.'
   },
@@ -47,8 +47,9 @@ export default function Page() {
         <Eyebrow>Field Notes</Eyebrow>
         <H1 className="mt-3">Notes from the protocol team.</H1>
         <Lede className="mt-5 max-w-prose">
-          Engineering, governance, and ecosystem updates. Short on
-          marketing, long on substance.
+          Editorial drafts. These cards are not release notes and are not
+          evidence of a deployed network. The publication record is on{' '}
+          <a className="underline" href="/status">/status</a>.
         </Lede>
       </Section>
       <Section className="py-6">

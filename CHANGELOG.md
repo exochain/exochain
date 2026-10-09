@@ -25,20 +25,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.7] - 2026-09-16 (release candidate; unpublished)
+## [0.2.7] - 2026-10-08
 
-Release-correction candidate superseding the failed `v0.2.6` release attempt.
-The existing signed `v0.2.6` tag, its source, and the candidate record below are
-preserved. This candidate does not establish a GitHub Release, registry
-publication, deployment, or live runtime activation.
+Published GitHub Release `v0.2.7` (release id `400420101`, published
+`2026-10-08T17:28:52Z`). A registry observation at `2026-10-09T00:42:24Z` found
+`0.2.7` as the newest version of the 32 publishable Rust crates, npm
+`@exochain/sdk`, `@exochain/exochain-wasm`, and `@exochain/llm-proxy`, and PyPI
+`exochain`. The reviewed crates.io and npm inventory is
+`governance/releases/published-release-snapshot.json`. PyPI is outside that
+snapshot schema and is recorded here.
+
+This is a beta (`0.x`) library release, not general availability. The release
+notes state that native archives contain 29 legacy `libexo_*.rlib` libraries
+each, not server executables, and that no runtime deployment is claimed. The
+signed `v0.2.6` tag and its source remain historical evidence. A signed tag
+identifies source; the publication snapshot records publication.
 
 ### Release / CI
 
 - Aligns the 32 publishable Rust crates, standalone CGR packages, 158 exact
   first-party dependency pins, Rust locks, SDKs, WASM, and LLM proxy at `0.2.7`,
   without upgrading third-party dependencies.
-- Separates signed-tag existence from publication evidence so an unpublished
-  candidate can pass the release contract while its signed source tag exists.
+- Keeps signed-tag existence separate from publication evidence. The reviewed
+  snapshot, not the tag alone, is the publication record.
 
 ## [0.2.6] - 2026-08-28 (release candidate; unpublished)
 

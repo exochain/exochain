@@ -88,7 +88,7 @@ export function InternalShell({
       <div className="min-w-0">
         <div className="bg-alert-deep text-white px-6 py-2 text-xs flex items-center justify-between">
           <span className="font-semibold tracking-eyebrow uppercase">
-            Internal · alpha-testnet · redaction-on by default
+            Internal · beta mock console · redaction-on by default
           </span>
           <Link href="/" className="underline">
             Public site

@@ -23,7 +23,7 @@ import { CustodyFlowDiagram } from '@/components/diagrams/CustodyFlow';
 import { IdentityToCustodyDiagram } from '@/components/diagrams/IdentityToCustody';
 import { MechanismVsPurposeDiagram } from '@/components/diagrams/MechanismVsPurpose';
 import { ZeroPriceBanner } from '@/components/ui/ZeroPriceBanner';
-import { mockNetworkMetrics } from '@/lib/mock-data';
+import publicStatus from '@/data/public-status.json';
 
 export default function HomePage() {
   return (
@@ -32,7 +32,7 @@ export default function HomePage() {
         <div className="grid md:grid-cols-[1.2fr_1fr] gap-10 items-end">
           <div>
             <div className="mb-6 h-px w-24 bg-brand-charter" />
-            <Eyebrow>EXOCHAIN · custody-native blockchain · alpha</Eyebrow>
+            <Eyebrow>EXOCHAIN · custody-native blockchain · beta</Eyebrow>
             <H1 className="mt-4 font-light tracking-normal text-brand-vault">
               EXOCHAIN is chain-of-custody for autonomous execution.
             </H1>
@@ -57,17 +57,18 @@ export default function HomePage() {
             </div>
             <div className="mt-6 flex flex-wrap items-center gap-2 text-sm">
               <Pill tone="neutral" className="border border-brand-charter/40 bg-brand-charter/10 text-brand-vault">
-                alpha
+                beta
               </Pill>
               <Pill tone="neutral" className="border border-brand-signal/25 bg-brand-signal/10 text-brand-cerulean">
                 zero-priced launch
               </Pill>
               <span className="text-brand-midnight/65 dark:text-vellum-soft/60">
-                Network mode: {mockNetworkMetrics.networkMode} · last release{' '}
-                <span className="font-mono">
-                  {mockNetworkMetrics.lastReleaseTag}
-                </span>{' '}
-                · <Link href="/status" className="underline decoration-brand-signal/40 underline-offset-4">status</Link>
+                Published release{' '}
+                <span className="font-mono">v{publicStatus.publication.version}</span>
+                {' · spec v'}
+                {publicStatus.spec.normative_version}
+                {' · '}
+                <Link href="/status" className="underline decoration-brand-signal/40 underline-offset-4">status</Link>
               </span>
             </div>
           </div>
@@ -177,7 +178,9 @@ export default function HomePage() {
             <CardBody>
               <p className="text-sm">
                 Issue and validate AVCs. Generate trust receipts. Run a node.
-                The Rust SDK is shipping; Node and Python are on the roadmap.
+                Rust, TypeScript, and Python SDKs are published at v
+                {publicStatus.publication.version}. This site&apos;s extranet
+                console is a mock and does not issue live credentials.
               </p>
               <div className="mt-3 flex flex-wrap gap-2">
                 <LinkButton href="/developers" size="sm">

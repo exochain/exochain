@@ -38,7 +38,7 @@ export default function Page() {
       <IntPageHead
         eyebrow="Intranet · revocations"
         title="Revocation console"
-        lede="Emergency revocation pathway. Quorum + step-up MFA enforced in v0.5+."
+        lede="Emergency revocation pathway. This mock console does not enforce a live quorum."
         pills={<><StepUpRequired /><QuorumRequired /></>}
       />
       <Card className="mb-6">

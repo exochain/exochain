@@ -47,7 +47,7 @@ export default function Page() {
               header with an ML-DSA-65 signature over the raw body. Verify
               before trusting payload contents.
             </p>
-            <Pill tone="unstable" className="mt-3">v0.5</Pill>
+            <Pill tone="unstable" className="mt-3">not on this console</Pill>
           </CardBody>
         </Card>
       </div>

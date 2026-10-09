@@ -237,7 +237,7 @@ Every administrative action — extranet or intranet — writes an audit log ent
 - Three-pillar block: AVC explainer · Trust receipt explainer · Zero-priced launch settlement explainer.
 - "Blockchain is the mechanism. Chain-of-custody is the purpose." callout.
 - Three CTAs by audience: Developers · Enterprises · Validators / Researchers.
-- Status strip: alpha · network mode · last release · public status link.
+- Status strip: beta · published release · normative spec version · public status link.
 - Footer with full sitemap, legal, brand, contact.
 
 #### `/why`
@@ -323,10 +323,10 @@ Every administrative action — extranet or intranet — writes an audit log ent
 - Governance and agent-economy papers as published.
 
 #### `/status`
-- Network mode banner: `alpha · testnet · pre-release`.
-- Node count placeholder, validator count placeholder, peer count placeholder, last committed height placeholder.
-- Uptime widgets per service: gateway, node API, docs, status itself.
-- Known incidents list with severity and resolution state. **No fake green checks.** When metrics are mocked, label them `mock`.
+- Maturity banner: `beta`, not general availability.
+- Published release, normative spec version, and default-off unaudited features from `src/data/public-status.json`.
+- Same-origin `/health` and `/ready` text when those routes answer. A 404 means this Next.js process is not `exo-gateway`.
+- **No fictional network metrics.** Do not invent validator counts, peer counts, committed height, uptime percent, or incidents.
 
 #### `/blog`
 - Reverse-chron list. Posts are MDX in `/web/content/blog`.
@@ -581,7 +581,7 @@ All data fields shown to end users must be sourced from typed mocks in `/web/src
 
 ## 10. Compliance and disclosures (public copy)
 
-- "EXOCHAIN is in alpha. The protocol, APIs, governance, and economic layer are subject to change without notice."
+- "EXOCHAIN is in beta (0.x), not general availability. The public API may change between minor versions."
 - "Zero-priced launch settlement is in effect. Every active price resolves to zero with an explicit `ZeroFeeReason`. Future governance amendments may enable nonzero pricing."
 - "Statements about cryptographic assumptions reflect implemented primitives at the time of writing. See `/trust-center` for the current attestation."
 - "EXOCHAIN does not provide investment, legal, or financial advice. AVCs are operational credentials, not securities."
@@ -597,7 +597,7 @@ All data fields shown to end users must be sourced from typed mocks in `/web/src
 - Internal Intranet shell with all routes in §4.3, mock data, role-based gating enforced by middleware.
 - Design system primitives, five SVG diagrams, full nav and footer.
 - Zero-pricing language and banners wired throughout settlement views.
-- Status page with explicit `mock` labels until the live `exo-gateway` status feed is wired.
+- Status page sourced from `src/data/public-status.json`, with a same-origin gateway probe and no fictional network metrics.
 - Local-only development auth with HMAC-signed server-side cookies. Development login at `/app/login` and `/internal/login` is disabled unless `EXO_SITE_ENABLE_DEV_LOGIN=1`, `NODE_ENV=development`, and `EXO_SITE_SESSION_SECRET` is configured.
 
 ### 11.2 v0.5 — short follow-up
@@ -648,7 +648,7 @@ All data fields shown to end users must be sourced from typed mocks in `/web/src
 - All Intranet routes in §4.3 render with the environment banner and redaction defaults.
 - Five named diagrams render at all viewports without overflow.
 - Zero-pricing banner appears on every settlement-related page.
-- Status page shows `mock` labels on every numeric metric.
+- Status page shows the published release from `src/data/public-status.json` and does not invent network metrics.
 - Middleware blocks unauthenticated `/app/*` and `/internal/*` requests and redirects to the corresponding login.
 - No copy on the public site claims completed audits, regulatory approval, or production decentralization.
 - Every administrative action page shows a clear "this writes to the audit log" affordance.
@@ -656,4 +656,4 @@ All data fields shown to end users must be sourced from typed mocks in `/web/src
 
 ---
 
-*End of specification. Implementation lives in `/web` as a Next.js application.*
+*End of specification. Implementation lives in `/site` as a Next.js application. The node host serves its own `GET /status` from `crates/exo-node/src/public_status.rs`.*

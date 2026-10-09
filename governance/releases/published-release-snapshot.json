@@ -1,16 +1,16 @@
 {
   "schema_version": 1,
-  "observed_at": "2026-09-16T18:29:42Z",
-  "version": "0.2.4",
+  "observed_at": "2026-10-09T00:42:24Z",
+  "version": "0.2.7",
   "github": {
-    "release_id": 372519985,
-    "url": "https://github.com/exochain/exochain/releases/tag/v0.2.4",
-    "published_at": "2026-08-18T17:15:29Z",
+    "release_id": 400420101,
+    "url": "https://github.com/exochain/exochain/releases/tag/v0.2.7",
+    "published_at": "2026-10-08T17:28:52Z",
     "draft": false,
     "prerelease": false
   },
   "crates_io": {
-    "version": "0.2.4",
+    "version": "0.2.7",
     "packages": [
       "exochain-core",
       "exochain-dag-db-api",
@@ -47,10 +47,11 @@
     ]
   },
   "npm": {
-    "version": "0.2.4",
+    "version": "0.2.7",
     "packages": [
       "@exochain/exochain-wasm",
-      "@exochain/llm-proxy"
+      "@exochain/llm-proxy",
+      "@exochain/sdk"
     ]
   }
 }

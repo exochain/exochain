@@ -119,8 +119,12 @@ rejected by middleware and server-side session loading.
 
 ## What's mocked vs. real
 
-- **No live network calls.** All data renders from typed mocks in
-  `src/lib/mock-data.ts`. Numeric metrics are visibly labeled `mock`.
+- **Public status is repository data.** `/status` renders
+  `src/data/public-status.json` and, in the browser, the raw same-origin
+  `/health` and `/ready` bodies. It does not invent network metrics.
+- **Extranet and intranet consoles are mocks.** Those routes still render
+  typed mocks in `src/lib/mock-data.ts`. Numeric metrics there are labeled
+  `mock`.
 - **Local-only development auth.** The `exo-session` cookie is signed with
   `EXO_SITE_SESSION_SECRET`; development login fails closed unless explicitly
   enabled outside production.
@@ -198,7 +202,7 @@ acceptance criteria.
   defaults.
 - ✅ Five named diagrams render at all viewports without overflow.
 - ✅ `ZeroPriceBanner` appears on every settlement-related page.
-- ✅ Status page shows `mock` labels on every numeric metric.
+- ✅ Status page shows the published release and does not invent network metrics.
 - ✅ Middleware blocks unauthenticated `/app/*` and `/internal/*` requests
   and redirects to the corresponding login.
 - ✅ No copy on the public site claims completed audits, regulatory

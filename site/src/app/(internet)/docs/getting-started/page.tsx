@@ -29,9 +29,12 @@ export default function Page() {
       </p>
       <h2>Prerequisites</h2>
       <ul>
-        <li>Rust 1.78+ and a Cargo workspace.</li>
-        <li>An EXOCHAIN extranet account (request one at <code>/contact</code>).</li>
-        <li>An API key created from <code>/app/api-keys</code>.</li>
+        <li>Rust 1.85+ to build the workspace. CI validates with Rust 1.98.1.</li>
+        <li>
+          A published SDK: <code>cargo add exochain-sdk</code>,{' '}
+          <code>npm install @exochain/sdk</code>, or <code>pip install exochain</code>.
+        </li>
+        <li>The extranet console on this site is a mock and does not issue live API keys.</li>
       </ul>
       <h2>Install</h2>
       <p>
