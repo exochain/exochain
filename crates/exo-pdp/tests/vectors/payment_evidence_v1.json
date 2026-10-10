@@ -1,0 +1,16 @@
+{
+  "note": "canonical_cbor_hex is the domain-separated preimage {domain, evidence, schema_version}, not the evidence map alone. Raw CBOR that is not this encoding is rejected.",
+  "domain": "exo.x402.payment.evidence.v1",
+  "schema_version": 1,
+  "evidence": {
+    "asset": "USD",
+    "nonce": "n-1",
+    "payee": "did:exo:merchant",
+    "payer": "did:exo:payer",
+    "scheme": "exact",
+    "network": "internal",
+    "amount_minor": 1
+  },
+  "canonical_cbor_hex": "a366646f6d61696e781c65786f2e783430322e7061796d656e742e65766964656e63652e76316865766964656e6365a765617373657463555344656e6f6e6365636e2d31657061796565706469643a65786f3a6d65726368616e746570617965726d6469643a65786f3a706179657266736368656d65656578616374676e6574776f726b68696e7465726e616c6c616d6f756e745f6d696e6f72016e736368656d615f76657273696f6e01",
+  "blake3_hex": "fb857ab436a23e99d943117e97d39cc0f49ba4308b7e1b652a22d0bd4bd2c0ea"
+}

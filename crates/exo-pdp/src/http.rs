@@ -36,7 +36,7 @@ use crate::{
     mandate::{MandateAdapter, ProposedAction, WireMandate},
     policy::DecisionRequest,
     service::{DecideResponse, SharedPdp},
-    x402::{self, X402VerifyRequest, X402VerifyResponse},
+    x402::{self, PaymentEvidence, X402VerifyRequest, X402VerifyResponse},
 };
 
 type PersistHook =
@@ -240,6 +240,10 @@ struct DecideBody {
     #[serde(default)]
     proposed: Option<ProposedAction>,
     #[serde(default)]
+    payment_evidence: Option<PaymentEvidence>,
+    #[serde(default)]
+    payment_evidence_cbor_hex: Option<String>,
+    #[serde(default)]
     payment_evidence_hash_hex: Option<String>,
     #[serde(default)]
     now_ms: Option<u64>,
@@ -258,20 +262,12 @@ async fn handle_decide(
         merchant: mandate.merchant.clone(),
         rail: None,
     });
-    let payment_evidence_hash = match body.payment_evidence_hash_hex.as_deref() {
-        None | Some("") => None,
-        Some(raw) => {
-            let bytes = hex::decode(raw).map_err(|e| err(PdpError::BadRequest(e.to_string())))?;
-            if bytes.len() != 32 {
-                return Err(err(PdpError::BadRequest(
-                    "payment_evidence_hash_hex must be 32 bytes".into(),
-                )));
-            }
-            let mut arr = [0u8; 32];
-            arr.copy_from_slice(&bytes);
-            Some(Hash256::from_bytes(arr))
-        }
-    };
+    let payment_evidence_hash = x402::bind_payment_evidence(
+        body.payment_evidence,
+        body.payment_evidence_cbor_hex.as_deref(),
+        body.payment_evidence_hash_hex.as_deref(),
+    )
+    .map_err(err)?;
     let req = DecisionRequest {
         mandate,
         proposed,
@@ -722,7 +718,15 @@ mod tests {
                 raw_hex: None,
             },
             proposed: None,
-            payment_evidence_hash_hex: Some(hex::encode([0x11_u8; 32])),
+            payment_evidence: Some(crate::payment_evidence::sample_payment_evidence()),
+            payment_evidence_cbor_hex: None,
+            payment_evidence_hash_hex: Some(
+                crate::payment_evidence::payment_evidence_digest(
+                    &crate::payment_evidence::sample_payment_evidence(),
+                )
+                .unwrap()
+                .to_string(),
+            ),
             payment_signature_header: None,
             now_ms: Some(1),
         };
@@ -1132,5 +1136,297 @@ mod tests {
         assert_eq!(verified.0["ok"], true);
         assert_eq!(verified.0["independently_verifiable"], true);
         assert_eq!(verified.0["never_moves_money"], true);
+    }
+
+    #[derive(Clone, Copy)]
+    enum PaymentProof {
+        Zero,
+        Mismatch,
+        Matching,
+        NonCanonical,
+    }
+
+    fn delegated_wire(amount_minor: u64, amount_max: Option<u64>) -> (SharedPdp, WireMandate) {
+        let pdp = SharedPdp::ephemeral();
+        let principal = Did::new("did:exo:pay-principal").unwrap();
+        let agent = Did::new("did:exo:pay-agent").unwrap();
+        let key = KeyPair::from_secret_bytes([0x41; 32]).unwrap();
+        pdp.lock()
+            .unwrap()
+            .register_key(principal.clone(), *key.public_key());
+        let now = Timestamp::new(1, 0);
+        let principal_key = *key.public_key();
+        pdp.lock()
+            .unwrap()
+            .delegate(
+                DelegationGrant {
+                    from: &principal,
+                    to: &agent,
+                    scope: &[Permission::Spend],
+                    expires: Timestamp::new(99_000, 0),
+                    now: &now,
+                    parent_link_id: None,
+                    delegatee_kind: DelegateeKind::AiAgent {
+                        model_id: "a".into(),
+                    },
+                    delegator_public_key: &principal_key,
+                },
+                |bytes| key.sign(bytes),
+            )
+            .unwrap();
+        let caveats = amount_max
+            .map(|minor| Caveat::AmountMax {
+                minor,
+                currency: "USD".into(),
+            })
+            .into_iter()
+            .collect();
+        let mut mandate = Mandate {
+            kind: MandateKind::X402Payload,
+            principal: principal.clone(),
+            agent: agent.clone(),
+            action: "payment.settle".into(),
+            amount_minor: Some(amount_minor),
+            currency: Some("USD".into()),
+            merchant: None,
+            caveats,
+            expires: None,
+            consume_once: false,
+            signature: Signature::empty(),
+            raw_hash: Hash256::ZERO,
+        };
+        mandate.signature = key.sign(&mandate.signable_payload().unwrap());
+        let wire = WireMandate {
+            kind: mandate.kind,
+            principal: principal.to_string(),
+            agent: agent.to_string(),
+            action: mandate.action,
+            amount_minor: mandate.amount_minor,
+            currency: mandate.currency,
+            merchant: None,
+            caveats: mandate.caveats,
+            expires_ms: None,
+            consume_once: false,
+            signature_hex: hex::encode(mandate.signature.ed25519_bytes().expect("ed25519")),
+            raw_hex: None,
+        };
+        (pdp, wire)
+    }
+
+    fn verify_body(wire: WireMandate, proof: PaymentProof) -> X402VerifyRequest {
+        let evidence = crate::payment_evidence::sample_payment_evidence();
+        let digest = crate::payment_evidence::payment_evidence_digest(&evidence)
+            .unwrap()
+            .to_string();
+        let (payment_evidence, payment_evidence_cbor_hex, payment_evidence_hash_hex) = match proof {
+            PaymentProof::Zero => (Some(evidence), None, Some("00".repeat(32))),
+            PaymentProof::Mismatch => (Some(evidence), None, Some(hex::encode([0x22_u8; 32]))),
+            PaymentProof::Matching => (Some(evidence), None, Some(digest)),
+            PaymentProof::NonCanonical => (
+                None,
+                Some(hex::encode(
+                    crate::payment_evidence::noncanonical_payment_evidence_cbor(&evidence),
+                )),
+                Some(digest),
+            ),
+        };
+        X402VerifyRequest {
+            mandate: wire,
+            proposed: None,
+            payment_evidence,
+            payment_evidence_cbor_hex,
+            payment_evidence_hash_hex,
+            payment_signature_header: None,
+            now_ms: Some(2),
+        }
+    }
+
+    fn decide_body(wire: &WireMandate, proof: PaymentProof) -> serde_json::Value {
+        let evidence = crate::payment_evidence::sample_payment_evidence();
+        let digest = crate::payment_evidence::payment_evidence_digest(&evidence)
+            .unwrap()
+            .to_string();
+        match proof {
+            PaymentProof::Zero => serde_json::json!({
+                "mandate": wire,
+                "now_ms": 2,
+                "payment_evidence": evidence,
+                "payment_evidence_hash_hex": "00".repeat(32),
+            }),
+            PaymentProof::Mismatch => serde_json::json!({
+                "mandate": wire,
+                "now_ms": 2,
+                "payment_evidence": evidence,
+                "payment_evidence_hash_hex": hex::encode([0x22_u8; 32]),
+            }),
+            PaymentProof::Matching => serde_json::json!({
+                "mandate": wire,
+                "now_ms": 2,
+                "payment_evidence": evidence,
+                "payment_evidence_hash_hex": digest,
+            }),
+            PaymentProof::NonCanonical => serde_json::json!({
+                "mandate": wire,
+                "now_ms": 2,
+                "payment_evidence_cbor_hex": hex::encode(
+                    crate::payment_evidence::noncanonical_payment_evidence_cbor(&evidence)
+                ),
+                "payment_evidence_hash_hex": digest,
+            }),
+        }
+    }
+
+    async fn post_json(
+        router: Router,
+        uri: &str,
+        body: Vec<u8>,
+    ) -> (StatusCode, serde_json::Value) {
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(uri)
+                    .header("content-type", "application/json")
+                    .header("authorization", TEST_AUTHORIZATION)
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let json = response_json(response).await;
+        (status, json)
+    }
+
+    #[tokio::test]
+    async fn zero_mismatched_and_noncanonical_payment_fail_closed_on_both_paths() {
+        let (pdp, wire) = delegated_wire(1, None);
+        let router = mutation_test_router(pdp);
+        for proof in [
+            PaymentProof::Zero,
+            PaymentProof::Mismatch,
+            PaymentProof::NonCanonical,
+        ] {
+            let verify = verify_body(wire.clone(), proof);
+            let (status, json) = post_json(
+                router.clone(),
+                "/x402/verify",
+                serde_json::to_vec(&verify).unwrap(),
+            )
+            .await;
+            let needle = match proof {
+                PaymentProof::Zero => "non-zero",
+                PaymentProof::Mismatch => "does not match",
+                PaymentProof::NonCanonical => "not canonical",
+                PaymentProof::Matching => "matching proof is not a rejection",
+            };
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{json}");
+            assert!(
+                json["error"].as_str().unwrap_or("").contains(needle),
+                "{json}"
+            );
+            let decide = decide_body(&wire, proof);
+            let (status, json) = post_json(
+                router.clone(),
+                "/api/v1/authority/decide",
+                serde_json::to_vec(&decide).unwrap(),
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{json}");
+            assert!(
+                json["error"].as_str().unwrap_or("").contains(needle),
+                "{json}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn canonical_payment_hash_is_accepted_and_deny_still_outranks_it() {
+        let (allowed_pdp, allowed_wire) = delegated_wire(1, None);
+        let allowed = mutation_test_router(allowed_pdp);
+        let verify = verify_body(allowed_wire.clone(), PaymentProof::Matching);
+        let (status, json) = post_json(
+            allowed.clone(),
+            "/x402/verify",
+            serde_json::to_vec(&verify).unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["decision"], "allow");
+        assert_eq!(json["http_status"], x402::HTTP_OK);
+        assert_eq!(json["is_valid"], true);
+
+        let (status, json) = post_json(
+            allowed,
+            "/api/v1/authority/decide",
+            serde_json::to_vec(&decide_body(&allowed_wire, PaymentProof::Matching)).unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["decision"], "allow");
+
+        let (denied_pdp, denied_wire) = delegated_wire(99, Some(1));
+        let denied = mutation_test_router(denied_pdp);
+        let verify = verify_body(denied_wire.clone(), PaymentProof::Matching);
+        let (status, json) = post_json(
+            denied.clone(),
+            "/x402/verify",
+            serde_json::to_vec(&verify).unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["decision"], "deny");
+        assert_eq!(json["http_status"], x402::HTTP_FORBIDDEN);
+        assert_eq!(json["payment_outranked"], true);
+        assert_eq!(json["is_valid"], false);
+
+        let (status, json) = post_json(
+            denied,
+            "/api/v1/authority/decide",
+            serde_json::to_vec(&decide_body(&denied_wire, PaymentProof::Matching)).unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["decision"], "deny");
+        assert_eq!(json["payment_outranked"], true);
+    }
+
+    #[tokio::test]
+    async fn missing_payment_on_permitted_commercial_mandate_is_challenge() {
+        let (pdp, wire) = delegated_wire(1, None);
+        let router = mutation_test_router(pdp);
+        let body = X402VerifyRequest {
+            mandate: wire.clone(),
+            proposed: None,
+            payment_evidence: None,
+            payment_evidence_cbor_hex: None,
+            payment_evidence_hash_hex: None,
+            payment_signature_header: Some("header-only".into()),
+            now_ms: Some(2),
+        };
+        let (status, json) = post_json(
+            router.clone(),
+            "/x402/verify",
+            serde_json::to_vec(&body).unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["decision"], "challenge");
+        assert_eq!(json["http_status"], x402::HTTP_PAYMENT_REQUIRED);
+        assert_eq!(json["is_valid"], false);
+
+        let decide = serde_json::json!({
+            "mandate": wire,
+            "now_ms": 2,
+        });
+        let (status, json) = post_json(
+            router,
+            "/api/v1/authority/decide",
+            serde_json::to_vec(&decide).unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["decision"], "challenge");
+        assert_eq!(json["reason"], "payment evidence missing");
     }
 }

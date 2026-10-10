@@ -32,6 +32,7 @@ pub mod evidence;
 pub mod http;
 pub mod mandate;
 pub mod pack;
+mod payment_evidence;
 pub mod policy;
 pub mod reservation;
 pub mod revocation;
@@ -51,6 +52,8 @@ pub use revocation::{Revocation, RevocationSet, RevocationTarget};
 pub use service::{DecideOutcome, DecideResponse, PdpSnapshot, PolicyDecisionPoint, SharedPdp};
 pub use x402::{
     HEADER_PAYMENT_SIGNATURE, HTTP_FORBIDDEN, HTTP_OK, HTTP_PAYMENT_REQUIRED,
-    HTTP_PRECONDITION_REQUIRED, PAYMENT_EVIDENCE_DOMAIN, X402VerifyRequest, X402VerifyResponse,
-    is_never_paywalled_path, map_decision_to_http,
+    HTTP_PRECONDITION_REQUIRED, PAYMENT_EVIDENCE_DOMAIN, PAYMENT_EVIDENCE_SCHEMA_VERSION,
+    PaymentEvidence, X402VerifyRequest, X402VerifyResponse, bind_payment_evidence,
+    canonical_payment_evidence_cbor, is_never_paywalled_path, map_decision_to_http,
+    payment_evidence_digest, payment_evidence_from_cbor, payment_evidence_preimage,
 };

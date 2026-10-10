@@ -35,7 +35,8 @@ use crate::{
 pub struct DecisionRequest {
     pub mandate: Mandate,
     pub proposed: ProposedAction,
-    /// BLAKE3 of canonical payment evidence. Header presence is not this.
+    /// BLAKE3 of domain-separated canonical payment-evidence CBOR.
+    /// Set only from `bind_payment_evidence`. Header presence is not this.
     pub payment_evidence_hash: Option<exo_core::Hash256>,
     pub now: Timestamp,
 }
