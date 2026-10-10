@@ -50,23 +50,47 @@ v0.3.0 close, and that issue #813 stays open.
 
 The behaviors below are the v0.3.0 must-be-true list. Several already exist in
 source on `main` because 0.2.4 landed the first cut. Existence in source is not
-a v0.3.0 close. v0.3.1 implementation waits until a v0.3.0 release record
-states that each item remains true, and until #789's two-person publication
-stop has been applied to that record.
+a v0.3.0 close. Market implementation waits until a human records that each
+item holds. The proposed shape in the next section is path B (milestone 1
+inside this release). It is not adopted. #789's two-person publication stop
+still applies to any later tag.
 
 | # | v0.3.0 prerequisite | Where the first cut lives | What v0.3.1 still requires |
 | --- | --- | --- | --- |
 | P1 | Missing payment on an otherwise permitted commercial mandate is `Challenge` (HTTP 402), not `Deny` (HTTP 403) | `exo-pdp` `map_decision_to_http` | v0.3.0 close. v0.3.1 settlement reuses this mapping and must not add a second decision brain |
 | P2 | Deny still outranks a bound payment hash | `exo-pdp` verify hop | Same. A paid hash never converts Deny into Allow |
-| P3 | Payment evidence is a non-zero BLAKE3 hash of canonical CBOR. Zero hash and header-only proofs fail closed | `PAYMENT_EVIDENCE_DOMAIN` = `exo.x402.payment.evidence.v1` | Same domain. v0.3.1 does not define a second payment hash |
+| P3 | Payment evidence is a non-zero BLAKE3 hash of canonical CBOR. Zero hash and header-only proofs fail closed | `PAYMENT_EVIDENCE_DOMAIN` = `exo.x402.payment.evidence.v1`. Header-only is tested. The canonical-CBOR digest and the zero-hash test are still open; see the assessment | Milestone 1 finishes that digest in `exo-pdp`. v0.3.1 does not define a second payment hash |
 | P4 | AVC receipts can record `payment_evidence_hash` without breaking legacy signing payloads | `exo-avc` `AvcTrustReceipt` | The market evidence bundle references that hash. It does not fork the receipt |
 | P5 | #812 — `exochain-core` builds from crates.io (`ml-dsa` without default `pkcs8`) | Tracked by the v0.3.0 goal | v0.3.0 record that the condition still holds. v0.3.1 does not reopen it as new work |
 | P6 | Open x402 PRs #815 and #816 stay superseded by this stack, not merged as a second brain | v0.3.0 goal | v0.3.1 x402 profile is the same adapter |
 | P7 | #810 CGR traces stay out of the tag unless the release claims spec §19.6.1 | v0.3.0 goal | v0.3.1 does not claim spec §19.6.1 |
 | P8 | #789 two-person release approval remains a publication stop even after the code is green | Environments `release` and `release-second` | Applies to any later v0.3.0 tag and to any later v0.3.1 tag. This proposal is not that tag |
 
-Until those eight are closed as a v0.3.0 release, every v0.3.1 work item in
-[ISSUES.md](ISSUES.md) is blocked on `V030-CLOSE`.
+Until those eight hold as a recorded close, every market work item in
+[ISSUES.md](ISSUES.md) is blocked. [V030-CLOSE-ASSESSMENT.md](V030-CLOSE-ASSESSMENT.md)
+scores the eight rows against `main` at `a2667295`. Rows 1, 2, 4, 5, 6, and 8
+already hold in source and in GitHub state. Row 3 is partial. Row 7 is a
+missing release sentence. That score is an assessment. It is not the close.
+
+## Proposed release shape
+
+Bob Stewart, CEO, wrote on 2026-10-09 at 11:33 PM ET: "We have to finish 0.3.0
+or roll it up and in… the commercial lines is preparatory as we have no
+assurance partner yet." The sentence leaves both shapes open. The engineer
+recommendation in the assessment is path B. GD-031-01 stays PENDING, so this
+section is a draft structure, not an adopted plan.
+
+| Milestone | Contents | Gate |
+| --- | --- | --- |
+| 0 | This package: documents, schemas, fixtures | Review only. Closes nothing. Authorizes nothing |
+| 1 | v0.3.0 close. Finish the partial payment-evidence hash (row 3). Record that spec §19.6.1 is not claimed and that #810 stays open (row 7). Record that the other six rows already hold on `a2667295`. Leave #813 outside this milestone unless humans narrow it | A human records that the eight rows hold. Market issues stay blocked until that record exists |
+| 2 and after | Capabilities C1–C8, in the order in [DEPENDENCY-GRAPH.md](DEPENDENCY-GRAPH.md) | Milestone 1 record, plus the GD-031 signatures |
+
+Path B does not cut a separate `v0.3.0` tag. The publication cost observed on
+0.2.7 (environment `release` reviewer `mstewartbz`, environment
+`release-second` reviewer Taz or Robert, and a fragile draft upload) is paid
+once, when a later authorized release is published. Path A, a standalone
+0.3.0 tag first, repeats that publication before any market work.
 
 ## Required capabilities
 
@@ -112,6 +136,21 @@ unaudited-feature pattern as Gate 23, until the authorizing decisions and the
 v0.3.0 close both exist. This package adds no Cargo feature and no workflow.
 
 ## Non-goals for this proposal
+
+### CEO direction, 2026-10-09
+
+Bob Stewart, CEO, wrote on 2026-10-09 at 11:33 PM ET: "We have to finish 0.3.0
+or roll it up and in… the commercial lines is preparatory as we have no
+assurance partner yet."
+
+This package records that direction. It does not mark GD-031-02, GD-031-03,
+or GD-031-10 approved, and it does not fill their signature lines.
+
+Commercial settlement (C5) and financial assurance (C7) stay interfaces and
+schemas. `coverage_claim` stays the constant `none`. No assurance partner is
+named. A marketplace take-rate stays out (GD-031-02, PENDING). A second
+evidence-pack product on AVC validate stays out (GD-031-03, PENDING). The
+assurance-partner issuer stays empty (GD-031-10, PENDING).
 
 This proposal does not reverse a v0.3.0 non-goal. A reversal happens only when
 the matching record in [GOVERNANCE-DECISIONS.md](GOVERNANCE-DECISIONS.md) is

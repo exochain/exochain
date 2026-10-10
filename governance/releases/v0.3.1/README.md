@@ -42,6 +42,7 @@ do not outrank a ratified council resolution.
 | [RELEASE-EVIDENCE.md](RELEASE-EVIDENCE.md) | Evidence a future release would have to produce, and how to verify it |
 | [GOVERNANCE-DECISIONS.md](GOVERNANCE-DECISIONS.md) | Blank decision records. Every record is PENDING |
 | [PATH-CLASSIFICATION.md](PATH-CLASSIFICATION.md) | Classification of every file in this package |
+| [V030-CLOSE-ASSESSMENT.md](V030-CLOSE-ASSESSMENT.md) | Item-by-item score of the v0.3.0 goal against `main` at `a2667295`, and the path B recommendation. Not a close |
 | [specs/](specs/) | Protocol specifications |
 | [schemas/](schemas/) | Proposed JSON Schemas |
 | [test-vectors/](test-vectors/) | Proposed fixtures for a later conformance harness |
@@ -53,6 +54,9 @@ Baseline observed while writing this package:
   prerelease when viewed on 2026-10-09 (`publishedAt` `2026-10-08T17:28:52Z`,
   <https://github.com/exochain/exochain/releases/tag/v0.2.7>).
 - No `v0.3.0` tag exists in this checkout.
+- CEO direction of 2026-10-09 (commercial lines preparatory; no assurance
+  partner yet) is recorded on GD-031-02, GD-031-03, and GD-031-10. Those
+  records stay PENDING signature. `coverage_claim` stays `none`.
 - `governance/releases/published-release-snapshot.json` still records the last
   verified publication claim as v0.2.4, observed `2026-09-16T18:29:42Z`. This
   package does not amend that snapshot. A git tag is not, by itself, the

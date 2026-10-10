@@ -21,8 +21,56 @@ SPDX-License-Identifier: Apache-2.0
 **Status: PROPOSAL. Pending constitutional authorization. Not approved. Not a release. This document does not claim release readiness.**
 
 These are markdown drafts for humans to review. They are not GitHub issues.
-Do not file them, and do not start them, while `V030-CLOSE` is open or while
-any GD-031 record is PENDING.
+Do not file them. Do not start the market drafts while milestone 1 is
+unrecorded or while any GD-031 record is PENDING.
+
+## Proposed milestones
+
+[V030-CLOSE-ASSESSMENT.md](V030-CLOSE-ASSESSMENT.md) recommends path B: roll
+the v0.3.0 close into this release as gating milestone 1, and do not cut a
+separate 0.3.0 tag. That recommendation is not adopted. GD-031-01 stays
+PENDING. The two drafts below are the proposed milestone-1 scope. The 28
+market drafts stay where they are and stay blocked.
+
+| Milestone | Drafts | What "done" means |
+| --- | --- | --- |
+| 0 | This package | Documents exist. Nothing is implemented. Nothing is approved |
+| 1 | V030-M1-01, V030-M1-02 | The eight v0.3.0 rows hold, including the two that are still partial. #813 stays out unless humans narrow it |
+| 2 and after | V031-D01 through V031-G02 | Milestone 1 is recorded and the matching GD-031 record is signed |
+
+### V030-M1-01 — Payment evidence is a non-zero BLAKE3 of canonical CBOR
+
+- **Scope.** `exo-pdp` only. `parse_bound_hash` already rejects 32 zero
+  bytes on `verify` and has no test. `handle_decide` accepts those bytes as
+  `Some(Hash256::ZERO)`. Add the same rejection there. Add a function that
+  BLAKE3-hashes canonical CBOR of the payment-evidence body, including
+  `PAYMENT_EVIDENCE_DOMAIN` (`exo.x402.payment.evidence.v1`), via
+  `exo_core::hash::hash_structured`. A caller hex is evidence only when it
+  equals that digest. Header-only `PAYMENT-SIGNATURE` stays HTTP 402.
+- **Acceptance.** Zero hash fails closed on both ingresses. A non-zero hash
+  that is not the canonical digest fails closed. An unpaid permitted
+  commercial mandate stays `Decision::Challenge` and HTTP 402. Deny with a
+  matching digest stays HTTP 403.
+- **Tests.** New tests beside `header_presence_is_not_payment` and
+  `deny_outranks_valid_payment`. Existing tests
+  `missing_payment_is_challenge_when_otherwise_permitted` and
+  `valid_payment_still_denied` stay green.
+- **Dependencies.** None. This is milestone 1. No new crate.
+- **Risk.** High.
+
+### V030-M1-02 — The release record does not claim spec §19.6.1
+
+- **Scope.** One sentence in the future release record: this release does
+  not claim specification §19.6.1, and #810 stays open. No `cgr_trace`
+  producer. #813 stays outside milestone 1 unless humans narrow that issue
+  to the eight GOAL rows.
+- **Acceptance.** The sentence is in the release record. The tree gains no
+  producer for `cgr_trace/`.
+- **Tests.** A source guard can search the release record for the non-claim
+  sentence. There is no new runtime test, because the row adds no runtime.
+- **Dependencies.** None. Humans write the record. This draft does not file
+  #810 and does not close it.
+- **Risk.** Medium.
 
 Risk tiers: **Critical** (authority, payment truth, coverage truth, or
 publication), **High** (protocol correctness), **Medium** (interoperability
@@ -32,11 +80,18 @@ Every issue inherits the workspace bans: no `HashMap`/`HashSet`, no floating
 point, no `SystemTime`/`Instant` in protocol logic, no `unsafe`, no
 `unwrap`/`expect` outside tests. Hashed bodies are canonical CBOR.
 
-Count: 28 drafts. Discovery 4, negotiation 5, authority 4, execution 3,
+Count: 28 market drafts, plus milestone-1 drafts V030-M1-01 and V030-M1-02.
+Market drafts: discovery 4, negotiation 5, authority 4, execution 3,
 settlement 3, verification 5, assurance interfaces 2, AI-SDLC governance 2.
 
-Common dependency: `V030-CLOSE` plus the GD-031 record that authorizes
-implementation. Individual dependencies are additional.
+Common dependency: milestone 1 recorded (see the drafts above; the label
+`V030-CLOSE` means that record) plus the GD-031 record that authorizes
+implementation. Individual dependencies are additional. Under the proposed
+path B, commercial settlement and assurance drafts stay schemas until
+GD-031-02, GD-031-03, and GD-031-10 are signed. CEO direction on 2026-10-09
+says those commercial lines are preparatory and that there is no assurance
+partner yet, so `coverage_claim` stays `none`. That direction is not a
+signature.
 
 ## Discovery
 

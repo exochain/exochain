@@ -76,6 +76,13 @@ Engineer recommendation, not a decision: do not reverse. Party-to-party x402
 evidence stays. `exo-economy` zero-launch pricing stays. A fee requires a
 later record that states the integer basis points and the recipient.
 
+CEO direction, 2026-10-09, not a signature and not a decision: Bob Stewart,
+CEO, wrote at 11:33 PM ET, "We have to finish 0.3.0 or roll it up and in… the
+commercial lines is preparatory as we have no assurance partner yet." The
+commercial line this record covers stays preparatory. Settlement in this
+package is interfaces and schemas only. No take-rate is authorized. This
+record stays PENDING signature.
+
 ## GD-031-03 — Second evidence-pack product on AVC validate, a v0.3.0 non-goal
 
 | Field | Entry |
@@ -93,6 +100,13 @@ later record that states the integer basis points and the recipient.
 
 Engineer recommendation, not a decision: do not reverse. Confirm the
 manifest is a different object.
+
+CEO direction, 2026-10-09, not a signature and not a decision: Bob Stewart,
+CEO, wrote at 11:33 PM ET, "We have to finish 0.3.0 or roll it up and in… the
+commercial lines is preparatory as we have no assurance partner yet." The
+portable evidence bundle stays a schema and a composition manifest.
+Commercial productization of that bundle stays preparatory. This record
+stays PENDING signature.
 
 ## GD-031-04 — AACP, a v0.3.0 non-goal
 
@@ -233,6 +247,13 @@ interface stays at `coverage_claim = none` and `exochain_is_obligor = false`.
 EXOCHAIN does not become an insurer, surety, or bonding company by shipping
 the schema.
 
+CEO direction, 2026-10-09, not a signature and not a decision: Bob Stewart,
+CEO, wrote at 11:33 PM ET, "We have to finish 0.3.0 or roll it up and in… the
+commercial lines is preparatory as we have no assurance partner yet." There
+is no assurance partner yet. Assurance pieces stay interfaces and schemas
+only, with `coverage_claim` fixed to `none`. The named-issuer field stays
+empty. This record stays PENDING signature.
+
 ## GD-031-11 — Microsoft timestamp dependency
 
 | Field | Entry |
@@ -259,11 +280,11 @@ HTTP reachability of the TSA as a contract or as token validity.
 These are the blanks that block implementation. They are questions, not
 decisions.
 
-1. GD-031-01: authorize implementation only after a v0.3.0 close, or not at all.
-2. GD-031-02: confirm that market-making does not include a take-rate.
-3. GD-031-03: confirm that portable evidence is not a second product on AVC validate.
+1. GD-031-01: choose path A (tag 0.3.0 on its own) or path B (milestone 1 inside v0.3.1), or authorize neither. The assessment recommends path B. The signature line is blank.
+2. GD-031-02: confirm that market-making does not include a take-rate. CEO direction on 2026-10-09 calls the commercial lines preparatory. The signature line is blank.
+3. GD-031-03: confirm that portable evidence is not a second product on AVC validate. CEO direction on 2026-10-09 keeps that commercial line preparatory. The signature line is blank.
 4. GD-031-04, GD-031-07, GD-031-08: define AACP, CIM fiction, and Gamma, or confirm they stay undefined and unreversed.
 5. GD-031-05 and GD-031-06: confirm EXO Credits and LegalDyne branding stay out.
 6. GD-031-09: accept, edit, or replace the tier table.
-7. GD-031-10: name an assurance partner, or confirm there is none.
+7. GD-031-10: name an assurance partner, or confirm there is none. CEO direction on 2026-10-09 says there is no assurance partner yet, so `coverage_claim` stays `none`. The signature line is blank.
 8. GD-031-11: accept the public Microsoft TSA as a demonstration dependency, and supply the SPKI pin through the existing operator configuration. Do not send a private key to the repository.

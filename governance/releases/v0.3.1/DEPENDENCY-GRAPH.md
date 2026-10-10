@@ -55,6 +55,12 @@ open because [v0.3.0/GOAL.md](../v0.3.0/GOAL.md) says that cut is not a v0.3.0
 close, and because this checkout has no `v0.3.0` tag. Issue #813 remains the
 evidence-grade train named by the 0.2.4 RC and the 0.2.6 issue disposition.
 
+[V030-CLOSE-ASSESSMENT.md](V030-CLOSE-ASSESSMENT.md) scores the eight rows on
+`a2667295` and recommends path B: milestone 1 inside this release, with no
+separate 0.3.0 tag. That recommendation does not close `V030-CLOSE` and does
+not authorize the issues below. #813 stays outside milestone 1 unless humans
+narrow it.
+
 ## Crate and module graph
 
 Existing crates are solid. Proposed modules are dashed in the labels. No new

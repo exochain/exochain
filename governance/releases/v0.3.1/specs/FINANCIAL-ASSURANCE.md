@@ -53,6 +53,18 @@ may later issue a product that references these interfaces. Until that
 record is filled, no partner is authorized, and the interface still claims
 no coverage.
 
+### CEO direction, 2026-10-09
+
+Bob Stewart, CEO, wrote on 2026-10-09 at 11:33 PM ET: "We have to finish 0.3.0
+or roll it up and in… the commercial lines is preparatory as we have no
+assurance partner yet."
+
+There is no assurance partner yet. This specification stays an interface and
+a schema. `coverage_claim` stays fixed at `none`. `exochain_is_obligor` stays
+fixed at `false`. The commercial assurance line is preparatory. GD-031-10
+stays PENDING signature, and the issuer field stays empty. Recording this
+direction does not approve a partner and does not put coverage in force.
+
 ## Adapter shape
 
 An adapter is a function, specified here and not implemented, with this
