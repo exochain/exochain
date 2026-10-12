@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://exochain.io/schemas/proposal/v0.3.1/x402-settlement.schema.json",
   "title": "EXOCHAIN v0.3.1 proposed x402 verify observation",
-  "description": "PROPOSAL. Not approved. EXOCHAIN does not move money. A header is not payment.",
+  "description": "PROPOSAL. Not approved. EXOCHAIN does not move money. A header is not payment. decision, http_status, and payment_evidence_hash are one combination from the adapter table.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -16,17 +16,22 @@
     "amount_minor",
     "currency"
   ],
+  "$defs": {
+    "nonzeroHash": {
+      "type": "string",
+      "pattern": "^(?!0{64})[0-9a-f]{64}$"
+    }
+  },
   "properties": {
     "decision": { "enum": ["Allow", "Deny", "Challenge"] },
     "http_status": { "enum": [200, 402, 403] },
     "payment_evidence_hash": {
-      "type": ["string", "null"],
-      "pattern": "^[0-9a-f]{64}$"
+      "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/nonzeroHash" }]
     },
     "payment_signature_header_present": { "type": "boolean" },
     "never_moves_money": { "const": true },
-    "mandate_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-    "terms_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "mandate_hash": { "$ref": "#/$defs/nonzeroHash" },
+    "terms_hash": { "$ref": "#/$defs/nonzeroHash" },
     "amount_minor": { "type": "integer", "minimum": 0 },
     "currency": { "type": "string", "minLength": 3, "maxLength": 8 }
   },
@@ -50,6 +55,30 @@
           "http_status": { "const": 402 },
           "payment_evidence_hash": { "type": "null" }
         }
+      }
+    },
+    {
+      "if": {
+        "properties": { "decision": { "const": "Allow" } },
+        "required": ["decision"]
+      },
+      "then": {
+        "oneOf": [
+          {
+            "properties": {
+              "http_status": { "const": 200 },
+              "payment_evidence_hash": { "$ref": "#/$defs/nonzeroHash" }
+            },
+            "required": ["http_status", "payment_evidence_hash"]
+          },
+          {
+            "properties": {
+              "http_status": { "const": 402 },
+              "payment_evidence_hash": { "type": "null" }
+            },
+            "required": ["http_status", "payment_evidence_hash"]
+          }
+        ]
       }
     }
   ]

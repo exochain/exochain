@@ -45,7 +45,8 @@ the evidence directory of that run. They are not generated in this package.
 - The market feature flag is explicitly enabled for the demo process and
   off by default everywhere else.
 - TSA configuration for the Microsoft profile is present, or the script
-  stops at step 7 with a fail-closed error and does not invent a token.
+  stops at the stamp step with a fail-closed error and does not invent a
+  token.
 
 ## Steps
 
@@ -64,21 +65,31 @@ the evidence directory of that run. They are not generated in this package.
    The client submits a non-zero BLAKE3 hash of the canonical payment
    evidence bound to this mandate and terms hash. A parallel call that is
    Deny for another reason, with a hash attached, returns 403.
-5. **Receive.** Execution runs. It emits a fulfillment hash. The agent
-   receives the service payload defined by the fixture, which contains no
-   other tenant's data.
-6. **Stamp.** The node stamps the bundle hash through
+5. **Receive.** Execution runs only after the bailment is `Active`. It emits
+   a fulfillment hash. The agent receives the service payload defined by the
+   fixture, which contains no other tenant's data.
+6. **Discharge.** Threshold signatures discharge. The outcome is
+   `discharged` and carries `discharge_hash`. The transcript is retained.
+   This happens before the evidence body is hashed, so the outcome in the
+   body is the terminal outcome.
+7. **Assemble the hashed body.** Build `body` of
+   `exo.market.evidence_bundle.v1`: identity, authority, agreement, payment,
+   execution, outcome (including the discharge hash), `artifact_refs`, and
+   assurance with `coverage_claim=none`. Compute
+   `body_hash = BLAKE3(canonical_cbor("exo.market.evidence_bundle.v1", body))`.
+   `body` does not contain the timestamp token, nonce, serial, or other
+   timestamp metadata.
+8. **Stamp that preimage.** The node stamps `body_hash` through
    `POST /api/v1/avc/claims/stamp` with `hash_profile=blake3-256` and
    `kind=crosschecked.claim.v1`. The response includes an RFC 3161 token.
-7. **Bundle.** Assemble `exo.market.evidence_bundle.v1` with identity,
-   authority, agreement, payment, execution, outcome, timestamp, and
-   assurance sections. Assurance says `coverage_claim=none`.
-8. **Discharge.** Threshold signatures discharge. The transcript is
-   retained.
+   Write `timestamp` beside `body`. Recompute `body_hash` and require it to
+   equal the hash that was stamped. Attaching the token must not change it.
 9. **Second system.** A process with only the public artifact directory
-   reruns verification. It accepts the bundle. It rejects a copy with one
-   flipped bit in the payment hash, a copy with the Microsoft DID on a
-   fallback token, and a copy with `coverage_claim` set to `in_force`.
+   reruns verification. Its inputs include the committing parties' public
+   keys, the service public key, the detached signatures, the RFC 3161
+   token, and the TSA SPKI pin. It accepts the bundle. It rejects a copy
+   with one flipped bit in the payment hash, a copy with the Microsoft DID
+   on a fallback token, and a copy with `coverage_claim` set to `in_force`.
 
 ## Evidence artifacts the run must produce
 
@@ -96,17 +107,24 @@ Written to a directory named by the run id, mode 0755 for the directory and
 | `05-deny-403.json` | Deny with a hash attached |
 | `05-allow-200.json` | Allow with the bound hash |
 | `06-fulfillment.json` | Fulfillment hash and Allow evidence hash |
-| `07-rfc3161-token.b64` | Token |
-| `07-rfc3161-meta.json` | OID, serial, nonce, imprint, SPKI pin, URL, authority DID |
-| `08-evidence-bundle.json` | Interchange manifest |
-| `08-evidence-bundle.cbor` | Hash preimage |
-| `09-discharge.json` | Terminal state |
-| `10-second-verifier.txt` | Decision lines and the list of inputs it opened |
+| `07-discharge.json` | Terminal discharge, including `discharge_hash`, written before the body is hashed |
+| `08-evidence-body.cbor` | Canonical CBOR of `body` only. This is the stamp preimage's manifest bytes |
+| `08-body.blake3` | `body_hash` |
+| `09-rfc3161-token.b64` | Token attached after the stamp |
+| `09-rfc3161-meta.json` | OID, serial, nonce, imprint, SPKI pin, URL, authority DID |
+| `09-evidence-bundle.json` | Envelope: `body` plus `timestamp`. Signatures are detached |
+| `10-committing-party-public-keys.json` | Public Ed25519 keys for the parties who signed, keyed by DID |
+| `10-service-public-key.hex` | Service card signing key, public |
+| `10-second-verifier.txt` | Decision lines, the inputs it opened, and the content-scan result |
 
-`10-second-verifier.txt` includes the absolute statement that the input set
-contained no connection string, bearer token, Azure secret, or EXOCHAIN
-private key. The statement is checked by listing the directory, not by
-trusting the sentence alone.
+`10-second-verifier.txt` may say that the input set contained no connection
+string, bearer token, Azure secret, or EXOCHAIN private key only after a
+content scan of every artifact file, of the verifier process environment,
+and of the verifier argv. The scan reads bytes. A directory listing is
+recorded and is not that proof. The scan rejects PEM private-key blocks,
+`Bearer` authorization values, database URLs, and Azure client-secret
+assignments. It does not treat a public-key field as a private key. A scan
+failure fails the demonstration.
 
 ## Stop conditions
 

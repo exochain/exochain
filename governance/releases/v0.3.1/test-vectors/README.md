@@ -27,5 +27,20 @@ BLAKE3 or signature computation performed for this package. A future harness
 replaces them with digests it computes, then checks the expected decision in
 `expectations.json`.
 
-`assurance-rejects-coverage.json` is intentionally invalid under
-`financial-assurance.schema.json`.
+`expectations.json` maps each fixture to the schema file under `schemas/`
+and to an expected decision. `reject_schema` means JSON Schema validation
+fails. Every other decision means the fixture is schema-valid and the named
+decision is what a later harness checks.
+
+Intentionally invalid fixtures include `assurance-rejects-coverage.json`,
+`assurance-empty-issuer-nonzero-terms.json`,
+`assurance-named-issuer-zero-terms.json`,
+`bailment-fulfillment-bare.json`,
+`bailment-threshold-exceeds-parties.json`,
+`discovery-card-as-discovery-document.json`,
+`exochain-discovery-as-card.json`,
+`discovery-card-signed-rejected-as-projection.json`,
+`evidence-bundle-payment-bound-null.json`,
+`evidence-bundle-payment-zero-hash.json`,
+`evidence-bundle-payment-denied-with-hash.json`, and
+`x402-allow-status-mismatch.json`.

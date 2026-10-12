@@ -205,10 +205,10 @@ harness can run without a human in the loop.
 
 An independent agent discovers an EXOCHAIN-compatible commercial service,
 verifies its own authority, negotiates a multipartite bailment, completes an
-authorized x402 payment, receives the service, obtains independently verifiable
-Microsoft-timestamped evidence, and discharges the agreed obligations. A second
-independent system verifies the resulting evidence without proprietary
-privileged access.
+authorized x402 payment, receives the service, discharges the agreed
+obligations, and obtains independently verifiable Microsoft-timestamped
+evidence of that completed body. A second independent system verifies the
+resulting evidence without proprietary privileged access.
 
 | ID | Acceptance criterion | Pass condition |
 | --- | --- | --- |
@@ -218,9 +218,9 @@ privileged access.
 | AC-4 | x402 settlement | A commercial mandate with missing payment returns HTTP 402 Challenge. The same mandate after Deny returns HTTP 403 even if a payment hash is attached. A non-zero BLAKE3 payment-evidence hash is the only paid proof. `PAYMENT-SIGNATURE` alone is not paid. `POST /api/v1/avc/validate` stays unpaywalled |
 | AC-5 | Service and discharge | Execution starts only after PDP Allow and an active bailment. Discharge is a signed state transition. It does not edit the kernel |
 | AC-6 | Microsoft timestamp | The claim stamp carries an RFC 3161 token whose message imprint matches the canonical claim bytes, whose policy and authority identity are recorded, and whose signer key is pinned by SPKI shipped inside the public bundle |
-| AC-7 | Portable evidence | One canonical bundle references identity, authority, agreement, payment, execution, and outcome hashes. A tampered byte changes the bundle hash |
+| AC-7 | Portable evidence | One canonical bundle body references identity, authority, agreement, payment, execution, outcome, and `artifact_refs` hashes. A tampered body byte changes the BLAKE3 body hash. The timestamp token is outside that preimage |
 | AC-8 | Third-party interoperability | A second implementation, written against the published schemas and fixtures only, replays AC-1 through AC-7. It does not link the EXOCHAIN workspace |
-| AC-9 | Second verifier | The verifier's inputs are the public bundle, detached signatures, the RFC 3161 token, and pinned SPKI. It has no database URL, bearer token, Azure credential, or EXOCHAIN private key. It accepts the intact bundle and rejects each tamper fixture |
+| AC-9 | Second verifier | The verifier's inputs are the public bundle, detached signatures, the committing parties' and service's public keys (or DID documents carrying those keys), the RFC 3161 token, and the TSA SPKI pin. It has no database URL, bearer token, Azure credential, or EXOCHAIN private key. It accepts the intact bundle and rejects each tamper fixture |
 | AC-10 | Non-coverage | The bundle's assurance section has `coverage_claim = none` and `exochain_is_obligor = false`. Any other value fails validation |
 | AC-11 | No self-authority expansion | For every negotiated message in the transcript, the acting agent's permission set after the message is a subset of its permission set before the message. The gatekeeper context has `is_self_grant = false` on the successful path and `is_self_grant = true` on the negative fixture |
 | AC-12 | Human override preserved | The successful transcript still has `human_override_preserved = true`. A fixture that clears it is rejected by `HumanOverride` |

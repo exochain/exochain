@@ -48,17 +48,36 @@ PR.
 
 | Vector | Schema | Expected |
 | --- | --- | --- |
-| `discovery-card.json` | discovery profile | Accept. `grants_authority` is false |
-| `discovery-card-poison.json` | discovery profile | Reject. Signature key does not match the pin |
+| `discovery-card.json` | discovery profile (A2A card) | Accept. `grants_authority` is false |
+| `discovery-card-poison.json` | discovery profile | Schema-valid shape. Signature key does not match the pin |
+| `discovery-card-signing-projection.json` | signing projection | Accept. `signature_hex` is absent |
+| `discovery-card-signed-rejected-as-projection.json` | signing projection | Reject. The served card still contains `signature_hex` |
+| `exochain-discovery.json` | exochain discovery document | Accept. Canonical fields plus `commercial_services` |
+| `exochain-discovery-feature-off.json` | exochain discovery document | Accept. Canonical fields, no `commercial_services` |
+| `discovery-card-as-discovery-document.json` | exochain discovery document | Reject. A card is not `ExochainDiscoveryResponse` |
+| `exochain-discovery-as-card.json` | discovery profile (A2A card) | Reject. The discovery document is not an Agent Card |
 | `bailment-multipartite.json` | bailment negotiation | Accept as a committed transcript shape. Does not itself Allow execution |
+| `bailment-fulfillment.json` | bailment negotiation | Accept. Payload carries fulfillment and PDP evidence hashes |
+| `bailment-fulfillment-bare.json` | bailment negotiation | Reject. Fulfillment without payload |
+| `bailment-threshold-exceeds-parties.json` | bailment negotiation | Reject. `threshold` greater than the party count |
 | `self-grant-denied.json` | bailment negotiation | Authority decision Deny, invariant `no-self-grant`, HTTP 403, not 402 |
 | `x402-challenge.json` | x402 settlement | HTTP 402, hash absent |
 | `x402-deny-outranks-hash.json` | x402 settlement | HTTP 403 even though a non-zero hash is present |
+| `x402-allow-paid.json` | x402 settlement | Allow, HTTP 200, non-zero hash |
+| `x402-allow-unpaid.json` | x402 settlement | Allow, HTTP 402, null hash |
+| `x402-allow-status-mismatch.json` | x402 settlement | Reject. Allow with HTTP 403 |
 | `claim-stamp-request.json` | claim attestation | Shape only. Kind `crosschecked.claim.v1`, profile `blake3-256` |
-| `evidence-bundle-manifest.json` | evidence bundle | Accept structurally. `coverage_claim` none |
-| `assurance-interface.json` | financial assurance | Accept. Constants `none` and false |
+| `evidence-bundle-manifest.json` | evidence bundle | Accept structurally. `coverage_claim` none. Timestamp outside `body` |
+| `evidence-bundle-no-assurance.json` | evidence bundle | Accept. Assurance omitted |
+| `evidence-bundle-disputed.json` | evidence bundle | Accept. `dispute_hash` set, `discharge_hash` null |
+| `evidence-bundle-payment-bound-null.json` | evidence bundle | Reject. `bound` with a null hash |
+| `evidence-bundle-payment-zero-hash.json` | evidence bundle | Reject. All-zero payment hash |
+| `evidence-bundle-payment-denied-with-hash.json` | evidence bundle | Reject. `denied` paired with a hash |
+| `assurance-interface.json` | financial assurance | Accept. Empty issuer, zero limit, zero `terms_hash` |
 | `assurance-rejects-coverage.json` | financial assurance | Reject. `coverage_claim` is not `none` |
-| `second-verifier-public-inputs.json` | `schemas/second-verifier-inputs.schema.json` | Allowed input names only |
+| `assurance-empty-issuer-nonzero-terms.json` | financial assurance | Reject. Empty issuer with a non-zero `terms_hash` |
+| `assurance-named-issuer-zero-terms.json` | financial assurance | Reject. Named issuer with a zero `terms_hash` |
+| `second-verifier-public-inputs.json` | `schemas/second-verifier-inputs.schema.json` | Allowed input names include party and service public keys. Forbidden names stay forbidden |
 
 Negative vectors are part of conformance. A harness that only runs the happy
 path fails the plan.
@@ -85,9 +104,18 @@ System B is a separate program. Its inputs are:
 
 - the files in `schemas/` and `test-vectors/`;
 - the public bundle JSON produced by the demonstration;
-- detached signatures;
+- detached Ed25519 signatures;
+- `committing-party-public-keys.json`, the public Ed25519 keys of the
+  parties who signed the body, keyed by DID, or `did-documents.json` that
+  carry those same public keys and can be verified without a private
+  directory;
+- `service-public-key.hex`, the service card signing key;
 - the RFC 3161 token bytes;
-- the pinned SPKI bytes contained in the bundle.
+- the TSA pinned SPKI bytes contained in the bundle.
+
+The TSA SPKI verifies the CMS signature. It does not verify the Ed25519
+signatures. Those use the party and service public keys above. A DID string
+or a credential hash is not a substitute for the public key.
 
 System B's inputs exclude, and a packaging test fails if any appear:
 

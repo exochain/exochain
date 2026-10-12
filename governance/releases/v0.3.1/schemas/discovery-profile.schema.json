@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://exochain.io/schemas/proposal/v0.3.1/discovery-profile.schema.json",
   "title": "EXOCHAIN v0.3.1 proposed A2A discovery card",
-  "description": "PROPOSAL. Not approved. Discovery grants no authority.",
+  "description": "PROPOSAL. Not approved. A2A Agent Card only. Discovery grants no authority. This is not the /.well-known/exochain.json document. The signing preimage omits exochain.signature_hex; see discovery-card-signing-projection.schema.json.",
   "type": "object",
   "additionalProperties": false,
   "required": [

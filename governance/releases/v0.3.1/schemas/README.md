@@ -26,7 +26,9 @@ are rejected.
 
 | Schema | Spec |
 | --- | --- |
-| `discovery-profile.schema.json` | `specs/MCP-A2A-DISCOVERY.md` |
+| `exochain-discovery.schema.json` | `specs/MCP-A2A-DISCOVERY.md` — `/.well-known/exochain.json` (`base_url`, `routes`, `sdk`, `mcp`, optional `commercial_services`) |
+| `discovery-profile.schema.json` | `specs/MCP-A2A-DISCOVERY.md` — A2A Agent Card, including `signature_hex` |
+| `discovery-card-signing-projection.schema.json` | Same card with `signature_hex` omitted. Canonical CBOR of this object is the signing preimage |
 | `bailment-negotiation.schema.json` | `specs/BAILMENT-NEGOTIATION.md` |
 | `claim-attestation.schema.json` | `specs/CLAIM-ATTESTATION.md` |
 | `x402-settlement.schema.json` | `specs/X402-SETTLEMENT.md` |

@@ -104,8 +104,12 @@ signature.
   unaudited feature is off. When on, they name the bailment and x402 paths
   and set no permission.
 - **Tests.** Golden JSON for the feature-off document equals today's
-  canonical document. Feature-on document validates against
-  `schemas/discovery-profile.schema.json`.
+  canonical `ExochainDiscoveryResponse` and validates against
+  `schemas/exochain-discovery.schema.json`. The feature-on document is that
+  object plus `commercial_services` and validates against the same schema.
+  The A2A card validates against `schemas/discovery-profile.schema.json`.
+  A card does not validate as the discovery document, and the discovery
+  document does not validate as a card.
 - **Dependencies.** None beyond the common gate. Feature-matrix entry
   required before the feature exists.
 - **Risk.** Medium.
@@ -361,12 +365,18 @@ signature.
 
 ### V031-V04 — Canonical bundle manifest
 
-- **Scope.** `exo.market.evidence_bundle.v1` referencing existing pack,
-  legal bundle, receipt, and stamp hashes. Not returned by AVC validate.
-- **Acceptance.** Six sections plus timestamp. Zero hash is not success.
-  Tamper changes the BLAKE3 manifest hash. No secret fields.
-- **Tests.** Vector `test-vectors/evidence-bundle-manifest.json`. Route test
-  that validate's body does not contain `exo.market.evidence_bundle.v1`.
+- **Scope.** `exo.market.evidence_bundle.v1` `body.artifact_refs` stores
+  `pdp_pack_hash`, `legal_bundle_hash`, `avc_receipt_hash`, and
+  `stamp_response_hash`. Not returned by AVC validate.
+- **Acceptance.** Hashed `body` plus an outer `timestamp` that includes
+  `nonce_hex` and `serial_number_hex`. Assurance inside `body` may be
+  omitted. A disputed outcome carries `dispute_hash`. Zero hash is not
+  success. A body-byte change changes the BLAKE3 body hash. The timestamp
+  token is outside that hash. No secret fields.
+- **Tests.** Vector `test-vectors/evidence-bundle-manifest.json`,
+  `evidence-bundle-no-assurance.json`, and `evidence-bundle-disputed.json`.
+  Route test that validate's body does not contain
+  `exo.market.evidence_bundle.v1`.
 - **Dependencies.** V031-E02, V031-S02, V031-V02.
 - **Risk.** High.
 

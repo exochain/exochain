@@ -90,7 +90,7 @@ re-enters authority evaluation with a bound hash. It does not skip the PDP.
 | C2 Revocation | `exo-authority` revocation, `exo-consent` termination, `exo-avc` revocation, `exo-pdp` `RevocationSet` | One revocation check inside authority evaluation, fail closed if any set says revoked |
 | C2 Policy | `exo-pdp::PolicyDecisionPoint::decide` and `verify_before_settle` | The only Allow / Deny / Challenge producer |
 | C2 No self-grant | `exo-gatekeeper` `check_no_self_grant` when `ctx.is_self_grant` | Market ingress must set that flag when `actor == grantor` or when the requested permission set is not a subset of the pre-image set. The flag is an input the caller can forget, so the market ingress computes it. It does not trust the agent to pass `false` |
-| C3 Bilateral bailment | `exo-consent::bailment::propose` and status enum; SDK `BailmentBuilder`; MCP `exochain` consent tools | Add counteroffer as a new proposed terms hash. Commitment activates only with both signatures and a PDP Allow for the activate action |
+| C3 Bilateral bailment | `exo-consent::bailment::propose` and status enum; SDK `BailmentBuilder`; MCP `exochain` consent tools | Add counteroffer as a new proposed terms hash. The commit action is evaluated while the bailment is `Proposed` or `Countered`. Allow on that action is what activates `Active` |
 | C3 Multipartite | No party-set type. Economy `BailmentTerms` is one bailor plus a bailee policy and a beneficiary | New party map keyed by DID in a `BTreeMap`, each with a role and a signature. Threshold is an integer count of required signatures |
 | C3 Fulfillment, discharge, dispute | Not a state machine in `exo-consent`. Economy wrappers hash terms. They do not negotiate | New states in the negotiation spec. They reference hashes. They do not replace `BailmentStatus` |
 | C4 Claim stamp | `POST /api/v1/avc/claims/stamp` stamps `preimage_hash` + `hash_profile=blake3-256` + a supported `kind` with RFC 3161. It does not mint a trust receipt. Kinds today are `crosschecked.action_receipt.v2`, `crosschecked.decision.v1`, `crosschecked.claim.v1` | Reuse the hop for a new kind only after a decision. Until then, stamp `crosschecked.claim.v1` over the bundle hash. Do not add a second TSA client |
@@ -114,9 +114,17 @@ The order is the control. Skipping a step is a defect.
    actions. True forces `NoSelfGrant` and stops the pipeline.
 4. Require `human_override_preserved`. A market action that clears it fails
    `HumanOverride`.
-5. Require an active, unexpired, unrevoked bailment that covers the action
-   (`ConsentRequired`). Proposed or countered bailments do not authorize
-   execution.
+5. Apply consent to the action being evaluated.
+   - Commit (the activate action): the bailment is `Proposed` or `Countered`,
+     unexpired, and unrevoked, and the commitment threshold in
+     [specs/BAILMENT-NEGOTIATION.md](specs/BAILMENT-NEGOTIATION.md) holds.
+     Allow on this action is the transition that sets negotiation
+     `Committed` and the underlying `exo-consent` status to `Active`. An
+     already-active bailment is not a precondition of commit.
+   - Execution, fulfillment, discharge, and every later market act: require
+     an active, unexpired, unrevoked bailment that covers the action
+     (`ConsentRequired`). Proposed or countered bailments do not authorize
+     those acts.
 6. Validate the AVC. Revoked, expired, or out-of-scope credentials deny.
    `delegation_allowed` on the credential is honored. An agent with
    `delegation_allowed = false` cannot mint a child credential inside
@@ -147,7 +155,7 @@ sequenceDiagram
   Set->>Auth: verify_before_settle
   Auth-->>Exe: Allow
   Exe-->>Ver: fulfillment hash
-  Note over Ver: Public bundle, RFC 3161 token, pinned SPKI only
+  Note over Ver: Public bundle, party and service public keys, RFC 3161 token, TSA SPKI
 ```
 
 ## What each layer stores
@@ -183,7 +191,9 @@ A third party needs only:
 - the JSON Schemas and test vectors in this package;
 - the public signature algorithms already used by EXOCHAIN (Ed25519 for
   EXOCHAIN signatures, RSA as carried inside the RFC 3161 CMS token);
-- pinned SPKI bytes published inside the bundle.
+- pinned TSA SPKI bytes published inside the bundle, plus the committing
+  parties' and the service's public keys (or DID documents that carry those
+  keys).
 
 A third party does not need the workspace, a database, a bearer token, or an
 Azure subscription. That constraint is AC-8 and AC-9 in [GOAL.md](GOAL.md).

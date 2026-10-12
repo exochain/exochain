@@ -106,7 +106,7 @@ Fields, all required on the proposed schema:
 | `subject_bundle_hash` | BLAKE3 of the evidence manifest this note would attach to |
 | `limit_minor` | integer. Zero unless an authorized issuer sets it. A non-zero limit with an empty `issuer_did` is invalid |
 | `currency` | ISO-like currency code string. Not an EXO Credit |
-| `terms_hash` | hash of the partner's own terms, or 32 zero bytes only when `issuer_did` is empty. A zero hash with a non-empty issuer is invalid |
+| `terms_hash` | 32 zero bytes when `issuer_did` is empty. A non-zero hash with an empty issuer is invalid. A named issuer requires a non-zero hash. A zero hash with a non-empty issuer is invalid |
 | `statement` | the fixed sentence below |
 
 Fixed `statement` value:

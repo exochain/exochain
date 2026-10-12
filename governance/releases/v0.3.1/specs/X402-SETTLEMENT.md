@@ -38,7 +38,11 @@ true on `X402VerifyResponse`. EXOCHAIN does not settle funds.
 | Allow | no | 402 for this commercial profile |
 | Allow | yes | 200 |
 
-`map_decision_to_http` is the source of that table. A market route calls it.
+`map_decision_to_http` is the source of that table. The observation schema
+encodes the same combinations: Deny is HTTP 403; Challenge is HTTP 402 with
+a null payment hash; Allow is HTTP 200 with a non-zero payment hash, or HTTP
+402 with a null payment hash. Allow with HTTP 403, a null hash on HTTP 200,
+or an all-zero hash is invalid. A market route calls `map_decision_to_http`.
 A market route that returns 402 for a Deny is a defect.
 
 Payment evidence:

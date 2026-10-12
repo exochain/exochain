@@ -68,23 +68,35 @@ Proposed additions, default-off until authorized:
 | Method | Path | Role |
 | --- | --- | --- |
 | GET | `/.well-known/agent-card.json` | A2A Agent Card. Media type `application/json` until an authorized implementation adopts `application/a2a+json` |
-| GET | `/.well-known/exochain.json` | Same document, plus optional `commercial_services` entries that point at the card and at the bailment and x402 HTTP paths. Existing fields stay |
+| GET | `/.well-known/exochain.json` | Same `ExochainDiscoveryResponse` fields (`base_url`, `routes`, `sdk`, `mcp`), plus optional `commercial_services` entries that point at the card and at the bailment and x402 HTTP paths. Existing fields stay. A commercial entry fixes `grants_authority` to false |
+
+The two documents have two schemas. `/.well-known/exochain.json` validates
+against
+[../schemas/exochain-discovery.schema.json](../schemas/exochain-discovery.schema.json).
+The Agent Card validates against
+[../schemas/discovery-profile.schema.json](../schemas/discovery-profile.schema.json).
+The card schema requires `name` and `skills` and rejects unknown properties,
+so it cannot be the schema for the discovery document. The discovery-document
+schema rejects a card. Feature-off discovery is the canonical document with
+`commercial_services` omitted. Feature-on discovery is that document plus
+`commercial_services`.
 
 The card's preferred interface is HTTP JSON, not a private RPC. The SDK is a
 convenience over those HTTP routes. A client that speaks HTTP and verifies
 signatures interoperates without the SDK. That is acceptance criterion AC-8.
 
-Proposed card fields are in
-[../schemas/discovery-profile.schema.json](../schemas/discovery-profile.schema.json).
-Minimum contents:
+Minimum card contents:
 
 - `name`, `description`, `version` of the service descriptor;
 - `supported_interfaces[0]` with `url`, `protocol_binding = HTTP+JSON`, and
   `protocol_version`;
 - `skills` whose ids point at negotiation, authority, settlement, and
   verification HTTP paths;
-- `exochain` extension object: service DID, signing key id, schema URI,
-  `grants_authority: false`, and the hash of the canonical card bytes.
+- `exochain` extension object: service DID, Ed25519 public key
+  (`signing_key_hex`), schema URI `exo.market.discovery.card.v1`, and
+  `signature_hex` on the served card. `grants_authority` is false. The
+  signature is over the unsigned projection, not over a document that
+  already contains `signature_hex`.
 
 A2A task methods (`SendMessage`, `GetTask`, and the rest) are not part of
 this profile. Negotiation is the bailment protocol. Using A2A tasks as a
@@ -122,10 +134,27 @@ endpoint. The proxy does not become the discovery protocol.
 
 ## Signing
 
-The service signs the canonical CBOR of the card under domain
-`exo.market.discovery.card.v1`. The JSON document carries the hex signature
-and the signer DID. Verification uses the service's already published Ed25519
-key. A card that arrives with a new key and no prior pin is untrusted. Key
+The served card and the signed bytes are different objects.
+
+The signing projection is the card with `exochain.signature_hex` removed and
+with no other field removed. Its schema is
+[../schemas/discovery-card-signing-projection.schema.json](../schemas/discovery-card-signing-projection.schema.json).
+`additionalProperties` is false there, so a projection that still contains
+`signature_hex` is invalid. The served card schema requires `signature_hex`.
+
+```text
+domain = "exo.market.discovery.card.v1"
+preimage = canonical_cbor(domain, projection)
+signature = Ed25519(service_private_key, preimage)
+```
+
+The JSON document that clients GET carries `signature_hex` and
+`signing_key_hex`. A verifier rebuilds the projection by deleting
+`exochain.signature_hex`, checks that `signing_key_hex` equals the pinned
+public key for `service_did`, and verifies `signature_hex` over
+`canonical_cbor(domain, projection)`. The signature does not cover itself.
+
+A card that arrives with a new key and no prior pin is untrusted. Key
 rotation is an authority-evaluation event, not a discovery event.
 
 ## Failure behavior

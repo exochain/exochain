@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://exochain.io/schemas/proposal/v0.3.1/financial-assurance.schema.json",
   "title": "EXOCHAIN v0.3.1 financial-assurance interface",
-  "description": "PROPOSAL. Interface only. EXOCHAIN does not provide insurance, surety, or bonding. This schema is not coverage.",
+  "description": "PROPOSAL. Interface only. EXOCHAIN does not provide insurance, surety, or bonding. This schema is not coverage. An empty issuer requires a zero limit and a zero terms_hash. A named issuer requires a non-zero terms_hash.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -24,8 +24,13 @@
     "instrument_family": {
       "enum": ["surety", "insurance", "bonding", "reinsurance", "unspecified"]
     },
-    "issuer_did": { "type": "string" },
-    "subject_bundle_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "issuer_did": {
+      "oneOf": [
+        { "const": "" },
+        { "type": "string", "pattern": "^did:exo:[A-Za-z0-9._:-]+$" }
+      ]
+    },
+    "subject_bundle_hash": { "type": "string", "pattern": "^(?!0{64})[0-9a-f]{64}$" },
     "limit_minor": { "type": "integer", "minimum": 0 },
     "currency": { "type": "string", "minLength": 3, "maxLength": 8 },
     "terms_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
@@ -40,7 +45,25 @@
         "required": ["issuer_did"]
       },
       "then": {
-        "properties": { "limit_minor": { "const": 0 } }
+        "properties": {
+          "limit_minor": { "const": 0 },
+          "terms_hash": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "issuer_did": { "type": "string", "minLength": 1 }
+        },
+        "required": ["issuer_did"]
+      },
+      "then": {
+        "properties": {
+          "terms_hash": { "pattern": "^(?!0{64})[0-9a-f]{64}$" }
+        }
       }
     }
   ]

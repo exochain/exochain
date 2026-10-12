@@ -3,6 +3,9 @@
     "evidence-bundle.json",
     "evidence-bundle.cbor",
     "detached-signatures",
+    "committing-party-public-keys.json",
+    "service-public-key.hex",
+    "did-documents.json",
     "rfc3161-token.der",
     "spki-pin.hex"
   ],

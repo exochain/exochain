@@ -141,30 +141,44 @@ hold that authority by adding it.
 `Committed` requires:
 
 - signatures from at least `threshold` distinct party DIDs;
-- `threshold` is an integer, at least 2, at most the party count;
+- `threshold` is an integer, at least 2, at most `parties.length`;
+- the interchange schema encodes that bound for party sets of length 2
+  through 16 and rejects a longer party set;
+- witnesses do not count toward the threshold unless the terms list them as
+  required. That exclusion is an authority-evaluation check. The schema
+  bound is the numeric ceiling;
 - every required `bailor` and `bailee` has signed the current `terms_hash`;
 - authority evaluation Allow for the commit action;
 - no revocation in any of consent, AVC, authority chain, or PDP revocation
   set at the caller-supplied `now`.
 
+`proposal`, `counteroffer`, `commit`, `reject`, and `revoke` carry no
+`payload`. A `payload` on those kinds is invalid. `fulfillment`, `dispute`,
+and `discharge` require `payload`, and each kind has its own fields. A
+terms-only object is not a fulfillment.
+
 ### Fulfillment
 
-Emitted by execution, not by negotiation acting alone. It records the
-fulfillment hash and the PDP evidence hash that Allowed the execution.
-Negotiation stores the message. It does not decide Allow.
+Emitted by execution, not by negotiation acting alone. `payload` is
+`fulfillment_hash` and `pdp_evidence_hash`, both non-zero. Negotiation stores
+the message. It does not decide Allow.
 
 ### Discharge
 
-Signed by the threshold after fulfillment. Discharge terms may narrow
-remaining obligations. They may not create a new payment obligation that
-bypasses x402. A further payment is a new commercial mandate.
+Signed by the threshold after fulfillment. `payload` is the
+`fulfillment_hash` being discharged and `obligation_narrowing_hash`. The
+narrowing hash is null when remaining obligations are unchanged, and a
+non-zero hash when they are narrowed. Discharge terms may narrow remaining
+obligations. They may not create a new payment obligation that bypasses
+x402. A further payment is a new commercial mandate.
 
 ### Dispute
 
 May be opened only by a party, only before discharge, only before the
-caller-supplied dispute deadline in the terms. A dispute names a reason code
-from a closed set: `non_delivery`, `defective_delivery`, `unauthorized_act`,
-`amount_mismatch`. Free-text evidence is hashed, not stored as authority.
+caller-supplied dispute deadline in the terms. `payload.reason` is one of
+`non_delivery`, `defective_delivery`, `unauthorized_act`,
+`amount_mismatch`. `payload.evidence_hash` is the non-zero hash of the
+free-text evidence. The text is not stored as authority.
 
 Griefing bounds, which authority evaluation enforces:
 

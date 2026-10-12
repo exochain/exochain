@@ -35,8 +35,21 @@ This manifest honors that non-goal.
 | `POST /api/v1/avc/claims/stamp` | RFC 3161 over a hash. Does not mint a receipt | Stores the stamp response fields |
 | `POST /api/v1/avc/validate` | Free validation | Unchanged. Does not return this manifest |
 
-The manifest's domain is `exo.market.evidence_bundle.v1`. Its hash is BLAKE3
-over canonical CBOR of the manifest with the signature slots omitted.
+The interchange document is an envelope. `body` is the hashed manifest.
+`timestamp` sits beside `body` and is not part of the hash. Detached
+signatures sit beside both and are not part of the hash.
+
+```text
+domain = "exo.market.evidence_bundle.v1"
+body_hash = BLAKE3(canonical_cbor(domain, body))
+```
+
+The stamp hop receives `body_hash` as `preimage_hash`. The RFC 3161 imprint
+is over the stamp hop's own canonical claim bytes for that hash, which is
+the existing `claims/stamp` behavior. The token, nonce, serial, policy, and
+the rest of `timestamp` are written into the envelope after the TSA returns.
+Adding them does not change `body_hash`. A verifier recomputes `body_hash`
+from `body` and checks the imprint against that hash.
 
 ## Sections
 
@@ -51,20 +64,36 @@ success. The zero hash is never a successful reference.
 | Agreement | Bailment transcript id, committed terms hash, party DID list | Never |
 | Payment | `payment_evidence_hash` or reason `not_commercial` / `challenge_open` / `denied` | A non-commercial Allow may use `not_commercial`. A 200 commercial Allow must carry the non-zero hash |
 | Execution | Fulfillment hash or reason `not_executed` | Deny and open Challenge use `not_executed` |
-| Outcome | Discharge hash, dispute hash, or reason `open` | Discharge demonstration uses the discharge hash |
+| Outcome | `reason = discharged` with a non-zero `discharge_hash` and `dispute_hash` null; `reason = disputed` with a non-zero `dispute_hash` and `discharge_hash` null; or `reason = open` with both hashes null | Discharge demonstration uses the discharge hash. A disputed outcome names the dispute hash |
+| Artifact references | `artifact_refs.pdp_pack_hash` (required, non-zero), plus `legal_bundle_hash`, `avc_receipt_hash`, and `stamp_response_hash` (each a non-zero hash or null when that artifact was not produced) | The PDP pack hash is always present on a market bundle. The other three are null only when that artifact does not exist |
 
-Timestamp section, alongside the six:
+`artifact_refs` is how the manifest points at the existing PDP pack, the
+legal bundle, the AVC receipt, and the stamp response. Those objects stay
+in their own stores. The manifest stores the hashes.
 
-- `proof_kind`: `Rfc3161` when attested;
-- token base64, imprint, policy OID, serial, nonce, authority DID;
+Payment `reason = bound` requires a non-zero `payment_evidence_hash`. Reasons
+`not_commercial`, `challenge_open`, and `denied` require that hash to be
+null. A zero hash is not a bound payment. A non-null hash paired with
+`denied` is invalid. Execution uses the same shape: `fulfilled` with a
+non-zero hash, or `not_executed` with null.
+
+Timestamp section, outside `body`:
+
+- `proof_kind`: `Rfc3161`;
+- token base64, SHA-256 imprint, policy OID, `serial_number_hex`,
+  `nonce_hex`, authority DID;
 - pinned SPKI hex;
 - `tsa_url` actually used.
 
-Assurance section, when present, obeys
-[FINANCIAL-ASSURANCE.md](FINANCIAL-ASSURANCE.md). Omission means no assurance
-interface was requested. Omission does not mean coverage. The minimum
-demonstration includes the section with `coverage_claim = none` so a
-verifier can see the non-claim.
+`nonce_hex` and `serial_number_hex` are required. A timestamp object without
+them is not RFC 3161 evidence for this profile.
+
+Assurance, inside `body` when present, obeys
+[FINANCIAL-ASSURANCE.md](FINANCIAL-ASSURANCE.md). The field is optional.
+Omission means no assurance interface was requested. Omission does not mean
+coverage. The minimum demonstration includes the section with
+`coverage_claim = none` so a verifier can see the non-claim. A bundle that
+omits the section still validates.
 
 ## Portability
 
@@ -83,7 +112,8 @@ They do not create new authority.
 
 ## Tamper
 
-Changing any referenced hash, the token, a party DID, or the decision enum
-changes the manifest hash. The second verifier rejects the signature and
-rejects the imprint match. There is no repair path inside verification.
-Repair is a new transcript.
+Changing any byte of `body` changes `body_hash`. The second verifier rejects
+the detached signatures and rejects the imprint match. Changing the token,
+nonce, serial, or other `timestamp` field leaves `body_hash` the same and
+fails timestamp verification instead. There is no repair path inside
+verification. Repair is a new transcript.

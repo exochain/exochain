@@ -84,9 +84,13 @@ account.
    the imprint algorithm is not SHA-256, the nonce does not match the
    request nonce derived under `exo.avc.rfc3161.nonce.v1`, or the policy OID
    differs from the bundle.
-3. Verify the CMS signature under the pinned SPKI using the RSA algorithm
-   the token names (`sha256WithRSAEncryption`, `sha384WithRSAEncryption`, or
-   `sha512WithRSAEncryption`, matching the verifier in `avc_rfc3161`).
+3. Verify the CMS signature under the pinned SPKI. `verify_cms_signature`
+   in `crates/exo-node/src/avc_rfc3161.rs` accepts a CMS signer only when the
+   digest algorithm is SHA-256 and the signature algorithm is
+   `sha256WithRSAEncryption` or `rsaEncryption`. SHA-384 and SHA-512 are not
+   CMS signer algorithms for this profile. A token that names them fails
+   closed, including at a second implementation. Certificate-chain signature
+   algorithms elsewhere in that file are not the CMS token signature.
 4. Check the certificate's extended key usage includes the timestamping
    purpose (`1.3.6.1.5.5.7.3.8`) when the token carries that certificate.
 5. Record the TSA generalized time as evidence. Do not replace HLC ordering
