@@ -1,0 +1,18 @@
+
+  :root {
+    --bg: #0a0e17; --surface: #111827; --border: #1e293b;
+    --text: #e2e8f0; --text-dim: #94a3b8; --accent: #38bdf8;
+    --mono: 'SF Mono', 'Fira Code', ui-monospace, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans); line-height: 1.5; }
+  main { max-width: 880px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+  h1 { font-size: 1.75rem; font-weight: 650; letter-spacing: -0.02em; }
+  h2 { margin-top: 2rem; font-size: 1.05rem; }
+  a { color: var(--accent); }
+  code, pre { font-family: var(--mono); }
+  pre { white-space: pre-wrap; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1rem; }
+  ul { padding-left: 1.2rem; }
+  li { margin: 0.4rem 0; }
+  .dim { color: var(--text-dim); }

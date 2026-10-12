@@ -109,6 +109,7 @@ const STRICT_TRANSPORT_SECURITY_VALUE: &str = "max-age=63072000; includeSubDomai
 const CONTENT_SECURITY_POLICY_VALUE: &str =
     "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
 const CONTENT_SECURITY_POLICY_DASHBOARD_VALUE: &str = "default-src 'none'; style-src 'self' 'sha256-ZDDfCKNMflVt9qZTlgUze2dLGpfks/qtzWrtNola/68='; script-src 'self' 'sha256-wqJx2WnF4s7cGuMU+qEdtcl5ls/KZFFMvWf6rcHbxtc='; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
+const CONTENT_SECURITY_POLICY_STATUS_VALUE: &str = "default-src 'none'; style-src 'self' 'sha256-ZskrPH6EZNDWVgqwy55jYQ1VRKazdFw/vnPOnDXiRKQ='; script-src 'self' 'sha256-NRxqtXTpx0slTcHQta7bakB2cjJgqKERdfEZv1MQOJ8='; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
 const PERMISSIONS_POLICY_VALUE: &str = "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()";
 const PROMETHEUS_TEXT_CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
 const LAYOUT_TEMPLATE_MAX_ID_BYTES: usize = 128;
@@ -4138,10 +4139,10 @@ async fn attach_gateway_security_headers(request: Request<Body>, next: Next) -> 
     let path = request.uri().path().to_owned();
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
-    let content_security_policy = if path == "/" {
-        CONTENT_SECURITY_POLICY_DASHBOARD_VALUE
-    } else {
-        CONTENT_SECURITY_POLICY_VALUE
+    let content_security_policy = match path.as_str() {
+        "/" => CONTENT_SECURITY_POLICY_DASHBOARD_VALUE,
+        "/status" => CONTENT_SECURITY_POLICY_STATUS_VALUE,
+        _ => CONTENT_SECURITY_POLICY_VALUE,
     };
 
     insert_static_response_header(headers, "x-content-type-options", "nosniff");
@@ -5203,6 +5204,12 @@ mod tests {
         let style = inline_block(&dashboard_html, "<style>", "</style>");
         let script = inline_block(&dashboard_html, "<script>", "</script>");
         (csp_sha256_hash(&style), csp_sha256_hash(&script))
+    }
+
+    fn status_inline_asset_hashes() -> (String, String) {
+        let style = include_str!("../../exo-node/src/public_status.css");
+        let script = include_str!("../../exo-node/src/public_status.js");
+        (csp_sha256_hash(style), csp_sha256_hash(script))
     }
 
     fn rate_limited_state(
@@ -6279,6 +6286,50 @@ mod tests {
         assert!(
             CONTENT_SECURITY_POLICY_DASHBOARD_VALUE.contains(&format!("'{script_hash}'")),
             "dashboard CSP must contain current script hash {script_hash}"
+        );
+    }
+
+    #[tokio::test]
+    async fn gateway_status_path_allows_status_assets_csp() {
+        let app = build_router_with_extra_routes(
+            state(),
+            Some(Router::new().route("/status", get(probe))),
+        );
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/status")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let headers = resp.headers();
+        assert_eq!(
+            headers
+                .get("content-security-policy")
+                .and_then(|value| value.to_str().ok()),
+            Some(CONTENT_SECURITY_POLICY_STATUS_VALUE)
+        );
+        let (style_hash, script_hash) = status_inline_asset_hashes();
+        assert!(
+            CONTENT_SECURITY_POLICY_STATUS_VALUE.contains(&format!("'{style_hash}'")),
+            "status CSP must contain current style hash {style_hash}"
+        );
+        assert!(
+            CONTENT_SECURITY_POLICY_STATUS_VALUE.contains(&format!("'{script_hash}'")),
+            "status CSP must contain current script hash {script_hash}"
+        );
+        assert!(
+            CONTENT_SECURITY_POLICY_STATUS_VALUE.contains("connect-src 'self'"),
+            "status CSP must allow same-origin health probes"
+        );
+        assert!(
+            !CONTENT_SECURITY_POLICY_VALUE.contains(&style_hash),
+            "default CSP must not inherit the status style hash"
         );
     }
 

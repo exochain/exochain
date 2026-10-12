@@ -23,9 +23,10 @@ import { CustodyFlowDiagram } from '@/components/diagrams/CustodyFlow';
 import { IdentityToCustodyDiagram } from '@/components/diagrams/IdentityToCustody';
 import { MechanismVsPurposeDiagram } from '@/components/diagrams/MechanismVsPurpose';
 import { ZeroPriceBanner } from '@/components/ui/ZeroPriceBanner';
-import publicStatus from '@/data/public-status.json';
+import { loadPublicStatus } from '@/lib/public-status';
 
 export default function HomePage() {
+  const publicStatus = loadPublicStatus();
   return (
     <>
       <Section className="pt-16 md:pt-24 pb-12">

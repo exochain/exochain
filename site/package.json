@@ -12,7 +12,8 @@
     "security:auth-boundary": "node scripts/test-auth-boundary-policy.mjs",
     "security:contact-intake": "node scripts/test-contact-intake-policy.mjs",
     "security:contact-disclosure": "node scripts/assert-no-contact-submission-disclosure.mjs",
-    "security:lynk-public-claims": "node scripts/test-lynk-public-claims.mjs"
+    "security:lynk-public-claims": "node scripts/test-lynk-public-claims.mjs",
+    "security:status-probe": "node scripts/test-status-probe-policy.mjs"
   },
   "dependencies": {
     "next": "^14.2.35",

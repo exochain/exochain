@@ -16,14 +16,18 @@
 
 //! Public `GET /status` page for the node host.
 //!
-//! Facts come from `site/src/data/public-status.json`, which is checked
-//! against the workspace version and the publication snapshot. Live
-//! `/health` and `/ready` bodies are rendered as text from those responses.
+//! Facts, stylesheet, and probe script live inside this crate so
+//! `cargo package` can compile the binary. The site reads the same JSON.
+//! Publication fields match the last observed release snapshot. The
+//! compiled binary version is rendered separately and may move ahead of
+//! that snapshot. Live `/health` and `/ready` bodies are rendered as text.
 
 use axum::{Json, Router, http::StatusCode, response::Html, routing::get};
 use serde::Deserialize;
 
-const STATUS_FACTS_JSON: &str = include_str!("../../../site/src/data/public-status.json");
+const STATUS_FACTS_JSON: &str = include_str!("public-status.json");
+const STATUS_STYLE: &str = include_str!("public_status.css");
+const STATUS_SCRIPT: &str = include_str!("public_status.js");
 
 #[derive(Debug, Deserialize)]
 struct StatusFacts {
@@ -153,25 +157,7 @@ fn render_html(facts: &StatusFacts) -> String {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>EXOCHAIN status</title>
-<style>
-  :root {{
-    --bg: #0a0e17; --surface: #111827; --border: #1e293b;
-    --text: #e2e8f0; --text-dim: #94a3b8; --accent: #38bdf8;
-    --mono: 'SF Mono', 'Fira Code', ui-monospace, monospace;
-    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  }}
-  * {{ box-sizing: border-box; }}
-  body {{ margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans); line-height: 1.5; }}
-  main {{ max-width: 880px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }}
-  h1 {{ font-size: 1.75rem; font-weight: 650; letter-spacing: -0.02em; }}
-  h2 {{ margin-top: 2rem; font-size: 1.05rem; }}
-  a {{ color: var(--accent); }}
-  code, pre {{ font-family: var(--mono); }}
-  pre {{ white-space: pre-wrap; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1rem; }}
-  ul {{ padding-left: 1.2rem; }}
-  li {{ margin: 0.4rem 0; }}
-  .dim {{ color: var(--text-dim); }}
-</style>
+<style>{style}</style>
 </head>
 <body>
 <main>
@@ -206,23 +192,7 @@ fn render_html(facts: &StatusFacts) -> String {
   <p class="dim"><code>{gap_path}</code> header amended {gap_amended}; that header records {gap_release}.</p>
   <p><a href="/">Node dashboard</a> · <a href="/health">/health</a> · <a href="/ready">/ready</a> · <a href="https://github.com/exochain/exochain">GitHub</a></p>
 </main>
-<script>
-(function() {{
-  'use strict';
-  async function show(path, elementId) {{
-    var el = document.getElementById(elementId);
-    try {{
-      var resp = await fetch(path);
-      var body = await resp.text();
-      el.textContent = 'HTTP ' + resp.status + '\n' + body;
-    }} catch (err) {{
-      el.textContent = 'unreachable: ' + (err && err.message ? err.message : 'fetch failed');
-    }}
-  }}
-  show('/health', 'health-probe');
-  show('/ready', 'ready-probe');
-}})();
-</script>
+<script>{script}</script>
 </body>
 </html>
 "#,
@@ -248,6 +218,8 @@ fn render_html(facts: &StatusFacts) -> String {
         gap_path = escape_html(&facts.gap_registry.path),
         gap_amended = escape_html(&facts.gap_registry.header_amended),
         gap_release = escape_html(&facts.gap_registry.header_records_release),
+        style = STATUS_STYLE,
+        script = STATUS_SCRIPT,
     )
 }
 
@@ -281,9 +253,8 @@ mod tests {
     }
 
     #[test]
-    fn status_facts_match_workspace_version_and_publication_snapshot() {
+    fn status_facts_match_last_observed_publication_snapshot() {
         let parsed = facts();
-        assert_eq!(parsed.publication.version, env!("CARGO_PKG_VERSION"));
         assert_eq!(parsed.maturity, "beta");
         assert!(!parsed.publication.runtime_deployment_claimed);
         assert_eq!(parsed.spec.normative_version, "2.2");
@@ -377,11 +348,28 @@ mod tests {
         assert!(html.contains("libexo_*.rlib"));
         assert!(html.contains("Runtime deployment claimed by that release"));
         assert!(html.contains("textContent"));
+        assert!(html.contains("AbortController"));
+        assert!(html.contains(&format!("<style>{STATUS_STYLE}</style>")));
+        assert!(html.contains(&format!("<script>{STATUS_SCRIPT}</script>")));
+        assert!(html.contains(&format!(
+            "Binary version compiled into this page: <code>v{}</code>",
+            env!("CARGO_PKG_VERSION")
+        )));
+        assert!(html.contains(&format!(
+            "Reviewed publication snapshot version <code>v{}</code>",
+            facts().publication.version
+        )));
         assert!(!html.contains("innerHTML"));
         assert!(!html.contains("v0.4.2"));
         assert!(!html.contains("alpha-testnet"));
         assert!(!html.contains("99.86"));
         assert!(html.contains("id=\"health-probe\""));
         assert!(html.contains("id=\"ready-probe\""));
+        let packaged_facts =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/public-status.json");
+        assert!(
+            packaged_facts.is_file(),
+            "status facts must live inside the exochain-node package"
+        );
     }
 }

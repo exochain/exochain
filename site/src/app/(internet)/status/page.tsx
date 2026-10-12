@@ -17,11 +17,12 @@
 import { Section, Eyebrow, H1, H2, Lede } from '@/components/ui/Section';
 import { Pill } from '@/components/ui/Pill';
 import { LiveGatewayProbe } from '@/components/status/LiveGatewayProbe';
-import publicStatus from '@/data/public-status.json';
+import { loadPublicStatus } from '@/lib/public-status';
 
 export const metadata = { title: 'Status' };
 
 export default function Page() {
+  const publicStatus = loadPublicStatus();
   const release = publicStatus.publication;
   return (
     <>

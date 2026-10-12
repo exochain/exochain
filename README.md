@@ -48,7 +48,7 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 
 `0.2.7` is a published **beta** library release, not general availability. While the version is `0.x`, the public API may change between minor versions. The normative specification is **v2.2** (`EXOCHAIN_Specification_v2.2.pdf`, [ADR-001](docs/adr/ADR-001-authority-of-text.md)). `EXOCHAIN-FABRIC-PLATFORM.md` is the v2.1 engineering elaboration and is subordinate to that specification. This repository does not contain a v2.3 specification.
 
-The `v0.2.7` GitHub Release states that each native archive contains 29 legacy `libexo_*.rlib` libraries, not server executables, and it claims no runtime deployment. Default-off `unaudited-*` features, plus `conformance-test-root`, are the current source boundary for unaudited surfaces. `GAP-REGISTRY.md` remains the gap ledger; its header still records the 2026-07-02 `v0.2.0-beta` snapshot and is not the 0.2.7 publication record. Public status is rendered from `site/src/data/public-status.json` at `/status` on the website and on the node.
+The `v0.2.7` GitHub Release states that each native archive contains 29 legacy `libexo_*.rlib` libraries, not server executables, and it claims no runtime deployment. Default-off `unaudited-*` features, plus `conformance-test-root`, are the current source boundary for unaudited surfaces. `GAP-REGISTRY.md` remains the gap ledger; its header still records the 2026-07-02 `v0.2.0-beta` snapshot and is not the 0.2.7 publication record. Public status is rendered from `crates/exo-node/src/public-status.json` at `/status` on the website and on the node.
 
 ### What is verified today
 

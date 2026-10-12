@@ -17,7 +17,7 @@
 import Link from 'next/link';
 import { Logo } from './Logo';
 import { Pill } from '../ui/Pill';
-import publicStatus from '@/data/public-status.json';
+import { loadPublicStatus } from '@/lib/public-status';
 
 const cols = [
   {
@@ -64,6 +64,7 @@ const cols = [
 ];
 
 export function PublicFooter() {
+  const publicStatus = loadPublicStatus();
   return (
     <footer className="mt-24 border-t hairline">
       <div className="max-w-page mx-auto px-6 md:px-10 py-12 grid gap-10 md:grid-cols-5">
