@@ -29,7 +29,13 @@
 //! Raw CBOR is rejected unless it is byte-identical to that encoding.
 //! A non-minimal integer, a reordered map, or trailing bytes is a
 //! different preimage. Normalizing those bytes would record a hash of
-//! an encoding the caller did not present.
+//! an encoding the caller did not present. The wire encoding is the
+//! evidence map alone; the domain-separated preimage is not accepted
+//! as `payment_evidence_cbor_hex`.
+//!
+//! A consistent evidence/hash pair is payment only when it names the
+//! requested transaction: `amount_minor`, asset (proposed currency),
+//! payee (proposed merchant), and payer (mandate principal).
 
 use exo_core::{
     Hash256,
@@ -37,7 +43,10 @@ use exo_core::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::error::{PdpError, Result};
+use crate::{
+    error::{PdpError, Result},
+    mandate::ProposedAction,
+};
 
 /// Domain bound into every payment-evidence digest.
 pub const PAYMENT_EVIDENCE_DOMAIN: &str = "exo.x402.payment.evidence.v1";
@@ -58,6 +67,32 @@ pub struct PaymentEvidence {
     pub scheme: String,
     pub network: String,
     pub amount_minor: u64,
+}
+
+/// Requested transaction that payment evidence must name.
+///
+/// Amount, asset, and payee come from the proposed action. Payer is the
+/// mandate principal. Absent amount, asset, or payee fails closed once
+/// evidence is present.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PaymentTransactionContext<'a> {
+    pub amount_minor: Option<u64>,
+    pub asset: Option<&'a str>,
+    pub payee: Option<&'a str>,
+    pub payer: &'a str,
+}
+
+impl<'a> PaymentTransactionContext<'a> {
+    /// Context for the action the PDP is about to adjudicate.
+    #[must_use]
+    pub fn from_proposed(proposed: &'a ProposedAction, payer: &'a str) -> Self {
+        Self {
+            amount_minor: proposed.amount_minor,
+            asset: proposed.currency.as_deref(),
+            payee: proposed.merchant.as_deref(),
+            payer,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -144,11 +179,16 @@ pub fn payment_evidence_from_cbor(bytes: &[u8]) -> Result<PaymentEvidence> {
     Ok(evidence)
 }
 
-/// Bind a caller hash to evidence this verifier can see.
+/// Bind a caller hash to evidence this verifier can see, and to `transaction`.
 ///
 /// `Ok(None)` means no payment was presented. A hash without evidence,
-/// evidence without its hash, a zero hash, a mismatched hash, or
-/// non-canonical CBOR is [`PdpError::BadRequest`].
+/// evidence without its hash, a zero hash, a mismatched hash,
+/// non-canonical CBOR, or evidence for a different transaction is
+/// [`PdpError::BadRequest`].
+///
+/// The transaction check runs only after the evidence/hash pair matches.
+/// Evidence must equal the proposed amount, currency (`asset`), and
+/// merchant (`payee`), and the mandate principal (`payer`).
 ///
 /// # Errors
 ///
@@ -158,6 +198,7 @@ pub fn bind_payment_evidence(
     evidence: Option<PaymentEvidence>,
     evidence_cbor_hex: Option<&str>,
     claimed_hash_hex: Option<&str>,
+    transaction: &PaymentTransactionContext<'_>,
 ) -> Result<Option<Hash256>> {
     let claimed = parse_claimed_hash(claimed_hash_hex)?;
     let from_cbor = parse_evidence_cbor(evidence_cbor_hex)?;
@@ -188,9 +229,48 @@ pub fn bind_payment_evidence(
                     "payment evidence hash does not match canonical CBOR".into(),
                 ));
             }
+            require_transaction_binding(&evidence, transaction)?;
             Ok(Some(computed))
         }
     }
+}
+
+fn require_transaction_binding(
+    evidence: &PaymentEvidence,
+    transaction: &PaymentTransactionContext<'_>,
+) -> Result<()> {
+    let amount_minor = transaction
+        .amount_minor
+        .ok_or_else(|| transaction_mismatch("amount_minor is absent"))?;
+    let asset = required_transaction_str(transaction.asset, "asset")?;
+    let payee = required_transaction_str(transaction.payee, "payee")?;
+    let payer = required_transaction_str(Some(transaction.payer), "payer")?;
+    if evidence.amount_minor != amount_minor {
+        return Err(transaction_mismatch("amount_minor"));
+    }
+    if evidence.asset != asset {
+        return Err(transaction_mismatch("asset"));
+    }
+    if evidence.payee != payee {
+        return Err(transaction_mismatch("payee"));
+    }
+    if evidence.payer != payer {
+        return Err(transaction_mismatch("payer"));
+    }
+    Ok(())
+}
+
+fn required_transaction_str<'a>(value: Option<&'a str>, field: &str) -> Result<&'a str> {
+    match value {
+        Some(item) if !item.is_empty() => Ok(item),
+        _ => Err(transaction_mismatch(&format!("{field} is absent"))),
+    }
+}
+
+fn transaction_mismatch(detail: &str) -> PdpError {
+    PdpError::BadRequest(format!(
+        "payment evidence does not match the requested transaction: {detail}"
+    ))
 }
 
 fn parse_claimed_hash(hex_in: Option<&str>) -> Result<Option<Hash256>> {
@@ -271,6 +351,15 @@ mod tests {
             .to_string()
     }
 
+    fn sample_tx() -> PaymentTransactionContext<'static> {
+        PaymentTransactionContext {
+            amount_minor: Some(1),
+            asset: Some("USD"),
+            payee: Some("did:exo:merchant"),
+            payer: "did:exo:payer",
+        }
+    }
+
     #[test]
     fn digest_is_domain_separated_hash_structured_preimage() {
         let evidence = sample_payment_evidence();
@@ -337,17 +426,19 @@ mod tests {
     fn zero_hash_is_rejected_with_or_without_evidence() {
         let evidence = sample_payment_evidence();
         let zero = "00".repeat(32);
-        let absent = bind_payment_evidence(None, None, Some(&zero)).expect_err("zero hash");
+        let absent =
+            bind_payment_evidence(None, None, Some(&zero), &sample_tx()).expect_err("zero hash");
         assert!(absent.to_string().contains("non-zero"));
-        let present =
-            bind_payment_evidence(Some(evidence), None, Some(&zero)).expect_err("zero hash");
+        let present = bind_payment_evidence(Some(evidence), None, Some(&zero), &sample_tx())
+            .expect_err("zero hash");
         assert!(present.to_string().contains("non-zero"));
     }
 
     #[test]
     fn hash_without_visible_evidence_is_rejected() {
         let claimed = hex::encode([0x11u8; 32]);
-        let error = bind_payment_evidence(None, None, Some(&claimed)).expect_err("bare hash");
+        let error =
+            bind_payment_evidence(None, None, Some(&claimed), &sample_tx()).expect_err("bare hash");
         assert!(
             error
                 .to_string()
@@ -358,8 +449,13 @@ mod tests {
     #[test]
     fn mismatched_hash_is_rejected() {
         let evidence = sample_payment_evidence();
-        let error = bind_payment_evidence(Some(evidence), None, Some(&hex::encode([0x11u8; 32])))
-            .expect_err("mismatch");
+        let error = bind_payment_evidence(
+            Some(evidence),
+            None,
+            Some(&hex::encode([0x11u8; 32])),
+            &sample_tx(),
+        )
+        .expect_err("mismatch");
         assert!(error.to_string().contains("does not match canonical CBOR"));
     }
 
@@ -367,28 +463,36 @@ mod tests {
     fn matching_canonical_hash_is_accepted() {
         let evidence = sample_payment_evidence();
         let expected = payment_evidence_digest(&evidence).expect("digest");
-        let bound =
-            bind_payment_evidence(Some(evidence.clone()), None, Some(&expected.to_string()))
-                .expect("bind")
-                .expect("some hash");
+        let bound = bind_payment_evidence(
+            Some(evidence.clone()),
+            None,
+            Some(&expected.to_string()),
+            &sample_tx(),
+        )
+        .expect("bind")
+        .expect("some hash");
         assert_eq!(bound, expected);
 
         let cbor = canonical_payment_evidence_cbor(&evidence).expect("cbor");
-        let from_cbor =
-            bind_payment_evidence(None, Some(&hex::encode(cbor)), Some(&expected.to_string()))
-                .expect("bind cbor")
-                .expect("some hash");
+        let from_cbor = bind_payment_evidence(
+            None,
+            Some(&hex::encode(cbor)),
+            Some(&expected.to_string()),
+            &sample_tx(),
+        )
+        .expect("bind cbor")
+        .expect("some hash");
         assert_eq!(from_cbor, expected);
     }
 
     #[test]
     fn absent_payment_is_unbound() {
         assert_eq!(
-            bind_payment_evidence(None, None, None).expect("unbound"),
+            bind_payment_evidence(None, None, None, &sample_tx()).expect("unbound"),
             None
         );
         assert_eq!(
-            bind_payment_evidence(None, Some("  "), Some("")).expect("blank"),
+            bind_payment_evidence(None, Some("  "), Some(""), &sample_tx()).expect("blank"),
             None
         );
     }
@@ -435,8 +539,13 @@ mod tests {
         assert!(error.to_string().contains("not canonical"));
 
         let digest = matching_hash(&evidence);
-        let bound = bind_payment_evidence(None, Some(&hex::encode(widened)), Some(&digest))
-            .expect_err("bind widened");
+        let bound = bind_payment_evidence(
+            None,
+            Some(&hex::encode(widened)),
+            Some(&digest),
+            &sample_tx(),
+        )
+        .expect_err("bind widened");
         assert!(bound.to_string().contains("not canonical"));
     }
 
@@ -447,13 +556,93 @@ mod tests {
     }
 
     #[test]
-    fn payment_evidence_vector_matches_golden_preimage() {
+    fn unrelated_transaction_evidence_is_rejected() {
+        let evidence = sample_payment_evidence();
+        let hash = matching_hash(&evidence);
+        let cases = [
+            (
+                PaymentTransactionContext {
+                    amount_minor: Some(99),
+                    ..sample_tx()
+                },
+                "amount_minor",
+            ),
+            (
+                PaymentTransactionContext {
+                    asset: Some("EUR"),
+                    ..sample_tx()
+                },
+                "asset",
+            ),
+            (
+                PaymentTransactionContext {
+                    payee: Some("did:exo:other"),
+                    ..sample_tx()
+                },
+                "payee",
+            ),
+            (
+                PaymentTransactionContext {
+                    payer: "did:exo:other",
+                    ..sample_tx()
+                },
+                "payer",
+            ),
+            (
+                PaymentTransactionContext {
+                    amount_minor: None,
+                    ..sample_tx()
+                },
+                "amount_minor is absent",
+            ),
+            (
+                PaymentTransactionContext {
+                    asset: None,
+                    ..sample_tx()
+                },
+                "asset is absent",
+            ),
+            (
+                PaymentTransactionContext {
+                    asset: Some(""),
+                    ..sample_tx()
+                },
+                "asset is absent",
+            ),
+            (
+                PaymentTransactionContext {
+                    payee: None,
+                    ..sample_tx()
+                },
+                "payee is absent",
+            ),
+            (
+                PaymentTransactionContext {
+                    payer: "",
+                    ..sample_tx()
+                },
+                "payer is absent",
+            ),
+        ];
+        for (transaction, detail) in cases {
+            let error =
+                bind_payment_evidence(Some(evidence.clone()), None, Some(&hash), &transaction)
+                    .expect_err("unrelated transaction");
+            let message = error.to_string();
+            assert!(message.contains("requested transaction"), "{message}");
+            assert!(message.contains(detail), "{message}");
+        }
+    }
+
+    #[test]
+    fn payment_evidence_vector_matches_golden_preimage_and_wire() {
         #[derive(Deserialize)]
         struct PaymentEvidenceVector {
             domain: String,
             schema_version: u16,
             evidence: PaymentEvidence,
-            canonical_cbor_hex: String,
+            preimage_cbor_hex: String,
+            wire_cbor_hex: String,
             blake3_hex: String,
         }
 
@@ -462,14 +651,42 @@ mod tests {
                 .expect("vector");
         assert_eq!(vector.domain, PAYMENT_EVIDENCE_DOMAIN);
         assert_eq!(vector.schema_version, PAYMENT_EVIDENCE_SCHEMA_VERSION);
+        assert_eq!(vector.evidence, sample_payment_evidence());
         let preimage = payment_evidence_preimage(&vector.evidence).expect("preimage");
-        assert_eq!(hex::encode(&preimage), vector.canonical_cbor_hex);
+        assert_eq!(hex::encode(&preimage), vector.preimage_cbor_hex);
+        let wire = canonical_payment_evidence_cbor(&vector.evidence).expect("wire");
+        assert_eq!(hex::encode(&wire), vector.wire_cbor_hex);
+        assert_ne!(vector.preimage_cbor_hex, vector.wire_cbor_hex);
         assert_eq!(
             payment_evidence_digest(&vector.evidence)
                 .expect("digest")
                 .to_string(),
             vector.blake3_hex
         );
-        assert_eq!(vector.evidence, sample_payment_evidence());
+        assert_eq!(
+            payment_evidence_from_cbor(&wire).expect("wire accepted"),
+            vector.evidence
+        );
+        let preimage_bytes = hex::decode(&vector.preimage_cbor_hex).expect("preimage hex");
+        let rejected =
+            payment_evidence_from_cbor(&preimage_bytes).expect_err("preimage is not wire");
+        assert!(rejected.to_string().contains("not canonical"));
+        let bound = bind_payment_evidence(
+            None,
+            Some(&vector.wire_cbor_hex),
+            Some(&vector.blake3_hex),
+            &sample_tx(),
+        )
+        .expect("client wire cbor")
+        .expect("bound");
+        assert_eq!(bound.to_string(), vector.blake3_hex);
+        let replayed_preimage = bind_payment_evidence(
+            None,
+            Some(&vector.preimage_cbor_hex),
+            Some(&vector.blake3_hex),
+            &sample_tx(),
+        )
+        .expect_err("preimage rejected as wire");
+        assert!(replayed_preimage.to_string().contains("not canonical"));
     }
 }

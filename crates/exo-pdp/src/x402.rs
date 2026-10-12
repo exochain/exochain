@@ -24,8 +24,8 @@ use serde::{Deserialize, Serialize};
 
 pub use crate::payment_evidence::{
     PAYMENT_EVIDENCE_DOMAIN, PAYMENT_EVIDENCE_SCHEMA_VERSION, PaymentEvidence,
-    bind_payment_evidence, canonical_payment_evidence_cbor, payment_evidence_digest,
-    payment_evidence_from_cbor, payment_evidence_preimage,
+    PaymentTransactionContext, bind_payment_evidence, canonical_payment_evidence_cbor,
+    payment_evidence_digest, payment_evidence_from_cbor, payment_evidence_preimage,
 };
 use crate::{
     evidence::Decision,
@@ -158,14 +158,17 @@ pub fn verify(
             ));
         }
     };
+    let payer = mandate.principal.to_string();
+    let payment_evidence_hash = bind_payment_evidence(
+        body.payment_evidence,
+        body.payment_evidence_cbor_hex.as_deref(),
+        body.payment_evidence_hash_hex.as_deref(),
+        &PaymentTransactionContext::from_proposed(&proposed, &payer),
+    )?;
     let req = DecisionRequest {
         mandate,
         proposed,
-        payment_evidence_hash: bind_payment_evidence(
-            body.payment_evidence,
-            body.payment_evidence_cbor_hex.as_deref(),
-            body.payment_evidence_hash_hex.as_deref(),
-        )?,
+        payment_evidence_hash,
         now,
     };
     let out = pdp.verify_before_settle(req)?;
@@ -197,7 +200,7 @@ mod tests {
             action: "payment.settle".into(),
             amount_minor: Some(99),
             currency: Some("USD".into()),
-            merchant: None,
+            merchant: Some("did:exo:merchant".into()),
             caveats: vec![Caveat::AmountMax {
                 minor: 1,
                 currency: "USD".into(),
@@ -209,7 +212,15 @@ mod tests {
         };
         m.signature = alice.sign(&m.signable_payload().unwrap());
 
-        let evidence = crate::payment_evidence::sample_payment_evidence();
+        let evidence = PaymentEvidence {
+            asset: "USD".into(),
+            nonce: "n-1".into(),
+            payee: "did:exo:merchant".into(),
+            payer: "did:exo:alice".into(),
+            scheme: "exact".into(),
+            network: "internal".into(),
+            amount_minor: 99,
+        };
         let body = X402VerifyRequest {
             mandate: WireMandate {
                 kind: MandateKind::X402Payload,
@@ -218,7 +229,7 @@ mod tests {
                 action: m.action.clone(),
                 amount_minor: m.amount_minor,
                 currency: m.currency.clone(),
-                merchant: None,
+                merchant: m.merchant.clone(),
                 caveats: m.caveats.clone(),
                 expires_ms: None,
                 consume_once: false,
@@ -229,7 +240,7 @@ mod tests {
                 action: "payment.settle".into(),
                 amount_minor: Some(99),
                 currency: Some("USD".into()),
-                merchant: None,
+                merchant: Some("did:exo:merchant".into()),
                 rail: None,
             }),
             payment_evidence: Some(evidence.clone()),
@@ -281,7 +292,7 @@ mod tests {
             action: "payment.settle".into(),
             amount_minor: Some(1),
             currency: Some("USD".into()),
-            merchant: None,
+            merchant: Some("did:exo:merchant".into()),
             caveats: vec![],
             expires: None,
             consume_once: false,
@@ -290,7 +301,15 @@ mod tests {
         };
         m.signature = alice.sign(&m.signable_payload().unwrap());
 
-        let evidence = crate::payment_evidence::sample_payment_evidence();
+        let evidence = PaymentEvidence {
+            asset: "USD".into(),
+            nonce: "n-1".into(),
+            payee: "did:exo:merchant".into(),
+            payer: "did:exo:alice".into(),
+            scheme: "exact".into(),
+            network: "internal".into(),
+            amount_minor: 1,
+        };
         let body = X402VerifyRequest {
             mandate: WireMandate {
                 kind: MandateKind::X402Payload,
@@ -299,7 +318,7 @@ mod tests {
                 action: m.action,
                 amount_minor: m.amount_minor,
                 currency: m.currency,
-                merchant: None,
+                merchant: m.merchant,
                 caveats: vec![],
                 expires_ms: None,
                 consume_once: false,
@@ -405,7 +424,7 @@ mod tests {
                 action: "payment.settle".into(),
                 amount_minor: Some(1),
                 currency: Some("USD".into()),
-                merchant: None,
+                merchant: Some("did:exo:merchant".into()),
                 caveats: vec![],
                 expires_ms: None,
                 consume_once: false,
@@ -443,6 +462,24 @@ mod tests {
         )
         .expect_err("mismatch");
         assert!(error.to_string().contains("does not match canonical CBOR"));
+    }
+
+    #[test]
+    fn unrelated_transaction_evidence_replay_is_rejected_on_verify() {
+        let mut evidence = crate::payment_evidence::sample_payment_evidence();
+        evidence.payer = "did:exo:alice".into();
+        evidence.amount_minor = 50;
+        evidence.payee = "did:exo:other-merchant".into();
+        let digest = payment_evidence_digest(&evidence).unwrap().to_string();
+        let mut pdp = PolicyDecisionPoint::ephemeral();
+        let error = verify(
+            &mut pdp,
+            unsigned_verify_request(Some(evidence), None, Some(digest)),
+        )
+        .expect_err("replay");
+        let message = error.to_string();
+        assert!(message.contains("requested transaction"), "{message}");
+        assert!(message.contains("amount_minor"), "{message}");
     }
 
     #[test]

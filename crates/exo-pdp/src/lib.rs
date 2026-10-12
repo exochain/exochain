@@ -53,7 +53,8 @@ pub use service::{DecideOutcome, DecideResponse, PdpSnapshot, PolicyDecisionPoin
 pub use x402::{
     HEADER_PAYMENT_SIGNATURE, HTTP_FORBIDDEN, HTTP_OK, HTTP_PAYMENT_REQUIRED,
     HTTP_PRECONDITION_REQUIRED, PAYMENT_EVIDENCE_DOMAIN, PAYMENT_EVIDENCE_SCHEMA_VERSION,
-    PaymentEvidence, X402VerifyRequest, X402VerifyResponse, bind_payment_evidence,
-    canonical_payment_evidence_cbor, is_never_paywalled_path, map_decision_to_http,
-    payment_evidence_digest, payment_evidence_from_cbor, payment_evidence_preimage,
+    PaymentEvidence, PaymentTransactionContext, X402VerifyRequest, X402VerifyResponse,
+    bind_payment_evidence, canonical_payment_evidence_cbor, is_never_paywalled_path,
+    map_decision_to_http, payment_evidence_digest, payment_evidence_from_cbor,
+    payment_evidence_preimage,
 };
