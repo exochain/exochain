@@ -65,7 +65,7 @@ export default function Page() {
     "policy_eval":    "PASS",
     "revocation":     "PASS"
   },
-  "verifier": "exo-gateway/v0.4.2-alpha",
+  "verifier": "exo-gateway/v0.2.7",
   "timestamp": "2026-05-04T13:11:09Z"
 }`}
             </Pre>

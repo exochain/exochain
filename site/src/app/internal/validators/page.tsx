@@ -40,7 +40,7 @@ export default function Page() {
       <IntPageHead
         eyebrow="Intranet · validators"
         title="Validator registry"
-        lede="Attestation state, observation period, slashing history (placeholder for alpha)."
+        lede="Attestation state, observation period, slashing history (placeholder for beta)."
         pills={<Pill tone="mock">mock telemetry</Pill>}
       />
       <DataTable columns={cols} rows={mockNodes.filter(n => n.kind === 'validator')} />

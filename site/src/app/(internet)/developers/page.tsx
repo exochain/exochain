@@ -20,109 +20,94 @@ import { Card, CardBody, CardHeader } from '@/components/ui/Card';
 import { Pre } from '@/components/ui/Code';
 import { Pill } from '@/components/ui/Pill';
 import { LinkButton } from '@/components/ui/Button';
+import { Disclaimer } from '@/components/ui/Disclaimer';
+import { IllustrativeCalls } from '@/components/commercial/IllustrativeCalls';
+import { PilotBanner } from '@/components/commercial/PilotBanner';
+import { publicMetadata, RELEASE_VERSION } from '@/lib/public-site';
 
-export const metadata = { title: 'Developers' };
+export const metadata = publicMetadata({
+  title: 'Developers',
+  description:
+    'The intended EXOCHAIN developer experience is two calls: verify delegated authority, then attest the outcome. The verify and attest snippet is illustrative API design, not the current SDK.',
+  path: '/developers',
+});
+
+const CURRENT_SDK = `import { ExochainClient, PROTOCOL_VERSION } from '@exochain/sdk';
+
+// PROTOCOL_VERSION in the ${RELEASE_VERSION} TypeScript SDK is "0.2.7".
+// Namespaces on ExochainClient: identity, consent, governance, authority, economy.
+// discover() and health() are real methods. verify() and attest() are not.
+
+const client = new ExochainClient({
+  baseUrl: 'https://gateway.example',
+});
+
+const discovery = await client.discover();
+const health = await client.health();`;
 
 export default function DevelopersPage() {
   return (
     <>
       <Section className="pt-16 pb-8">
         <Eyebrow>Developers</Eyebrow>
-        <H1 className="mt-3">Build on EXOCHAIN.</H1>
+        <H1 className="mt-3">Two calls. Verify authority. Produce evidence.</H1>
         <Lede className="mt-5 max-w-prose">
-          Issue and validate AVCs. Generate trust receipts. Run a node. The
-          Rust SDK is the reference; Node/TypeScript and Python are on the
-          roadmap.
+          Adoption has to stay small even when the platform is not. The
+          intended developer experience is to verify that a proposed action
+          sits inside delegated authority, then attest the decision and its
+          outcome.
         </Lede>
         <div className="mt-6 flex flex-wrap gap-2">
-          <Pill tone="signal">alpha</Pill>
-          <Pill tone="unstable">unstable APIs</Pill>
+          <Pill tone="signal">beta {RELEASE_VERSION}</Pill>
+          <Pill tone="unstable">illustrative API</Pill>
+          <Pill tone="neutral">Apache-2.0 core</Pill>
         </div>
       </Section>
 
       <Section className="py-8">
-        <H2>Quickstart</H2>
-        <div className="mt-6 grid lg:grid-cols-2 gap-5">
-          <Card>
-            <CardHeader eyebrow="01" title="Install the SDK" />
-            <CardBody>
-              <Pre>
-{`# Cargo (Rust reference)
-cargo add exochain-sdk
+        <H2>Target shape</H2>
+        <div className="mt-6">
+          <IllustrativeCalls />
+        </div>
+      </Section>
 
-# Roadmap
-# npm install @exochain/sdk    (v0.5)
-# pip install exochain         (v0.5)`}
-              </Pre>
-            </CardBody>
-          </Card>
-          <Card>
-            <CardHeader eyebrow="02" title="Register an actor" />
-            <CardBody>
-              <Pre>
-{`use exochain_sdk::{Client, ActorKind};
+      <Section className="py-8">
+        <H2>What has to be true around those two calls</H2>
+        <div className="mt-6 grid md:grid-cols-2 gap-4">
+          {[
+            ['Freshness and revocation', 'A stale or revoked delegation fails closed before the action runs.'],
+            ['Evidence bound to the action', 'The proof cites this action, not a general permission to act later.'],
+            ['Enforcement at execution', 'The check sits on the boundary that actually performs the action.'],
+            ['Outcome evidence', 'After execution, the receipt records what occurred, not only what was proposed.'],
+          ].map(([title, body]) => (
+            <Card key={title}>
+              <CardHeader title={title} />
+              <CardBody>
+                <p className="text-sm">{body}</p>
+              </CardBody>
+            </Card>
+          ))}
+        </div>
+      </Section>
 
-let client = Client::connect_default().await?;
-let actor = client.register_actor(
-  ActorKind::Agent,
-  "Aperture Procurement Agent",
-  parent_org_id,
-).await?;`}
-              </Pre>
-            </CardBody>
-          </Card>
-          <Card>
-            <CardHeader eyebrow="03" title="Issue an AVC" />
-            <CardBody>
-              <Pre>
-{`let avc = client.issue_avc(IssueAvcParams {
-  subject: actor.id,
-  policy_domain: "aperture.procurement".into(),
-  scope: vec!["procure.search","procure.quote","procure.purchase"],
-  constraints: serde_json::json!({"ceiling_usd": 50_000}),
-  not_after: now + Duration::days(180),
-}).await?;`}
-              </Pre>
-            </CardBody>
-          </Card>
-          <Card>
-            <CardHeader eyebrow="04" title="Validate, then act" />
-            <CardBody>
-              <Pre>
-{`let v = client.validate_avc(&avc.token).await?;
-match v {
-  Validation::Pass(scope) => agent.act(scope).await?,
-  Validation::Fail(reason) => abort(reason),
-}`}
-              </Pre>
-            </CardBody>
-          </Card>
-          <Card>
-            <CardHeader eyebrow="05" title="Generate a trust receipt" />
-            <CardBody>
-              <Pre>
-{`let receipt = client.emit_trust_receipt(EmitParams {
-  avc_id: avc.id,
-  action_descriptor: "procure.purchase:po-2026-0234",
-  outcome: Outcome::Permitted,
-}).await?;`}
-              </Pre>
-            </CardBody>
-          </Card>
-          <Card>
-            <CardHeader
-              eyebrow="06"
-              title="Settlement (zero-priced launch policy)"
-            />
-            <CardBody>
-              <Pre>
-{`let quote = client.settlement_quote(receipt.id).await?;
-assert_eq!(quote.amount, "0");           // launch_policy_zero
-let sr = client.commit_settlement(quote).await?;
-assert_eq!(sr.amount, "0");`}
-              </Pre>
-            </CardBody>
-          </Card>
+      <Section className="py-8">
+        <H2>Current SDK</H2>
+        <Lede className="mt-4 max-w-prose">
+          The repository ships Rust, TypeScript, and Python SDKs at {RELEASE_VERSION}.
+          The TypeScript client below is the current surface. It does not
+          implement the illustrative verify and attest calls.
+        </Lede>
+        <div className="mt-6">
+          <Pre caption="Current TypeScript SDK — ExochainClient in @exochain/sdk 0.2.7">
+            {CURRENT_SDK}
+          </Pre>
+          <div className="mt-4">
+            <Disclaimer>
+              Gateway URLs, API keys, and tenant configuration come from the
+              operator. This page does not publish credentials or a hosted
+              production endpoint.
+            </Disclaimer>
+          </div>
         </div>
       </Section>
 
@@ -150,12 +135,7 @@ assert_eq!(sr.amount, "0");`}
                 </li>
                 <li>
                   <Link href="/docs/avc" className="underline">
-                    AVC docs
-                  </Link>
-                </li>
-                <li>
-                  <Link href="/docs/node-api" className="underline">
-                    Node API
+                    Autonomous Volition Credential docs
                   </Link>
                 </li>
                 <li>
@@ -164,6 +144,23 @@ assert_eq!(sr.amount, "0");`}
                   </Link>
                 </li>
               </ul>
+            </CardBody>
+          </Card>
+          <Card>
+            <CardHeader title="Source" />
+            <CardBody>
+              <p className="text-sm mb-3">
+                Apache-2.0 core in the public repository. Commercial products
+                that sit on top of the core have their own terms.
+              </p>
+              <LinkButton
+                href="https://github.com/exochain/exochain"
+                size="sm"
+                variant="secondary"
+                external
+              >
+                github.com/exochain/exochain
+              </LinkButton>
             </CardBody>
           </Card>
           <Card>
@@ -176,32 +173,21 @@ assert_eq!(sr.amount, "0");`}
                   </Link>
                 </li>
                 <li>
-                  <Link href="/docs/validator-guide" className="underline">
-                    Validator guide
+                  <Link href="/docs" className="underline">
+                    Docs index
                   </Link>
                 </li>
                 <li>
-                  <Link href="/app/validators" className="underline">
-                    Validator onboarding
+                  <Link href="/contact#pilot" className="underline">
+                    Design-partner pilot
                   </Link>
                 </li>
               </ul>
             </CardBody>
           </Card>
-          <Card>
-            <CardHeader title="Source" />
-            <CardBody>
-              <p className="text-sm mb-3">
-                Apache-2.0 reference implementation. The public repository
-                link is forthcoming.
-              </p>
-              <LinkButton href="/contact" size="sm" variant="secondary">
-                Request access
-              </LinkButton>
-            </CardBody>
-          </Card>
         </div>
       </Section>
+      <PilotBanner />
     </>
   );
 }

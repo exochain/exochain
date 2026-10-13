@@ -16,8 +16,13 @@
 
 import { DocPage } from '@/components/content/DocPage';
 import { ZeroPriceBanner } from '@/components/ui/ZeroPriceBanner';
+import { publicMetadata } from '@/lib/public-site';
 
-export const metadata = { title: 'Settlement' };
+export const metadata = publicMetadata({
+  title: 'Settlement',
+  description: 'Settlement. EXOCHAIN is the trust fabric for autonomous commerce.',
+  path: '/docs/settlement',
+});
 
 export default function Page() {
   return (
@@ -32,7 +37,7 @@ export default function Page() {
       </p>
       <h2>ZeroFeeReason</h2>
       <ul>
-        <li><code>launch_policy_zero</code> — the default during alpha.</li>
+        <li><code>launch_policy_zero</code> — the default during beta.</li>
         <li><code>governance_subsidy</code> — issued under specific governance amendments.</li>
         <li><code>humanitarian_carve_out</code> — declared scopes (see governance).</li>
       </ul>

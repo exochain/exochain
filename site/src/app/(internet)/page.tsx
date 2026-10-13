@@ -19,210 +19,308 @@ import { LinkButton } from '@/components/ui/Button';
 import { Pill } from '@/components/ui/Pill';
 import { Section, Eyebrow, H1, H2, Lede } from '@/components/ui/Section';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
-import { CustodyFlowDiagram } from '@/components/diagrams/CustodyFlow';
-import { IdentityToCustodyDiagram } from '@/components/diagrams/IdentityToCustody';
-import { MechanismVsPurposeDiagram } from '@/components/diagrams/MechanismVsPurpose';
-import { ZeroPriceBanner } from '@/components/ui/ZeroPriceBanner';
-import { mockNetworkMetrics } from '@/lib/mock-data';
+import { Disclaimer } from '@/components/ui/Disclaimer';
+import { IllustrativeCalls } from '@/components/commercial/IllustrativeCalls';
+import { PilotBanner } from '@/components/commercial/PilotBanner';
+import {
+  CANONICAL_ORIGIN,
+  CORE_LICENSE,
+  NORMATIVE_SPEC,
+  PRODUCT_CHANNEL,
+  publicMetadata,
+  RELEASE_VERSION,
+  SITE_DESCRIPTION,
+  SITE_TITLE,
+} from '@/lib/public-site';
+
+export const metadata = publicMetadata({
+  title: 'The trust fabric for autonomous commerce',
+  description: SITE_DESCRIPTION,
+  path: '/',
+  absoluteTitle: SITE_TITLE,
+});
+
+const ASSUMPTIONS = [
+  ['Identity establishes who you are', 'Cryptographic identity establishes who or what is acting'],
+  ['Permissions establish what you can access', 'Delegated authority establishes what you are entitled to decide and do'],
+  ['Applications own their workflows', 'Independent agents coordinate across organizational boundaries'],
+  ['Logs establish accountability', 'Verifiable receipts connect authority, evidence, decisions, and outcomes'],
+];
+
+const STANDARDS = [
+  {
+    name: 'MCP',
+    role: 'Connects AI systems to tools and resources.',
+  },
+  {
+    name: 'A2A',
+    role: 'Lets agents collaborate across systems.',
+  },
+  {
+    name: 'x402',
+    role: 'Carries machine-native payments.',
+  },
+  {
+    name: 'AP2',
+    role: 'Carries signed mandates and receipts for agent-initiated payments.',
+  },
+];
+
+const ECOSYSTEM = [
+  {
+    name: 'EXOCHAIN',
+    role: 'Infrastructure',
+    body: 'The shared trust fabric: open protocols, SDKs, and enterprise services other companies can use without being owned by EXOCHAIN.',
+  },
+  {
+    name: 'CrossChecked',
+    role: 'First commercial wedge',
+    body: 'Shows who authorized an AI-assisted decision, which evidence and constraints applied, and what occurred afterward. It is an adjacent product, currently a prototype, and it does not itself enforce the constitutional kernel.',
+  },
+  {
+    name: 'AVC',
+    role: 'Distribution engine',
+    body: 'Incubation and venture formation for companies built on the fabric. Distinct from the protocol’s Autonomous Volition Credential.',
+  },
+  {
+    name: 'AI-SDLC Institute',
+    role: 'Independent education and assessment',
+    body: 'Training and assessment that stay independent of the products in the commercial network. Assessment here is education, not coverage.',
+  },
+];
+
+const OFFERS = [
+  {
+    name: 'Pilot or implementation',
+    body: 'A fixed-scope design-partner pilot or deployment for one constrained workflow, including architecture and integration into the systems you already run.',
+  },
+  {
+    name: 'Platform licensing',
+    body: 'Licensed access to the EXOCHAIN control plane, hosted verification, and enterprise integration. The platform is the recurring product.',
+  },
+  {
+    name: 'Managed governance services',
+    body: 'Ongoing administration, governance engineering, monitoring, remediation, and platform optimization, purchased as an outcome.',
+  },
+];
+
+const websiteJsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'WebSite',
+  name: 'EXOCHAIN',
+  url: `${CANONICAL_ORIGIN}/`,
+  description: SITE_DESCRIPTION,
+  publisher: {
+    '@type': 'Organization',
+    name: 'EXOCHAIN PBC',
+    email: 'legal@exochain.com',
+  },
+};
 
 export default function HomePage() {
   return (
     <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(websiteJsonLd) }}
+      />
       <Section className="pt-16 md:pt-24 pb-12">
-        <div className="grid md:grid-cols-[1.2fr_1fr] gap-10 items-end">
+        <div className="grid lg:grid-cols-[1.25fr_0.85fr] gap-10 items-end">
           <div>
             <div className="mb-6 h-px w-24 bg-brand-charter" />
-            <Eyebrow>EXOCHAIN · custody-native blockchain · alpha</Eyebrow>
+            <Eyebrow>The trust fabric for autonomous commerce</Eyebrow>
             <H1 className="mt-4 font-light tracking-normal text-brand-vault">
-              EXOCHAIN is chain-of-custody for autonomous execution.
+              Make EXOCHAIN the trust layer, not the empire.
             </H1>
             <Lede className="mt-6 max-w-prose text-brand-midnight/80">
-              Credential autonomous intent, verify delegated authority, and
-              preserve evidentiary custody for agents, holons, humans, and
-              AI-native systems.
+              Accountable autonomy is infrastructure. An agent should be able
+              to prove its authority, carry obligations, and produce evidence
+              of what occurred — including when the other party belongs to a
+              different organization.
             </Lede>
+            <p className="mt-4 max-w-prose text-base text-brand-midnight/80">
+              Payment authorization is not legitimate decision-making authority.
+            </p>
             <div className="mt-8 flex flex-wrap gap-3">
-              <LinkButton href="/developers" size="lg">
-                Build on EXOCHAIN
+              <LinkButton href="/contact#pilot" size="lg">
+                Talk to us about a design-partner pilot
               </LinkButton>
-              <LinkButton href="/lynk" variant="secondary" size="lg">
-                LYNK for LLM receipts
-              </LinkButton>
-              <LinkButton href="/contact" variant="secondary" size="lg">
-                Talk to us
-              </LinkButton>
-              <LinkButton href="/avc" variant="ghost" size="lg">
-                What is an AVC? →
+              <LinkButton href="/developers" variant="secondary" size="lg">
+                Developers and SDK
               </LinkButton>
             </div>
             <div className="mt-6 flex flex-wrap items-center gap-2 text-sm">
               <Pill tone="neutral" className="border border-brand-charter/40 bg-brand-charter/10 text-brand-vault">
-                alpha
+                {PRODUCT_CHANNEL} {RELEASE_VERSION}
               </Pill>
               <Pill tone="neutral" className="border border-brand-signal/25 bg-brand-signal/10 text-brand-cerulean">
-                zero-priced launch
+                normative spec {NORMATIVE_SPEC}
               </Pill>
-              <span className="text-brand-midnight/65 dark:text-vellum-soft/60">
-                Network mode: {mockNetworkMetrics.networkMode} · last release{' '}
-                <span className="font-mono">
-                  {mockNetworkMetrics.lastReleaseTag}
-                </span>{' '}
-                · <Link href="/status" className="underline decoration-brand-signal/40 underline-offset-4">status</Link>
-              </span>
+              <Pill tone="neutral">{CORE_LICENSE} core</Pill>
+              <Link href="/lynk" className="underline decoration-brand-signal/40 underline-offset-4">
+                LYNK
+              </Link>
             </div>
           </div>
-          <div className="border hairline rounded-md bg-brand-white/45 p-4">
-            <CustodyFlowDiagram />
-            <p className="text-xs text-brand-midnight/65 dark:text-vellum-soft/60 mt-3">
-              Human → AVC → Agent → EXOCHAIN → Trust Receipt. Revocation
-              cascades back through the credential graph.
-            </p>
-          </div>
-        </div>
-      </Section>
-
-      <Section className="py-12">
-        <div className="border hairline rounded-md bg-brand-white/35 p-6 md:p-10">
-          <Eyebrow>The frame</Eyebrow>
-          <p className="mt-3 text-2xl md:text-3xl font-semibold tracking-normal leading-tight max-w-3xl text-brand-vault">
-            Blockchain is the mechanism. Chain-of-custody is the purpose.
-          </p>
-          <p className="mt-4 text-brand-midnight/75 dark:text-vellum-soft/75 max-w-2xl">
-            EXOCHAIN preserves every property you expect from a serious
-            distributed ledger — deterministic ordering, cryptographic
-            signatures, quorum, finality — and reframes the chain as a
-            chain-of-custody for autonomous action.
-          </p>
-          <div className="mt-8">
-            <MechanismVsPurposeDiagram />
-          </div>
-        </div>
-      </Section>
-
-      <Section className="py-12">
-        <Eyebrow>The stack</Eyebrow>
-        <H2 className="mt-3 max-w-2xl tracking-normal text-brand-vault">
-          Identity proves who an actor is. AVC proves what it may pursue.
-          EXOCHAIN proves what actually happened.
-        </H2>
-        <div className="mt-10">
-          <IdentityToCustodyDiagram />
-        </div>
-        <div className="mt-10 grid md:grid-cols-3 gap-5">
           <Card>
-            <CardHeader
-              eyebrow="Pillar 1"
-              title="Autonomous Volition Credentials"
-            />
+            <CardHeader eyebrow="Working category concept" title="Proof of Authority" />
             <CardBody>
-              <p className="text-sm text-ink/80 dark:text-vellum-soft/80">
-                Portable, signed, machine-verifiable credentials that declare
-                what an autonomous actor is authorized to pursue{' '}
-                <em>before</em> it acts. Validation is fail-closed. Delegation
-                strictly narrows scope.
+              <p className="text-sm text-brand-midnight/80">
+                A portable, independently verifiable claim that an agent’s
+                specific action falls within a valid chain of delegated
+                authority, satisfies applicable constraints, and has an
+                attributable outcome.
               </p>
-              <Link
-                href="/avc"
-                className="mt-3 inline-block text-sm underline"
-              >
-                Read the AVC explainer →
-              </Link>
-            </CardBody>
-          </Card>
-          <Card>
-            <CardHeader eyebrow="Pillar 2" title="Trust Receipts" />
-            <CardBody>
-              <p className="text-sm text-ink/80 dark:text-vellum-soft/80">
-                Hash-chained, signed records proving identity, authority,
-                consent, policy, action, timestamp, revocation state, and
-                custody hash for each execution event.
-              </p>
-              <Link
-                href="/trust-receipts"
-                className="mt-3 inline-block text-sm underline"
-              >
-                See receipt anatomy →
-              </Link>
-            </CardBody>
-          </Card>
-          <Card>
-            <CardHeader eyebrow="Pillar 3" title="Zero-priced launch settlement" />
-            <CardBody>
-              <p className="text-sm text-ink/80 dark:text-vellum-soft/80">
-                The economic transaction mechanism is live. Every active price
-                resolves to <span className="font-mono">0 EXO</span> with an
-                explicit <span className="font-mono">ZeroFeeReason</span>.
-                Trust is not paywalled.
-              </p>
-              <Link
-                href="/custody-native-blockchain#economy"
-                className="mt-3 inline-block text-sm underline"
-              >
-                How it works →
-              </Link>
-            </CardBody>
-          </Card>
-        </div>
-      </Section>
-
-      <Section className="py-12">
-        <ZeroPriceBanner />
-      </Section>
-
-      <Section className="py-12">
-        <Eyebrow>For</Eyebrow>
-        <div className="mt-6 grid md:grid-cols-3 gap-5">
-          <Card>
-            <CardHeader title="Developers" />
-            <CardBody>
-              <p className="text-sm">
-                Issue and validate AVCs. Generate trust receipts. Run a node.
-                The Rust SDK is shipping; Node and Python are on the roadmap.
-              </p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <LinkButton href="/developers" size="sm">
-                  Quickstart
-                </LinkButton>
-                <LinkButton href="/lynk" size="sm" variant="secondary">
-                  LYNK
-                </LinkButton>
+              <div className="mt-4">
+                <Disclaimer>
+                  Proof of Authority is a working category concept. It is not
+                  a new cryptographic primitive and it is not an industry
+                  standard.
+                </Disclaimer>
               </div>
-            </CardBody>
-          </Card>
-          <Card>
-            <CardHeader title="Enterprises" />
-            <CardBody>
-              <p className="text-sm">
-                Stand up an organization, register actors and policy domains,
-                issue scoped AVCs to your agents, and export deterministic
-                audit packets.
+              <p className="mt-4 text-sm">
+                <Link href="/proof-of-authority" className="underline">
+                  Read the concept
+                </Link>
               </p>
-              <div className="mt-3">
-                <LinkButton href="/contact" size="sm" variant="secondary">
-                  Talk to us
-                </LinkButton>
-              </div>
-            </CardBody>
-          </Card>
-          <Card>
-            <CardHeader title="Validators · Researchers" />
-            <CardBody>
-              <p className="text-sm">
-                Operate as a custody verifier. Read whitepapers. Engage with
-                governance and the open security disclosure program.
-              </p>
-              <div className="mt-3 flex gap-2">
-                <LinkButton href="/node" size="sm" variant="secondary">
-                  Node
-                </LinkButton>
-                <LinkButton href="/research" size="sm" variant="ghost">
-                  Research
-                </LinkButton>
-              </div>
             </CardBody>
           </Card>
         </div>
       </Section>
+
+      <Section className="py-12" id="problem">
+        <Eyebrow>The problem</Eyebrow>
+        <H2 className="mt-3">Trust is still trapped inside each application.</H2>
+        <Lede className="mt-4 max-w-prose">
+          Enterprise software assumes identity, permissions, contracts, and
+          logs are enough. Autonomous agents act across organizational
+          boundaries, where those assumptions stop being a shared system of
+          record.
+        </Lede>
+        <div className="mt-8 grid md:grid-cols-2 gap-4">
+          {ASSUMPTIONS.map(([from, to]) => (
+            <Card key={from}>
+              <CardBody>
+                <p className="text-xs uppercase tracking-eyebrow text-brand-cerulean">
+                  Existing assumption
+                </p>
+                <p className="mt-2 text-sm">{from}</p>
+                <p className="mt-4 text-xs uppercase tracking-eyebrow text-brand-cerulean">
+                  Replacement
+                </p>
+                <p className="mt-2 text-sm">{to}</p>
+              </CardBody>
+            </Card>
+          ))}
+        </div>
+        <p className="mt-6 text-sm">
+          <Link href="/why" className="underline">
+            The full problem
+          </Link>
+        </p>
+      </Section>
+
+      <Section className="py-12" id="standards">
+        <Eyebrow>Interoperability</Eyebrow>
+        <H2 className="mt-3">Use the standards. Make the action accountable.</H2>
+        <Lede className="mt-4 max-w-prose">
+          EXOCHAIN does not replace MCP, A2A, x402, or AP2. An agent can be
+          allowed to pay and still lack the authority to choose the vendor,
+          the evidence for that choice, or a receipt a counterparty can verify
+          on its own.
+        </Lede>
+        <div className="mt-8 grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {STANDARDS.map((item) => (
+            <Card key={item.name}>
+              <CardHeader title={item.name} />
+              <CardBody>
+                <p className="text-sm">{item.role}</p>
+              </CardBody>
+            </Card>
+          ))}
+        </div>
+        <p className="mt-6 text-sm">
+          <Link href="/standards" className="underline">
+            How the standards fit together
+          </Link>
+        </p>
+      </Section>
+
+      <Section className="py-12" id="developers">
+        <Eyebrow>Developer experience</Eyebrow>
+        <H2 className="mt-3">Two calls. Verify authority. Produce evidence.</H2>
+        <Lede className="mt-4 max-w-prose">
+          The intended experience is two calls: verify that the action is
+          within delegated authority, then attest the outcome. The current
+          SDK is the 0.2.7 client in the repository. The snippet below is the
+          target shape.
+        </Lede>
+        <div className="mt-8">
+          <IllustrativeCalls />
+        </div>
+        <p className="mt-6 text-sm">
+          <Link href="/developers" className="underline">
+            Developers and the current SDK
+          </Link>
+        </p>
+      </Section>
+
+      <Section className="py-12" id="ecosystem">
+        <Eyebrow>Ecosystem</Eyebrow>
+        <H2 className="mt-3">One fabric. Separate roles.</H2>
+        <Lede className="mt-4 max-w-prose">
+          EXOCHAIN should be useful to companies it did not create and does
+          not control. CrossChecked is the first commercial wedge, AVC is the
+          distribution engine, and the AI-SDLC Institute keeps education and
+          assessment independent.
+        </Lede>
+        <div className="mt-8 grid md:grid-cols-2 gap-4">
+          {ECOSYSTEM.map((item) => (
+            <Card key={item.name}>
+              <CardHeader eyebrow={item.role} title={item.name} />
+              <CardBody>
+                <p className="text-sm">{item.body}</p>
+              </CardBody>
+            </Card>
+          ))}
+        </div>
+        <p className="mt-6 text-sm max-w-prose">
+          CyberMedica, LegalDyne, LiveSafe, and Decision.Forum are reference
+          implementations and candidates for future independent businesses.
+          They are not six products this site is launching at once.
+        </p>
+        <p className="mt-4 text-sm">
+          <Link href="/ecosystem" className="underline">
+            Ecosystem roles
+          </Link>
+        </p>
+      </Section>
+
+      <Section className="py-12" id="engagement">
+        <Eyebrow>Engagement</Eyebrow>
+        <H2 className="mt-3">Three ways to work with EXOCHAIN.</H2>
+        <Lede className="mt-4 max-w-prose">
+          Offers are scoped in conversation. This site does not publish a rate
+          card.
+        </Lede>
+        <div className="mt-8 grid md:grid-cols-3 gap-4">
+          {OFFERS.map((item) => (
+            <Card key={item.name}>
+              <CardHeader title={item.name} />
+              <CardBody>
+                <p className="text-sm">{item.body}</p>
+              </CardBody>
+            </Card>
+          ))}
+        </div>
+        <p className="mt-6 text-sm">
+          <Link href="/engagement" className="underline">
+            Engagement offerings
+          </Link>
+        </p>
+      </Section>
+
+      <PilotBanner />
     </>
   );
 }

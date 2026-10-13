@@ -19,27 +19,23 @@ import { Logo } from './Logo';
 import { LinkButton } from '../ui/Button';
 
 const PRIMARY_LINKS = [
-  { href: '/why', label: 'Why' },
-  { href: '/avc', label: 'AVC' },
-  { href: '/chain-of-custody', label: 'Chain-of-Custody' },
-  { href: '/trust-receipts', label: 'Trust Receipts' },
-  { href: '/lynk', label: 'LYNK' },
-  { href: '/custody-native-blockchain', label: 'Blockchain' },
+  { href: '/why', label: 'Problem' },
+  { href: '/proof-of-authority', label: 'Proof of Authority' },
+  { href: '/standards', label: 'Standards' },
   { href: '/developers', label: 'Developers' },
-  { href: '/docs', label: 'Docs' },
-  { href: '/trust-center', label: 'Trust Center' },
-  { href: '/research', label: 'Research' },
-  { href: '/status', label: 'Status' }
+  { href: '/ecosystem', label: 'Ecosystem' },
+  { href: '/engagement', label: 'Engagement' },
+  { href: '/lynk', label: 'LYNK' },
 ];
 
 export function PublicNav() {
   return (
     <header className="sticky top-0 z-30 bg-brand-porcelain/95 dark:bg-brand-vault/95 border-b hairline">
       <div className="max-w-page mx-auto px-6 md:px-10 h-14 flex items-center justify-between gap-4">
-        <Link href="/" aria-label="EXOCHAIN home" className="text-brand-vault dark:text-brand-white">
+        <Link href="/" aria-label="EXOCHAIN home" className="text-brand-vault dark:text-brand-white shrink-0">
           <Logo />
         </Link>
-        <nav className="hidden lg:flex items-center gap-5 text-sm">
+        <nav className="hidden xl:flex items-center gap-4 text-sm" aria-label="Primary">
           {PRIMARY_LINKS.map((l) => (
             <Link
               key={l.href}
@@ -51,12 +47,44 @@ export function PublicNav() {
           ))}
         </nav>
         <div className="flex items-center gap-2">
-          <LinkButton href="/contact" variant="secondary" size="sm">
-            Early Access
+          <details className="xl:hidden relative">
+            <summary className="list-none cursor-pointer h-8 px-3 inline-flex items-center text-sm border border-brand-frost rounded-sm">
+              Menu
+            </summary>
+            <nav
+              aria-label="Mobile"
+              className="absolute right-0 mt-2 w-56 border hairline bg-brand-porcelain p-3 shadow-sm"
+            >
+              <ul className="space-y-2 text-sm">
+                {PRIMARY_LINKS.map((l) => (
+                  <li key={l.href}>
+                    <Link href={l.href} className="block py-1">
+                      {l.label}
+                    </Link>
+                  </li>
+                ))}
+                <li>
+                  <Link href="/docs" className="block py-1">
+                    Docs
+                  </Link>
+                </li>
+                <li>
+                  <Link href="/app" className="block py-1">
+                    Sign in
+                  </Link>
+                </li>
+              </ul>
+            </nav>
+          </details>
+          <LinkButton href="/contact#pilot" variant="primary" size="sm">
+            Design-partner pilot
           </LinkButton>
-          <LinkButton href="/app" variant="primary" size="sm">
+          <Link
+            href="/app"
+            className="hidden sm:inline text-sm text-brand-midnight/70 hover:text-brand-vault"
+          >
             Sign in
-          </LinkButton>
+          </Link>
         </div>
       </div>
     </header>

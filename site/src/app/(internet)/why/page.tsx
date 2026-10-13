@@ -14,129 +14,115 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import Link from 'next/link';
 import { Section, Eyebrow, H1, H2, Lede } from '@/components/ui/Section';
-import { Card, CardBody, CardHeader } from '@/components/ui/Card';
-import { Pill } from '@/components/ui/Pill';
+import { Card, CardBody } from '@/components/ui/Card';
+import { PilotBanner } from '@/components/commercial/PilotBanner';
+import { publicMetadata } from '@/lib/public-site';
 
-export const metadata = { title: 'Why EXOCHAIN' };
+export const metadata = publicMetadata({
+  title: 'The problem',
+  description:
+    'Autonomous agents need to prove authority, carry obligations, and produce evidence across organizational boundaries. Identity, permissions, and logs were not built for that.',
+  path: '/why',
+});
+
+const ROWS = [
+  {
+    assumption: 'Identity establishes who you are',
+    replacement: 'Cryptographic identity establishes who or what is acting',
+  },
+  {
+    assumption: 'Permissions establish what you can access',
+    replacement: 'Delegated authority establishes what an actor is entitled to decide and do',
+  },
+  {
+    assumption: 'Applications own their workflows',
+    replacement: 'Independent agents coordinate across organizational boundaries',
+  },
+  {
+    assumption: 'Contracts define relationships',
+    replacement: 'Machine-verifiable agreements and obligations govern interactions',
+  },
+  {
+    assumption: 'Logs establish accountability',
+    replacement: 'Verifiable receipts connect authority, evidence, decisions, and outcomes',
+  },
+  {
+    assumption: 'Humans are the only economic actors',
+    replacement: 'Humans and authorized AI agents both participate in economic activity',
+  },
+  {
+    assumption: 'Governance is internal overhead',
+    replacement: 'Governance becomes shared, reusable economic infrastructure',
+  },
+];
 
 export default function WhyPage() {
   return (
     <>
-      <Section className="pt-16 pb-10">
-        <Eyebrow>Why</Eyebrow>
-        <H1 className="mt-3">
-          Autonomous systems can act faster than institutions can verify
-          authority.
-        </H1>
+      <Section className="pt-16 pb-8">
+        <Eyebrow>The problem</Eyebrow>
+        <H1 className="mt-3">The missing layer is legitimate authority.</H1>
         <Lede className="mt-5 max-w-prose">
-          Identity systems prove who an actor is. Access controls decide what
-          they can call. Logs record what they did. None of these, alone or
-          together, give boards, auditors, regulators, or counterparties what
-          they actually need: an evidentiary chain that ties a specific
-          autonomous action to a specific delegated authority, with consent,
-          policy, and revocation state preserved.
+          Today’s systems establish trust, authority, and accountability inside
+          each organization and each application. An autonomous agent that
+          deals with an agent from another organization cannot inherit that
+          private context.
         </Lede>
       </Section>
-
-      <Section className="py-10">
-        <H2>The gap</H2>
-        <div className="mt-6 grid md:grid-cols-3 gap-5">
-          <Card>
-            <CardHeader eyebrow="Identity" title="Necessary, not sufficient" />
-            <CardBody>
-              <p className="text-sm">
-                Knowing an agent is who it claims to be is the start of
-                accountability, not the end. An identified agent operating
-                outside its authorized scope is still operating outside its
-                authorized scope.
-              </p>
-            </CardBody>
-          </Card>
-          <Card>
-            <CardHeader
-              eyebrow="Access control"
-              title="Local, not portable"
-            />
-            <CardBody>
-              <p className="text-sm">
-                ACLs and IAM rules live inside individual systems. They do not
-                travel between organizations or between agents. Cross-agent
-                delegation is invisible to the systems being acted upon.
-              </p>
-            </CardBody>
-          </Card>
-          <Card>
-            <CardHeader eyebrow="Logs" title="After-the-fact, untrusted" />
-            <CardBody>
-              <p className="text-sm">
-                Logs describe behavior but do not prove authority for that
-                behavior. They can be tampered with, lost, or selectively
-                produced. They are a record of the system, not of the
-                relationship between principal and subject.
-              </p>
-            </CardBody>
-          </Card>
-        </div>
-      </Section>
-
-      <Section className="py-10">
-        <H2>The solution</H2>
+      <Section className="py-8">
+        <H2>What has to travel with the action</H2>
         <Lede className="mt-4 max-w-prose">
-          Chain-of-custody for autonomous execution. Each step in the
-          delegation graph carries a signed credential. Each action produces a
-          signed, hash-chained receipt that references the credential, the
-          policy, the consent, and the outcome. Revocation is first-class and
-          cascades.
+          The agent needs to prove its authority, negotiate obligations, execute
+          within constraints, and produce evidence of what occurred. Improving
+          identity, access control, or logging one at a time does not create
+          that portable record.
         </Lede>
-        <div className="mt-6 flex flex-wrap gap-2">
-          <Pill tone="custody">credentialed volition</Pill>
-          <Pill tone="custody">evidentiary execution</Pill>
-          <Pill tone="custody">revocation as a primitive</Pill>
+        <div className="mt-8 space-y-3">
+          {ROWS.map((row) => (
+            <Card key={row.assumption}>
+              <CardBody>
+                <div className="grid md:grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-xs uppercase tracking-eyebrow text-brand-cerulean">
+                      Existing assumption
+                    </p>
+                    <p className="mt-2 text-sm">{row.assumption}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs uppercase tracking-eyebrow text-brand-cerulean">
+                      What autonomous commerce needs
+                    </p>
+                    <p className="mt-2 text-sm">{row.replacement}</p>
+                  </div>
+                </div>
+              </CardBody>
+            </Card>
+          ))}
         </div>
       </Section>
-
-      <Section className="py-10">
-        <H2>Worked examples</H2>
-        <div className="mt-6 grid md:grid-cols-3 gap-5">
-          <Card>
-            <CardHeader title="Delegated procurement" />
-            <CardBody>
-              <p className="text-sm">
-                A finance leader delegates an agent to purchase office goods up
-                to a fixed ceiling, from a vendor allowlist, for a quarter.
-                The agent in turn delegates a narrower scope to a sub-agent.
-                Each purchase yields a receipt that references the entire
-                delegation chain. Revocation at any layer cascades.
-              </p>
-            </CardBody>
-          </Card>
-          <Card>
-            <CardHeader title="Cross-org research access" />
-            <CardBody>
-              <p className="text-sm">
-                A research consortium grants a holon read-only access to a
-                shared dataset for the duration of an approved study. The
-                holon&apos;s verifier daemon produces a receipt for every read.
-                When the study closes, the consortium revokes; outstanding
-                receipts remain valid evidence of past access.
-              </p>
-            </CardBody>
-          </Card>
-          <Card>
-            <CardHeader title="Operational AI assist" />
-            <CardBody>
-              <p className="text-sm">
-                A clinical operations team delegates an assistive agent to
-                triage non-clinical workflows under strict policy constraints.
-                Every action carries a receipt that an auditor can later
-                verify against the issued AVC and the active policy at
-                execution time.
-              </p>
-            </CardBody>
-          </Card>
-        </div>
+      <Section className="py-8">
+        <H2>Where a payment mandate stops</H2>
+        <Lede className="mt-4 max-w-prose">
+          Payment authorization is not legitimate decision-making authority. An
+          agent may be allowed to spend a budget and still lack authority to
+          select a vendor, a record of the evidence, disclosure of conflicts,
+          a check that the delegation is still valid, or a way for an outside
+          party to verify that chain without entering the organization’s
+          systems.
+        </Lede>
+        <p className="mt-6 text-sm">
+          <Link href="/proof-of-authority" className="underline">
+            Proof of Authority
+          </Link>
+          {' · '}
+          <Link href="/standards" className="underline">
+            Standards
+          </Link>
+        </p>
       </Section>
+      <PilotBanner />
     </>
   );
 }

@@ -21,10 +21,16 @@ import { Pill } from '@/components/ui/Pill';
 import { StatusPill } from '@/components/ui/StatusPill';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import { mockIncidents, mockNetworkMetrics } from '@/lib/mock-data';
+import { RELEASE_VERSION } from '@/lib/public-site';
 import { fmtDate } from '@/lib/format';
 import type { Incident } from '@/lib/types';
+import { publicMetadata } from '@/lib/public-site';
 
-export const metadata = { title: 'Status' };
+export const metadata = publicMetadata({
+  title: 'Status',
+  description: 'Status. EXOCHAIN is the trust fabric for autonomous commerce.',
+  path: '/status',
+});
 
 const incidentCols: Column<Incident>[] = [
   { key: 'severity', header: 'Severity', render: (r) => <Pill tone={r.severity === 'sev1' ? 'alert' : r.severity === 'sev2' ? 'signal' : 'roadmap'}>{r.severity.toUpperCase()}</Pill> },
@@ -47,8 +53,8 @@ export default function Page() {
           status feed is wired they are labeled <em>mock</em>.
         </Lede>
         <div className="mt-4 flex flex-wrap gap-2">
-          <Pill tone="signal">alpha</Pill>
-          <Pill tone="custody">network: {m.networkMode}</Pill>
+          <Pill tone="signal">beta</Pill>
+          <Pill tone="custody">release {RELEASE_VERSION}</Pill>
         </div>
       </Section>
 
@@ -62,7 +68,8 @@ export default function Page() {
         </div>
         <p className="mt-4 text-xs text-ink/60 dark:text-vellum-soft/60">
           Last seen <span className="font-mono">{fmtDate(m.lastSeenISO)}</span>.
-          Last release <span className="font-mono">{m.lastReleaseTag}</span>.
+          Software release <span className="font-mono">{RELEASE_VERSION}</span> (beta).
+          The counts above are mock until a live status feed is wired.
         </p>
       </Section>
 

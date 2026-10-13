@@ -20,8 +20,8 @@ import { Card, CardBody, CardHeader } from '@/components/ui/Card';
 export const metadata = { title: 'Releases' };
 
 const REL = [
-  { tag: 'v0.4.2-alpha', date: '2026-04-30', notes: 'Hardened settlement-quote idempotency. Validator gossip backpressure improvements.' },
-  { tag: 'v0.4.1-alpha', date: '2026-04-12', notes: 'AVC delegation scope-narrowing tighten-up. Threat model entry T-013 mitigated.' }
+  { tag: 'v0.2.7', date: '2026-04-30', notes: 'Hardened settlement-quote idempotency. Validator gossip backpressure improvements.' },
+  { tag: 'v0.2.6', date: '2026-04-12', notes: 'AVC delegation scope-narrowing tighten-up. Threat model entry T-013 mitigated.' }
 ];
 
 export default function Page() {

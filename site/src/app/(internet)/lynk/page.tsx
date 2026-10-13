@@ -21,12 +21,16 @@ import { Code, Pre } from '@/components/ui/Code';
 import { Disclaimer } from '@/components/ui/Disclaimer';
 import { Pill } from '@/components/ui/Pill';
 import { Eyebrow, H1, H2, Lede, Section } from '@/components/ui/Section';
+import { withCanonical } from '@/lib/public-site';
 
-export const metadata = {
-  title: 'LYNK Protocol',
-  description:
-    'EXOCHAIN LYNK Protocol discovery for receipted OpenAI and MCP usage, bounded to the tested core receipt adapter path.'
-};
+export const metadata = withCanonical(
+  {
+    title: 'LYNK Protocol',
+    description:
+      'EXOCHAIN LYNK Protocol discovery for receipted OpenAI and MCP usage, bounded to the tested core receipt adapter path.'
+  },
+  '/lynk'
+);
 
 const supportedLanes = [
   {

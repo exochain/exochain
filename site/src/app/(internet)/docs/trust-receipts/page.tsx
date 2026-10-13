@@ -15,8 +15,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { DocPage } from '@/components/content/DocPage';
+import { publicMetadata } from '@/lib/public-site';
 
-export const metadata = { title: 'Trust Receipts' };
+export const metadata = publicMetadata({
+  title: 'Trust Receipts',
+  description: 'Trust Receipts. EXOCHAIN is the trust fabric for autonomous commerce.',
+  path: '/docs/trust-receipts',
+});
 
 export default function Page() {
   return (

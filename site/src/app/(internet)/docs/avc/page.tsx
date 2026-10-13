@@ -15,8 +15,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { DocPage } from '@/components/content/DocPage';
+import { publicMetadata } from '@/lib/public-site';
 
-export const metadata = { title: 'AVC' };
+export const metadata = publicMetadata({
+  title: 'AVC',
+  description: 'AVC. EXOCHAIN is the trust fabric for autonomous commerce.',
+  path: '/docs/avc',
+});
 
 export default function Page() {
   return (

@@ -1,12 +1,21 @@
 # EXOCHAIN public discovery for AI coding agents
 
 Site: https://exochain.com
+Mirrors with the same content: https://exochain.ai and https://exochain.net
+Canonical host: https://exochain.com
 Project: EXOCHAIN
-Purpose: Chain-of-custody infrastructure for autonomous execution.
+Purpose: The trust fabric for autonomous commerce. Beta v0.2.7. Normative specification v2.2. Apache-2.0 core.
+Publisher: EXOCHAIN PBC. Legal notices: legal@exochain.com.
 
 Important public pages:
+- / - Trust fabric positioning, Proof of Authority, and design-partner pilot.
+- /why - The problem: payment authorization is not legitimate decision-making authority.
+- /proof-of-authority - Working category concept, not a new cryptographic primitive or an industry standard.
+- /standards - Interoperate with MCP, A2A, x402, and AP2.
+- /developers - Intended two-call experience. The verify/attest sample is illustrative API design, not the current EXOCHAIN SDK.
+- /ecosystem - EXOCHAIN, CrossChecked, AVC, and the AI-SDLC Institute.
+- /engagement - Pilot or implementation, platform licensing, and managed governance services. No public prices.
 - /lynk - EXOCHAIN LYNK Protocol discovery for receipted LLM and MCP usage.
-- /developers - SDK and node quickstart.
 - /trust-receipts - Trust receipt anatomy and evidence model.
 - /docs - Public documentation index.
 - /trust-center - Current public trust posture and roadmap separation.

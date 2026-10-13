@@ -16,8 +16,13 @@
 
 import Link from 'next/link';
 import { DocPage } from '@/components/content/DocPage';
+import { publicMetadata } from '@/lib/public-site';
 
-export const metadata = { title: 'Security Model' };
+export const metadata = publicMetadata({
+  title: 'Security Model',
+  description: 'Security Model. EXOCHAIN is the trust fabric for autonomous commerce.',
+  path: '/docs/security',
+});
 
 export default function Page() {
   return (

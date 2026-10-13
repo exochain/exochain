@@ -19,8 +19,13 @@ import { Card, CardBody, CardHeader } from '@/components/ui/Card';
 import { Pre } from '@/components/ui/Code';
 import { ZeroPriceBanner } from '@/components/ui/ZeroPriceBanner';
 import { ZeroPricedSettlementDiagram } from '@/components/diagrams/ZeroPricedSettlement';
+import { publicMetadata } from '@/lib/public-site';
 
-export const metadata = { title: 'Trust Receipts' };
+export const metadata = publicMetadata({
+  title: 'Trust Receipts',
+  description: 'Trust Receipts. EXOCHAIN is the trust fabric for autonomous commerce.',
+  path: '/trust-receipts',
+});
 
 export default function TrustReceiptsPage() {
   return (
