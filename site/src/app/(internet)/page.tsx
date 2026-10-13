@@ -34,7 +34,7 @@ import {
 } from '@/lib/public-site';
 
 export const metadata = publicMetadata({
-  title: 'The trust fabric for autonomous commerce',
+  title: 'Proven Agentic Action Authority',
   description: SITE_DESCRIPTION,
   path: '/',
   absoluteTitle: SITE_TITLE,
@@ -130,14 +130,15 @@ export default function HomePage() {
             <div className="mb-6 h-px w-24 bg-brand-charter" />
             <Eyebrow>The trust fabric for autonomous commerce</Eyebrow>
             <H1 className="mt-4 font-light tracking-normal text-brand-vault">
-              Make EXOCHAIN the trust layer, not the empire.
+              Proven Agentic Action Authority
             </H1>
             <Lede className="mt-6 max-w-prose text-brand-midnight/80">
-              Accountable autonomy is infrastructure. An agent should be able
-              to prove its authority, carry obligations, and produce evidence
-              of what occurred — including when the other party belongs to a
-              different organization.
+              Every agent action carries proof of who authorized it, the limits
+              it ran under, and AI guarding with an E-STOP that fails closed.
             </Lede>
+            <p className="mt-4 max-w-prose text-base text-brand-midnight/80">
+              E-STOP is a current platform capability. Revocation, policy deny, and fail-closed gates stop an action that is outside authority.
+            </p>
             <p className="mt-4 max-w-prose text-base text-brand-midnight/80">
               Payment authorization is not legitimate decision-making authority.
             </p>
@@ -191,6 +192,9 @@ export default function HomePage() {
       <Section className="py-12" id="problem">
         <Eyebrow>The problem</Eyebrow>
         <H2 className="mt-3">Trust is still trapped inside each application.</H2>
+        <p className="mt-4 max-w-prose text-xl text-brand-vault">
+          {"When an agent acts on your behalf, don't get left holding the bag."}
+        </p>
         <Lede className="mt-4 max-w-prose">
           Enterprise software assumes identity, permissions, contracts, and
           logs are enough. Autonomous agents act across organizational

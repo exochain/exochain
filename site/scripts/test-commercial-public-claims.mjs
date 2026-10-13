@@ -53,6 +53,10 @@ const publicCopy = [
 const joined = publicCopy.map(([, source]) => source).join('\n');
 
 for (const needle of [
+  'Proven Agentic Action Authority',
+  'Every agent action carries proof of who authorized it, the limits it ran under, and AI guarding with an E-STOP that fails closed.',
+  "When an agent acts on your behalf, don't get left holding the bag.",
+  'E-STOP is a current platform capability. Revocation, policy deny, and fail-closed gates stop an action that is outside authority.',
   'Proof of Authority',
   'working category concept',
   'not a new cryptographic primitive',
@@ -82,6 +86,11 @@ for (const needle of [
 }
 
 for (const [relative, source] of publicCopy) {
+  assert.doesNotMatch(
+    source,
+    /trust layer, not the empire/i,
+    `${relative} must not publish the internal trust-layer line`,
+  );
   assert.doesNotMatch(source, /\balpha\b/i, `${relative} must not say alpha`);
   assert.doesNotMatch(source, /production-certified/i, `${relative} must not say production-certified`);
   assert.doesNotMatch(source, /generally available/i, `${relative} must not say generally available`);

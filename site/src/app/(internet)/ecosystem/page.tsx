@@ -75,7 +75,7 @@ export default function EcosystemPage() {
     <>
       <Section className="pt-16 pb-8">
         <Eyebrow>Ecosystem</Eyebrow>
-        <H1 className="mt-3">Make EXOCHAIN the trust layer, not the empire.</H1>
+        <H1 className="mt-3">One fabric. Separate roles.</H1>
         <Lede className="mt-5 max-w-prose">
           Independent companies, developers, agents, and institutions should
           be able to build and transact on a shared fabric. Owning every

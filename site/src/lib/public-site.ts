@@ -38,10 +38,10 @@ export const CORE_LICENSE = 'Apache-2.0';
 
 export const SITE_NAME = 'EXOCHAIN';
 
-export const SITE_TITLE = 'EXOCHAIN — The trust fabric for autonomous commerce';
+export const SITE_TITLE = 'EXOCHAIN — Proven Agentic Action Authority';
 
 export const SITE_DESCRIPTION =
-  'EXOCHAIN is the trust fabric for autonomous commerce. Proof of Authority is a working category concept: a portable, independently verifiable claim that an agent action falls within valid delegated authority, satisfies constraints, and has an attributable outcome.';
+  'Every agent action carries proof of who authorized it, the limits it ran under, and AI guarding with an E-STOP that fails closed.';
 
 export function canonicalUrl(path: string): string {
   const normalized = path.startsWith('/') ? path : `/${path}`;
