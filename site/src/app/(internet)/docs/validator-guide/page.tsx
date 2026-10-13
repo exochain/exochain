@@ -50,9 +50,9 @@ export default function Page() {
       <h2>Slashing</h2>
       <p>
         Slashing rules are governed by the constitutional kernel and are
-        published as part of governance documents. Slashing is a placeholder
-        in the alpha; consult the latest governance amendment for the
-        active rule set.
+        published as part of governance documents. This beta site does not
+        publish an active public slashing rule set; consult the latest
+        governance amendment before treating any rule here as in force.
       </p>
     </DocPage>
   );

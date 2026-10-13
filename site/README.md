@@ -57,6 +57,7 @@ npm run lint         # next lint
 npm run build        # production build
 npm run security:auth-boundary
 npm run security:lynk-public-claims
+npm run security:status-probe
 npm start            # serve the production build
 ```
 
@@ -119,8 +120,14 @@ rejected by middleware and server-side session loading.
 
 ## What's mocked vs. real
 
-- **No live network calls.** All data renders from typed mocks in
-  `src/lib/mock-data.ts`. Numeric metrics are visibly labeled `mock`.
+- **Public status is repository data.** `/status` reads
+  `crates/exo-node/src/public-status.json` (the file packaged with the
+  node) and, in the browser, the raw same-origin `/health` and `/ready`
+  bodies. It does not invent network metrics. The site build's working
+  directory is `site/`; the loader resolves the crate file from there.
+- **Extranet and intranet consoles are mocks.** Those routes still render
+  typed mocks in `src/lib/mock-data.ts`. Numeric metrics there are labeled
+  `mock`.
 - **Local-only development auth.** The `exo-session` cookie is signed with
   `EXO_SITE_SESSION_SECRET`; development login fails closed unless explicitly
   enabled outside production.
@@ -155,6 +162,51 @@ rejected by middleware and server-side session loading.
   are required by the public page.
 - **Rollback path:** remove `/lynk`, `public/llms.txt`, and the public links
   from navigation, footer, home, and developer resources.
+
+## Status probe intake
+
+`LiveGatewayProbe` is adjacent-surface code. When this site is served from
+the same origin as exo-gateway or exo-node, the browser reads those
+processes' public probes and displays the raw response text.
+
+- **Classification:** adjacent public surface. It is not the constitutional
+  trust fabric.
+- **Owner / maintainer:** EXOCHAIN Foundation public-site maintainers.
+- **Deployment status:** production public website when this Next.js app is
+  deployed. The probe does not by itself claim a runtime deployment. The
+  v0.2.7 release notes claim no runtime deployment; a live response describes
+  that process only.
+- **Allowed claims:** show the HTTP status and body returned by same-origin
+  `GET /health` and `GET /ready`. Publication facts stay in
+  `crates/exo-node/src/public-status.json`.
+- **Disallowed claims:** the probe must not be described as general
+  availability, a production network, validator counts, peer counts,
+  committed height, uptime percent, or an incident history. It must not
+  imply the site mints consent, authority, provenance, or governance
+  outcomes.
+- **Core access:** read-only `GET` of `/health` and `/ready` on the page's
+  own origin. The component does not write EXOCHAIN core state, signatures,
+  credentials, governance outcomes, consent records, or provenance records.
+- **Trust boundary:** the browser calls only the site origin. Response
+  bodies are untrusted text and are rendered as text. A missing route,
+  network failure, or timeout is shown for that probe alone. This component
+  does not proxy to a configured upstream URL. If the site origin is not
+  exo-gateway, the probe shows whatever that origin returns, including a
+  404.
+- **Secrets / runtime configuration:** none. The component reads no
+  `DATABASE_URL`, bearer token, tenant id, gateway URL, or other secret.
+  The only repository input for the surrounding page is
+  `crates/exo-node/src/public-status.json`, resolved from the `site/`
+  working directory. Each probe aborts after 5000 ms.
+- **Test / CI gate:** from `site/`, `npm run security:status-probe`. The
+  node page's gateway header is covered by
+  `cargo test -p exochain-gateway -- gateway_status_path_allows_status_assets_csp`
+  and
+  `cargo test -p exochain-node --bin exochain status_route_renders_repository_facts_without_fictional_metrics`.
+- **Rollback / disablement:** remove `<LiveGatewayProbe />` from
+  `src/app/(internet)/status/page.tsx`. The published-release facts remain.
+  Deleting the component stops the browser fetches. No secret rotation is
+  required.
 
 ## Design system
 
@@ -198,7 +250,7 @@ acceptance criteria.
   defaults.
 - ✅ Five named diagrams render at all viewports without overflow.
 - ✅ `ZeroPriceBanner` appears on every settlement-related page.
-- ✅ Status page shows `mock` labels on every numeric metric.
+- ✅ Status page shows the published release and does not invent network metrics.
 - ✅ Middleware blocks unauthenticated `/app/*` and `/internal/*` requests
   and redirects to the corresponding login.
 - ✅ No copy on the public site claims completed audits, regulatory

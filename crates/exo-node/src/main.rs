@@ -57,6 +57,7 @@ mod passport;
 mod pdp_store;
 mod private_file;
 mod provenance;
+mod public_status;
 mod reactor;
 mod receipt_dashboard;
 mod root_genesis;
@@ -1228,6 +1229,7 @@ async fn start_node(
 
     // Build the dashboard router (serves GET /).
     let dashboard_router = dashboard::dashboard_router();
+    let public_status_router = public_status::public_status_router();
 
     // Build the challenge/dispute router.
     let challenge_store = Arc::new(std::sync::Mutex::new(challenges::ChallengeStore::new()));
@@ -1451,6 +1453,7 @@ async fn start_node(
         .merge(pdp_router)
         .merge(passport_router)
         .merge(dashboard_router)
+        .merge(public_status_router)
         .merge(challenge_router)
         .merge(provenance_router)
         .merge(receipt_dashboard_router)

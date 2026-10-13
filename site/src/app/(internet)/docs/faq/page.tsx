@@ -37,7 +37,7 @@ const QA: { q: string; a: string }[] = [
   },
   {
     q: 'Is the network production-ready?',
-    a: 'No. EXOCHAIN is in alpha. Validator membership, attestation, and pricing policy are all subject to change. See the Trust Center for current capabilities and the public roadmap.'
+    a: 'No. EXOCHAIN 0.2.7 is a published beta library release, not general availability. The release archives are legacy Rust libraries, not server executables, and the release notes claim no runtime deployment. See /status for the publication record and the default-off unaudited features.'
   }
 ];
 

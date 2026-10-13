@@ -41,6 +41,7 @@ release-verification safeguard below.
 | Version | Status |
 |---------|--------|
 | `main` branch | Supported for vulnerability intake and coordinated fixes |
+| `0.2.7` | Latest published GitHub Release (`2026-10-08`). Beta library publication. Release notes claim no runtime deployment. Supported for vulnerability intake on this source line |
 | `v0.1.0-alpha`, `v0.1.0-beta` | Unsigned pre-release git tags; not formal supported releases |
 
 ## Reporting a Vulnerability
@@ -130,8 +131,10 @@ The following are out of scope:
 ### Release Signing Key Policy
 
 Formal release tags must be signed with a GPG key held by an EXOCHAIN maintainer.
-The current repository contains unsigned pre-release tags (`v0.1.0-alpha` and
-`v0.1.0-beta`) and no `v0.1.0` formal release tag.
+The repository still contains unsigned pre-release tags (`v0.1.0-alpha` and
+`v0.1.0-beta`) and no `v0.1.0` formal release tag. GitHub Release `v0.2.7`
+is the latest published release. Verify that tag and its attestations before
+trusting a downloaded archive.
 
 | Field | Value |
 |-------|-------|

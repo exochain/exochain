@@ -432,6 +432,8 @@ const DASHBOARD_HTML: &str = r##"<!DOCTYPE html>
       <div class="update-dot" id="update-dot"></div>
       <span>refreshes every 3s</span>
       &middot;
+      <a href="/status">/status</a>
+      &middot;
       <a href="/health">/health</a>
       &middot;
       <a href="/ready">/ready</a>

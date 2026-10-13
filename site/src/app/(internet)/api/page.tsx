@@ -27,22 +27,22 @@ export default function Page() {
       <Eyebrow>API</Eyebrow>
       <H1 className="mt-3">API Reference</H1>
       <Lede className="mt-5 max-w-prose">
-        The full OpenAPI document is published by{' '}
-        <code>exo-gateway</code> and will be embedded here once the gateway
-        ships its public OpenAPI surface.
+        This site does not embed an OpenAPI document. Gateway routes are
+        implemented in <code>exo-gateway</code>; treat unpublished URL shapes
+        on this page as descriptions, not a contract.
       </Lede>
       <div className="mt-4 flex flex-wrap gap-2">
-        <Pill tone="roadmap">Roadmap · v0.5</Pill>
-        <Pill tone="unstable">Unstable</Pill>
+        <Pill tone="roadmap">Not mounted here</Pill>
+        <Pill tone="unstable">0.x</Pill>
       </div>
       <div className="mt-10 grid md:grid-cols-2 gap-5">
         <Card>
-          <CardHeader title="Until then" />
+          <CardHeader title="Where the routes live" />
           <CardBody>
             <p className="text-sm">
-              The endpoint shape is summarized in the Node API doc. The SDK
-              is the most stable contract; treat the gateway URL paths as
-              subject to change without notice.
+              The endpoint shape is summarized in the Node API doc. Published
+              SDK packages are the installable contract; treat gateway URL
+              paths as subject to change between minor versions.
             </p>
             <Link
               href="/docs/node-api"
@@ -53,12 +53,11 @@ export default function Page() {
           </CardBody>
         </Card>
         <Card>
-          <CardHeader title="When it ships" />
+          <CardHeader title="Not on this site" />
           <CardBody>
               <p className="text-sm">
-              We will mount Redocly here, served from the gateway&apos;s
-              authoritative <code>openapi.yaml</code>. Versioned snapshots
-              will be linked from the Trust Center.
+              This page does not mount a generated OpenAPI viewer and does
+              not promise a versioned public snapshot.
             </p>
           </CardBody>
         </Card>

@@ -17,6 +17,7 @@
 import Link from 'next/link';
 import { Logo } from './Logo';
 import { Pill } from '../ui/Pill';
+import { loadPublicStatus } from '@/lib/public-status';
 
 const cols = [
   {
@@ -63,6 +64,7 @@ const cols = [
 ];
 
 export function PublicFooter() {
+  const publicStatus = loadPublicStatus();
   return (
     <footer className="mt-24 border-t hairline">
       <div className="max-w-page mx-auto px-6 md:px-10 py-12 grid gap-10 md:grid-cols-5">
@@ -73,7 +75,7 @@ export function PublicFooter() {
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
             <Pill tone="neutral" className="border border-brand-charter/40 bg-brand-charter/10 text-brand-vault">
-              alpha
+              {publicStatus.maturity}
             </Pill>
             <Pill tone="neutral" className="border border-brand-signal/25 bg-brand-signal/10 text-brand-cerulean">
               zero-priced launch
@@ -107,7 +109,10 @@ export function PublicFooter() {
             implementation.
           </div>
           <div className="flex gap-3">
-            <span>EXOCHAIN is in alpha. Subject to change without notice.</span>
+            <span>
+              EXOCHAIN is in beta (0.x). The public API may change between
+              minor versions. Not general availability.
+            </span>
           </div>
         </div>
       </div>

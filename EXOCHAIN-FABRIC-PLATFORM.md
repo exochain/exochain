@@ -34,6 +34,8 @@ Document Owner: EXOCHAIN Foundation
 
 Status: DRAFT — Authoritative Source of Truth
 
+> **Authority note (ADR-001).** This file remains the v2.1 engineering elaboration. It is not the normative specification. The normative specification is EXOCHAIN Specification v2.2 (`EXOCHAIN_Specification_v2.2.pdf`). There is no v2.3 specification in this repository. Where this file calls itself the authoritative source of truth, [ADR-001](docs/adr/ADR-001-authority-of-text.md) treats that sentence as an engineering claim and ranks this document below the v2.2 specification.
+
 Supersedes: All prior EXOCHAIN documentation (v0.1–v1.2)
 
 Audience: Engineers, Architects, Security, Compliance, DevOps, Auditors
