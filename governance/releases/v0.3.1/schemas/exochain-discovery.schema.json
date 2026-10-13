@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://exochain.io/schemas/proposal/v0.3.1/exochain-discovery.schema.json",
+  "title": "EXOCHAIN v0.3.1 proposed /.well-known/exochain.json document",
+  "description": "PROPOSAL. Not approved. Extends ExochainDiscoveryResponse (base_url, routes, sdk, mcp) with optional commercial_services. This is not the A2A Agent Card. grants_authority on a commercial entry is fixed to false.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["base_url", "routes", "sdk", "mcp"],
+  "properties": {
+    "base_url": { "type": "string", "minLength": 1 },
+    "routes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["health", "ready", "avc"],
+      "properties": {
+        "health": { "type": "string", "minLength": 1 },
+        "ready": { "type": "string", "minLength": 1 },
+        "avc": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["issue", "validate", "receipts_emit", "receipts_get", "protocol"],
+          "properties": {
+            "issue": { "type": "string", "minLength": 1 },
+            "validate": { "type": "string", "minLength": 1 },
+            "receipts_emit": { "type": "string", "minLength": 1 },
+            "receipts_get": { "type": "string", "minLength": 1 },
+            "protocol": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "sdk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rust", "typescript", "python"],
+      "properties": {
+        "rust": { "type": "string", "minLength": 1 },
+        "typescript": { "type": "string", "minLength": 1 },
+        "python": { "type": "string", "minLength": 1 }
+      }
+    },
+    "mcp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["public_transport", "transports", "capabilities"],
+      "properties": {
+        "public_transport": { "type": "boolean" },
+        "transports": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "capabilities": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "commercial_services": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "agent_card_path",
+          "bailment_path",
+          "x402_verify_path",
+          "grants_authority"
+        ],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "agent_card_path": { "type": "string", "minLength": 1 },
+          "bailment_path": { "type": "string", "minLength": 1 },
+          "x402_verify_path": { "type": "string", "minLength": 1 },
+          "grants_authority": { "const": false }
+        }
+      }
+    }
+  }
+}
