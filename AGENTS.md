@@ -658,17 +658,24 @@ assert_eq!(output.fields.get("processed").unwrap(), "true");
 
 ## Cursor Cloud specific instructions
 
-Durable, non-obvious notes for running this workspace in a Cursor Cloud VM. The
-startup update script already refreshes the toolchain (see below); standard
+Durable, non-obvious notes for running this workspace in a Cursor Cloud VM.
+Cloud Agent `install` installs PostgreSQL, `libssl-dev`, Rust 1.98.1 with
+clippy, the `nightly-2026-09-21` rustfmt, sets the default toolchain to 1.98.1,
+and runs `cargo +1.98.1 fetch --locked`. Cloud Agent `start` starts the local
+PostgreSQL cluster and ensures database `exochain` exists. Standard
 build/test/lint/fmt commands live in `README.md` and `CONTRIBUTING.md` — use
-those, do not duplicate them here.
+those, do not duplicate them here. If `pg_isready` already succeeds, do not
+reinstall PostgreSQL.
 
 ### Toolchain
 
 - The workspace is Rust **edition 2024** and has MSRV **rustc 1.85+**. The base
-  VM image may pin an older default toolchain (e.g. 1.83), so install CI's
-  exact validation compiler with `rustup toolchain install 1.98.1 --profile minimal --component clippy`
-  and use explicit `cargo +1.98.1` for build, test, lint, and documentation.
+  VM image may pin an older default toolchain (e.g. 1.83) before `install`
+  runs. Cloud Agent `install` selects 1.98.1 as the default. Keep using
+  explicit `cargo +1.98.1` for build, test, lint, and documentation so commands
+  match CI. Install CI's validation compiler with
+  `rustup toolchain install 1.98.1 --profile minimal --component clippy`
+  only when `cargo +1.98.1 --version` is missing.
   This pinned validation does not establish Rust 1.99 compatibility. Nightly +
   `rustfmt` are installed only for the formatting gate. Install the same dated formatter as CI
   with `rustup toolchain install nightly-2026-09-21 --profile minimal --component rustfmt`;
@@ -686,9 +693,11 @@ those, do not duplicate them here.
 
 ### PostgreSQL is a required system dependency for the runtime
 
-The runnable binaries persist through Postgres via `sqlx`. Postgres is a
-**system dependency** (installed with `apt-get install postgresql`, NOT part of
-the update script). Start it and create a DB before running the servers:
+The runnable binaries persist through Postgres via `sqlx`. Cloud Agent
+`install` installs the PostgreSQL packages, and Cloud Agent `start` starts
+the cluster and ensures database `exochain` exists. If `pg_isready` already
+succeeds, export `DATABASE_URL` and skip the recovery commands. If the
+cluster is down, recover with:
 
 ```bash
 read -r cluster_version cluster_name _ < <(pg_lsclusters --no-header | awk 'NR == 1 { print $1, $2 }')
