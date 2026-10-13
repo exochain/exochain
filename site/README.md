@@ -81,13 +81,21 @@ rejected by middleware and server-side session loading.
 ### Public sitemap (excerpt)
 
 ```
-/  /why  /chain-of-custody  /avc  /trust-receipts
-/lynk  /custody-native-blockchain  /developers  /docs  /api  /node
+/  /why  /proof-of-authority  /standards  /developers  /ecosystem  /engagement
+/chain-of-custody  /avc  /trust-receipts
+/lynk  /custody-native-blockchain  /docs  /api  /node
 /trust-center  /security  /governance  /research  /status
 /blog  /contact  /brand  /legal/privacy  /legal/terms
 /docs/{getting-started,concepts,avc,trust-receipts,settlement,
        node-api,validator-guide,security,governance,glossary,faq}
 ```
+
+The same pages are served for `exochain.com`, `exochain.ai`, and `exochain.net`.
+Copy does not vary by hostname. Canonical URLs use `https://exochain.com`
+(`src/lib/public-site.ts`). Mirror hosts are listed in page metadata.
+`exochain.io` is the node dashboard, not this app. Railway should keep the
+website service root at `site/` and attach all three marketing domains to
+that one service.
 
 ### Extranet sitemap
 

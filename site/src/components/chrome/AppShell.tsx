@@ -90,7 +90,7 @@ export function AppShell({
       <div className="min-w-0">
         <div className="border-b hairline px-6 py-3 flex flex-wrap items-center gap-3 justify-between">
           <div className="flex items-center gap-3">
-            <Pill tone="signal">alpha</Pill>
+            <Pill tone="signal">beta</Pill>
             <Pill tone="custody">zero-priced launch</Pill>
             <span className="text-sm text-ink/70 dark:text-vellum-soft/70">
               EXOCHAIN extranet — every administrative action writes to the audit log.

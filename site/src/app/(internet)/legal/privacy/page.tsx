@@ -16,8 +16,13 @@
 
 import { Section, Eyebrow, H1, H2 } from '@/components/ui/Section';
 import { Disclaimer } from '@/components/ui/Disclaimer';
+import { publicMetadata } from '@/lib/public-site';
 
-export const metadata = { title: 'Privacy' };
+export const metadata = publicMetadata({
+  title: 'Privacy',
+  description: 'Privacy. EXOCHAIN is the trust fabric for autonomous commerce.',
+  path: '/legal/privacy',
+});
 
 export default function Page() {
   return (
@@ -44,9 +49,10 @@ export default function Page() {
         </p>
         <h2>Data subject requests</h2>
         <p>
-          Contact <code>privacy@exochain.io</code> for access, correction,
-          or deletion requests. We will respond within timelines required
-          by applicable law.
+          EXOCHAIN PBC publishes this site. Contact <code>privacy@exochain.io</code> for
+          access, correction, or deletion requests. Legal notices:
+          <code>legal@exochain.com</code>. We will respond within timelines
+          required by applicable law.
         </p>
       </div>
     </Section>

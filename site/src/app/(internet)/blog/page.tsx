@@ -16,8 +16,13 @@
 
 import { Section, Eyebrow, H1, Lede } from '@/components/ui/Section';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
+import { publicMetadata } from '@/lib/public-site';
 
-export const metadata = { title: 'Field Notes' };
+export const metadata = publicMetadata({
+  title: 'Field Notes',
+  description: 'Field Notes. EXOCHAIN is the trust fabric for autonomous commerce.',
+  path: '/blog',
+});
 
 const POSTS = [
   {
@@ -28,7 +33,7 @@ const POSTS = [
   },
   {
     date: '2026-04-12',
-    title: 'Validator attestation, the alpha way',
+    title: 'Validator attestation in beta',
     excerpt:
       'A practical writeup on what hardware attestation we are checking, what we are not yet checking, and how the observation period catches surprises before quorum.'
   },

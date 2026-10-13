@@ -18,8 +18,13 @@ import { Section, Eyebrow, H1, H2, Lede } from '@/components/ui/Section';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
 import { CustodyFlowDiagram } from '@/components/diagrams/CustodyFlow';
 import { Pill } from '@/components/ui/Pill';
+import { publicMetadata } from '@/lib/public-site';
 
-export const metadata = { title: 'Chain-of-Custody for AI' };
+export const metadata = publicMetadata({
+  title: 'Chain-of-Custody for AI',
+  description: 'Chain-of-Custody for AI. EXOCHAIN is the trust fabric for autonomous commerce.',
+  path: '/chain-of-custody',
+});
 
 export default function ChainOfCustodyPage() {
   return (

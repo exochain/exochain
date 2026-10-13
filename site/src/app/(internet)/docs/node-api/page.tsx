@@ -16,8 +16,13 @@
 
 import { DocPage } from '@/components/content/DocPage';
 import { Pre } from '@/components/ui/Code';
+import { publicMetadata } from '@/lib/public-site';
 
-export const metadata = { title: 'Node API' };
+export const metadata = publicMetadata({
+  title: 'Node API',
+  description: 'Node API. EXOCHAIN is the trust fabric for autonomous commerce.',
+  path: '/docs/node-api',
+});
 
 export default function Page() {
   return (

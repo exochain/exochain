@@ -16,20 +16,26 @@
 
 import type { Metadata } from 'next';
 import './globals.css';
+import { CANONICAL_ORIGIN, SITE_DESCRIPTION, SITE_TITLE } from '@/lib/public-site';
 
 export const metadata: Metadata = {
   title: {
-    default: 'EXOCHAIN — Chain-of-custody for autonomous execution',
+    default: SITE_TITLE,
     template: '%s · EXOCHAIN'
   },
-  description:
-    'EXOCHAIN is chain-of-custody infrastructure for autonomous execution. Credential autonomous intent, verify delegated authority, and preserve evidentiary custody for agents, holons, humans, and AI-native systems.',
-  metadataBase: new URL('https://exochain.io'),
+  description: SITE_DESCRIPTION,
+  metadataBase: new URL(CANONICAL_ORIGIN),
   openGraph: {
-    title: 'EXOCHAIN — Chain-of-custody for autonomous execution',
-    description:
-      'Custody-native blockchain. Credentialed volition. Evidentiary execution.',
-    type: 'website'
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION,
+    type: 'website',
+    siteName: 'EXOCHAIN',
+    url: CANONICAL_ORIGIN
+  },
+  twitter: {
+    card: 'summary',
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION
   },
   robots: { index: true, follow: true }
 };

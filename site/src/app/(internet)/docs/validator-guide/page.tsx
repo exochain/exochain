@@ -15,8 +15,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { DocPage } from '@/components/content/DocPage';
+import { publicMetadata } from '@/lib/public-site';
 
-export const metadata = { title: 'Validator Guide' };
+export const metadata = publicMetadata({
+  title: 'Validator Guide',
+  description: 'Validator Guide. EXOCHAIN is the trust fabric for autonomous commerce.',
+  path: '/docs/validator-guide',
+});
 
 export default function Page() {
   return (
@@ -51,7 +56,7 @@ export default function Page() {
       <p>
         Slashing rules are governed by the constitutional kernel and are
         published as part of governance documents. Slashing is a placeholder
-        in the alpha; consult the latest governance amendment for the
+        in beta; consult the latest governance amendment for the
         active rule set.
       </p>
     </DocPage>

@@ -17,8 +17,13 @@
 import { Section, Eyebrow, H1, H2, Lede } from '@/components/ui/Section';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
 import { Logo } from '@/components/chrome/Logo';
+import { publicMetadata } from '@/lib/public-site';
 
-export const metadata = { title: 'Brand & Press Kit' };
+export const metadata = publicMetadata({
+  title: 'Brand & Press Kit',
+  description: 'Brand & Press Kit. EXOCHAIN is the trust fabric for autonomous commerce.',
+  path: '/brand',
+});
 
 const colors = [
   { name: 'Vault', value: '#081E26', note: 'Primary dark background' },

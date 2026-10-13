@@ -17,8 +17,13 @@
 import Link from 'next/link';
 import { Section, Eyebrow, H1, H2, Lede } from '@/components/ui/Section';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
+import { publicMetadata } from '@/lib/public-site';
 
-export const metadata = { title: 'Run a Node' };
+export const metadata = publicMetadata({
+  title: 'Run a Node',
+  description: 'Run a Node. EXOCHAIN is the trust fabric for autonomous commerce.',
+  path: '/node',
+});
 
 export default function Page() {
   return (
@@ -41,7 +46,7 @@ export default function Page() {
               <p className="text-sm">
                 Lower bar. Runs the binary, exposes the gateway surface,
                 propagates blocks. Does not require hardware attestation in
-                alpha. Onboard at <Link href="/app/nodes" className="underline">/app/nodes</Link>.
+                beta. Onboard at <Link href="/app/nodes" className="underline">/app/nodes</Link>.
               </p>
             </CardBody>
           </Card>

@@ -237,7 +237,7 @@ Every administrative action — extranet or intranet — writes an audit log ent
 - Three-pillar block: AVC explainer · Trust receipt explainer · Zero-priced launch settlement explainer.
 - "Blockchain is the mechanism. Chain-of-custody is the purpose." callout.
 - Three CTAs by audience: Developers · Enterprises · Validators / Researchers.
-- Status strip: alpha · network mode · last release · public status link.
+- Status strip: beta · v0.2.7 · normative spec v2.2 · Apache-2.0 core.
 - Footer with full sitemap, legal, brand, contact.
 
 #### `/why`
@@ -323,7 +323,7 @@ Every administrative action — extranet or intranet — writes an audit log ent
 - Governance and agent-economy papers as published.
 
 #### `/status`
-- Network mode banner: `alpha · testnet · pre-release`.
+- Network mode banner: `beta · v0.2.7`. Numeric metrics that are not live stay labeled `mock`.
 - Node count placeholder, validator count placeholder, peer count placeholder, last committed height placeholder.
 - Uptime widgets per service: gateway, node API, docs, status itself.
 - Known incidents list with severity and resolution state. **No fake green checks.** When metrics are mocked, label them `mock`.
@@ -581,7 +581,7 @@ All data fields shown to end users must be sourced from typed mocks in `/web/src
 
 ## 10. Compliance and disclosures (public copy)
 
-- "EXOCHAIN is in alpha. The protocol, APIs, governance, and economic layer are subject to change without notice."
+- "EXOCHAIN is in beta (v0.2.7). The protocol, APIs, governance, and economic layer are subject to change without notice. Normative specification v2.2. Core software is Apache-2.0."
 - "Zero-priced launch settlement is in effect. Every active price resolves to zero with an explicit `ZeroFeeReason`. Future governance amendments may enable nonzero pricing."
 - "Statements about cryptographic assumptions reflect implemented primitives at the time of writing. See `/trust-center` for the current attestation."
 - "EXOCHAIN does not provide investment, legal, or financial advice. AVCs are operational credentials, not securities."

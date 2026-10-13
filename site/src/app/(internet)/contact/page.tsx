@@ -17,30 +17,44 @@
 import { ContactForm } from './ContactForm';
 import { Section, Eyebrow, H1, Lede } from '@/components/ui/Section';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
+import { publicMetadata } from '@/lib/public-site';
 
-export const metadata = { title: 'Contact' };
+export const metadata = publicMetadata({
+  title: 'Contact',
+  description:
+    'Talk to EXOCHAIN PBC about a design-partner pilot. Legal notices go to legal@exochain.com.',
+  path: '/contact',
+});
 
 export default function Page() {
   return (
     <>
-      <Section className="pt-16 pb-8">
-        <Eyebrow>Contact</Eyebrow>
-        <H1 className="mt-3">Talk to EXOCHAIN.</H1>
+      <Section className="pt-16 pb-8" id="pilot">
+        <Eyebrow>EXOCHAIN PBC</Eyebrow>
+        <H1 className="mt-3">Talk to us about a design-partner pilot.</H1>
         <Lede className="mt-5 max-w-prose">
-          We will direct your message to the right team. For urgent
-          security findings, please use the responsible-disclosure channel
-          on the security page.
+          Tell us the workflow, the organizations involved, and what a
+          counterparty would need to verify. We will direct your message to
+          the right team. For urgent security findings, use the
+          responsible-disclosure channel on the security page.
         </Lede>
       </Section>
       <Section className="py-8">
         <div className="grid md:grid-cols-[1.2fr_1fr] gap-6">
           <Card>
-            <CardHeader title="Early access form" />
+            <CardHeader title="Design-partner pilot" />
             <CardBody>
               <ContactForm />
             </CardBody>
           </Card>
           <div className="space-y-4">
+            <Card>
+              <CardHeader title="Legal" />
+              <CardBody>
+                <p className="text-sm">EXOCHAIN PBC</p>
+                <p className="text-sm">legal@exochain.com</p>
+              </CardBody>
+            </Card>
             <Card>
               <CardHeader title="Press" />
               <CardBody>

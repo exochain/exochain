@@ -18,8 +18,13 @@ import Link from 'next/link';
 import { Section, Eyebrow, H1, Lede } from '@/components/ui/Section';
 import { Pill } from '@/components/ui/Pill';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
+import { publicMetadata } from '@/lib/public-site';
 
-export const metadata = { title: 'API Reference' };
+export const metadata = publicMetadata({
+  title: 'API Reference',
+  description: 'API Reference. EXOCHAIN is the trust fabric for autonomous commerce.',
+  path: '/api',
+});
 
 export default function Page() {
   return (
