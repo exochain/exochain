@@ -145,6 +145,30 @@ protection rule, with current repository-setting evidence retained alongside the
 release record. Dry runs still traverse the `release` environment but perform no
 publication or GitHub Release write.
 
+### Retained recovery operator notes
+
+These notes record behavior observed while completing the retained `v0.2.7`
+GitHub Release. They do not relax source, tag, asset, digest, or signature checks.
+
+- GitHub immutable-releases protection leaves the pinned draft at
+  `immutable: false` and sets `immutable: true` when that release is published.
+  `tools/recover_github_release_027.py` expects exactly that flip on the
+  post-publish readback. A draft that is already immutable, or a published
+  release that is still mutable, fails closed. Every other preserved release
+  field is still compared exactly.
+- Constitutional and release gates must pin the Rust toolchain (`1.98.1` for
+  build, test, and Clippy; `nightly-2026-09-21` for `rustfmt`). A floating
+  stable toolchain is not an acceptable gate input.
+- A normal `201` from `uploads.github.com` does not carry `X-RateLimit-*`
+  headers. The recovery client already counted that request against its local
+  allowance and must not treat the missing headers as a restored budget or as
+  a reason to retry.
+- A live recovery traverses the `release` environment twice: the Release
+  Environment Gate job and the Complete Retained 0.2.7 GitHub Release job.
+  GitHub does not reuse an environment approval across jobs, so Max approves
+  that environment once for each job. `release-second` remains the separate
+  second approver.
+
 ## Rollback (Yank) Procedure
 
 Once a version is published to crates.io it cannot be deleted, but it can be yanked

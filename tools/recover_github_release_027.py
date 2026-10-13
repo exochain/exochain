@@ -584,11 +584,26 @@ def repairable_predecessor(provider, release, expected, predecessor, *, assets=N
     raise ValueError('pinned retained draft is not the approved predecessor')
 
 
+def require_publication_immutability(release, predecessor):
+    """Drafts stay mutable. Immutable-releases protection sets immutable on publish."""
+    require(predecessor.get('immutable') is False, 'predecessor immutability pin differs')
+    observed = release.get('immutable')
+    require(type(observed) is bool, 'release immutable flag is not boolean')
+    if release['draft'] is True:
+        require(observed is False, 'draft became immutable before publication')
+        return
+    require(release['draft'] is False and observed is True,
+            'published release stayed mutable under immutable-releases protection')
+
+
 def validate_continued_release(release, expected, predecessor):
     identifier = validate_release(release, expected)
     require(identifier == 400420101, 'transitioned release ID differs')
     for field in PRESERVED_RELEASE_FIELDS:
-        if field in ('draft', 'published_at'):
+        # draft and published_at change together on publication. immutable is
+        # the same kind of GitHub-owned transition: false on the pinned draft,
+        # true after publish when the repository enforces immutable releases.
+        if field in ('draft', 'published_at', 'immutable'):
             continue
         require(field in release and type(release[field]) is type(predecessor[field]) and
                 release[field] == predecessor[field], 'transitioned release metadata differs: ' + field)
@@ -596,6 +611,7 @@ def validate_continued_release(release, expected, predecessor):
             ((release['draft'] is True and release['published_at'] is None) or
              (release['draft'] is False and type(release['published_at']) is str)),
             'transitioned release publication state differs')
+    require_publication_immutability(release, predecessor)
     return identifier
 
 
@@ -1282,6 +1298,8 @@ def validate_transitioned_release(provider, release, expected, predecessor, *, a
     if allow_existing_assets is not True:
         require(release.get('assets') == [] and provider.list_assets(identifier) == [],
                 'transitioned draft is not the same empty unpublished release')
+    # This readback is still the unpublished draft, so immutable must stay
+    # false. The false-to-true flip is accepted only after publication.
     for field in PRESERVED_RELEASE_FIELDS:
         require(field in release and type(release[field]) is type(predecessor[field]) and
                 release[field] == predecessor[field], 'transition changed release ' + field)
