@@ -167,4 +167,16 @@ require_exact_pin "zeroize" "1.8.2"
 require_exact_pin "ml-dsa" "0.1.0-rc.7"
 require_exact_pin "rustls" "0.23.45"
 
+# Issue #812: default features pull pkcs8 and break crates.io consumers.
+require_default_features_disabled() {
+  local crate="$1"
+  if grep -Eq "^${crate}[[:space:]]*=[[:space:]]*\\{[^}]*default-features[[:space:]]*=[[:space:]]*false" "$manifest"; then
+    return 0
+  fi
+  echo "security-critical dependency must disable default features: ${crate}" >&2
+  return 1
+}
+
+require_default_features_disabled "ml-dsa"
+
 echo "workspace dependency exact pin test passed"
