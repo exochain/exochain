@@ -36,10 +36,11 @@ export default function Page() {
         </Disclaimer>
         <h2>Beta</h2>
         <p>
-          EXOCHAIN is in beta. Use of the protocol, the public site, and
-          the authenticated surfaces is subject to change without notice.
-          These terms are published by EXOCHAIN PBC. Legal notices:
-          legal@exochain.com.
+          EXOCHAIN is in beta (0.x, published v0.2.7), not general availability.
+          The public API may change between minor versions. Use of the
+          protocol, the public site, and the authenticated surfaces is
+          subject to change without notice. These terms are published by
+          EXOCHAIN PBC. Legal notices: legal@exochain.com.
         </p>
         <h2>No advice</h2>
         <p>

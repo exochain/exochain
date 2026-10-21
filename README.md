@@ -38,17 +38,21 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 | Metric | Value | Source |
 |--------|-------|--------|
 | Rust crates | 32 | `cargo metadata --no-deps --format-version 1` |
-| Rust source files | 508 | `git ls-files 'crates/**/*.rs'` |
-| Workspace tests (Linux) | 6,647 listed | Measured with `cargo test --workspace -- --list` after binding payment evidence to the requested transaction |
-| Workspace tests (macOS) | 6,651 listed | Prior macOS inventory plus the same portable payment-evidence tests, including transaction binding |
+| Rust source files | 509 | `git ls-files 'crates/**/*.rs'` |
+| Workspace tests (Linux) | 6,651 listed | Measured with `cargo test --workspace -- --list` after the public-status regressions |
+| Workspace tests (macOS) | 6,655 listed | Prior macOS inventory plus the same portable payment-evidence and public-status tests |
 | CI quality gates | 23 | `.github/workflows/ci.yml` numbered gates; required aggregator is separate |
-| Last verified published release | `v0.2.4` (observed `2026-09-16T18:29:42Z`; packages listed in snapshot) | [Publication snapshot](governance/releases/published-release-snapshot.json) |
+| Last verified published release | `v0.2.7` (observed `2026-10-09T00:42:24Z`; packages listed in snapshot) | [Publication snapshot](governance/releases/published-release-snapshot.json) |
 | License | Apache-2.0 for EXOCHAIN core primitives; commercial terms for Decision Forum, LegalDyne, CyberMedica, LiveSafe, and CrossChecked products | `governance/commercial-product-licensing.json`; product license files where present |
 | Live node health | Not inferred from repository state; verify each target at deploy or release time | `tools/verify_live_node_claim.sh` |
 
+`0.2.7` is a published **beta** library release, not general availability. While the version is `0.x`, the public API may change between minor versions. The normative specification is **v2.2** (`EXOCHAIN_Specification_v2.2.pdf`, [ADR-001](docs/adr/ADR-001-authority-of-text.md)). `EXOCHAIN-FABRIC-PLATFORM.md` is the v2.1 engineering elaboration and is subordinate to that specification. This repository does not contain a v2.3 specification.
+
+The `v0.2.7` GitHub Release states that each native archive contains 29 legacy `libexo_*.rlib` libraries, not server executables, and it claims no runtime deployment. Default-off `unaudited-*` features, plus `conformance-test-root`, are the current source boundary for unaudited surfaces. `GAP-REGISTRY.md` remains the gap ledger; its header still records the 2026-07-02 `v0.2.0-beta` snapshot and is not the 0.2.7 publication record. Public status is rendered from `crates/exo-node/src/public-status.json` at `/status` on the website and on the node.
+
 ### What is verified today
 
-- **Workspace test inventories are platform-specific**: the macOS count above was measured locally; the Linux count is expected from the previous Linux CI inventory plus five portable identity regressions and is not a current-head Linux measurement. `tools/test_repo_truth.sh` checks the native platform's actual listed count against its README row and fails CI on a mismatch. macOS includes additional ACL-specific tests; debug and release inventories can differ.
+- **Workspace test inventories are platform-specific**: the Linux count above was measured with `cargo test --workspace -- --list` after the public-status regressions; the macOS count is the prior macOS inventory plus those same portable tests. `tools/test_repo_truth.sh` checks the native platform's actual listed count against its README row and fails CI on a mismatch. macOS includes additional ACL-specific tests; debug and release inventories can differ.
 - **Build succeeds** for all library crates, binaries, tests, and benchmarks
 - **Clippy clean** under `-D warnings` for all workspace targets
 - **Format clean** under `cargo +nightly-2026-09-21 fmt --all -- --check`

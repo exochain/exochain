@@ -43,7 +43,7 @@ export default function Page() {
           <CardBody>
             <Pre>
 {`{
-  "policy_version": "beta-launch-1",
+  "policy_version": "mock-launch-zero",
   "default_amount": "0",
   "currency": "EXO",
   "default_zero_fee_reason": "launch_policy_zero",

@@ -125,9 +125,10 @@ export function PublicFooter() {
             © {new Date().getFullYear()} {LEGAL_ENTITY}. Core software is {CORE_LICENSE}.
           </div>
           <div className="max-w-xl text-right">
-            EXOCHAIN is in beta ({RELEASE_VERSION}). Subject to change without notice.
-            The same pages are served at exochain.com, exochain.ai, and exochain.net.
-            Canonical URLs use https://exochain.com.
+            EXOCHAIN is in beta ({RELEASE_VERSION}, 0.x), not general availability.
+            The public API may change between minor versions. The same pages are
+            served at exochain.com, exochain.ai, and exochain.net. Canonical URLs
+            use https://exochain.com.
           </div>
         </div>
       </div>

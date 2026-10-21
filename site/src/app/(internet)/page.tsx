@@ -158,6 +158,9 @@ export default function HomePage() {
                 normative spec {NORMATIVE_SPEC}
               </Pill>
               <Pill tone="neutral">{CORE_LICENSE} core</Pill>
+              <Link href="/status" className="underline decoration-brand-signal/40 underline-offset-4">
+                status
+              </Link>
               <Link href="/lynk" className="underline decoration-brand-signal/40 underline-offset-4">
                 LYNK
               </Link>
