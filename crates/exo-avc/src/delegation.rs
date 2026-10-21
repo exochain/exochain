@@ -31,10 +31,13 @@
 use std::collections::BTreeSet;
 
 use exo_authority::permission::Permission;
-use exo_core::{Hash256, Signature};
+use exo_core::{Hash256, Signature, Timestamp};
 
 use crate::{
-    credential::{AVC_SCHEMA_VERSION, AutonomousVolitionCredential, AvcDraft, issue_avc},
+    credential::{
+        AVC_SCHEMA_VERSION, AuthorityScope, AutonomousVolitionCredential, AutonomyLevel,
+        AvcConstraints, AvcDraft, issue_avc,
+    },
     error::AvcError,
 };
 
@@ -57,18 +60,7 @@ pub fn delegate_avc<F>(
 where
     F: FnOnce(&[u8]) -> Signature,
 {
-    if !parent.delegated_intent.delegation_allowed {
-        return Err(AvcError::DelegationRejected {
-            reason: "parent credential does not permit delegation".into(),
-        });
-    }
-
-    if parent.constraints.max_delegation_depth == 0 {
-        return Err(AvcError::DelegationRejected {
-            reason: "parent constraints.max_delegation_depth is zero".into(),
-        });
-    }
-
+    require_delegating_parent(parent)?;
     if child.schema_version != AVC_SCHEMA_VERSION {
         return Err(AvcError::UnsupportedSchema {
             got: child.schema_version,
@@ -76,7 +68,13 @@ where
         });
     }
 
-    enforce_narrowing(parent, &child)?;
+    enforce_narrowing(
+        parent,
+        child.delegated_intent.autonomy_level,
+        &child.authority_scope,
+        &child.constraints,
+        child.expires_at,
+    )?;
 
     // Stamp the parent ID into the child draft before signing so the
     // child's signed payload binds the linkage cryptographically.
@@ -85,29 +83,82 @@ where
     issue_avc(child, sign)
 }
 
+/// Check an already-signed child against its parent.
+///
+/// This is the registry admission check. It does not re-sign the child.
+/// The caller must already have verified the child's issuer signature.
+///
+/// # Errors
+/// Returns [`AvcError::DelegationRejected`] when the parent cannot delegate
+/// or the child is not bound to that parent, and
+/// [`AvcError::DelegationWidens`] when any scope dimension is wider than
+/// the parent.
+pub fn validate_delegation_narrowing(
+    parent: &AutonomousVolitionCredential,
+    child: &AutonomousVolitionCredential,
+) -> Result<(), AvcError> {
+    require_delegating_parent(parent)?;
+    if child.schema_version != AVC_SCHEMA_VERSION {
+        return Err(AvcError::UnsupportedSchema {
+            got: child.schema_version,
+            supported: AVC_SCHEMA_VERSION,
+        });
+    }
+    let parent_id = parent.id()?;
+    if child.parent_avc_id != Some(parent_id) {
+        return Err(AvcError::DelegationRejected {
+            reason: "child parent_avc_id does not match the parent credential".into(),
+        });
+    }
+    enforce_narrowing(
+        parent,
+        child.delegated_intent.autonomy_level,
+        &child.authority_scope,
+        &child.constraints,
+        child.expires_at,
+    )
+}
+
+fn require_delegating_parent(parent: &AutonomousVolitionCredential) -> Result<(), AvcError> {
+    if !parent.delegated_intent.delegation_allowed {
+        return Err(AvcError::DelegationRejected {
+            reason: "parent credential does not permit delegation".into(),
+        });
+    }
+    if parent.constraints.max_delegation_depth == 0 {
+        return Err(AvcError::DelegationRejected {
+            reason: "parent constraints.max_delegation_depth is zero".into(),
+        });
+    }
+    Ok(())
+}
+
 fn enforce_narrowing(
     parent: &AutonomousVolitionCredential,
-    child: &AvcDraft,
+    child_autonomy: AutonomyLevel,
+    child_scope: &AuthorityScope,
+    child_constraints: &AvcConstraints,
+    child_expires_at: Option<Timestamp>,
 ) -> Result<(), AvcError> {
-    if child.delegated_intent.autonomy_level > parent.delegated_intent.autonomy_level {
+    if child_autonomy > parent.delegated_intent.autonomy_level {
         return Err(AvcError::DelegationWidens {
             dimension: "autonomy_level",
         });
     }
 
     if !is_subset_copy(
-        &child.authority_scope.permissions,
+        &child_scope.permissions,
         &parent.authority_scope.permissions,
     ) {
         return Err(AvcError::DelegationWidens {
             dimension: "permissions",
         });
     }
-    if !is_subset(&child.authority_scope.tools, &parent.authority_scope.tools) {
+    if !is_subset(&child_scope.tools, &parent.authority_scope.tools) {
         return Err(AvcError::DelegationWidens { dimension: "tools" });
     }
     if !is_subset(
-        &child.authority_scope.data_classes,
+        &child_scope.data_classes,
         &parent.authority_scope.data_classes,
     ) {
         return Err(AvcError::DelegationWidens {
@@ -115,7 +166,7 @@ fn enforce_narrowing(
         });
     }
     if !is_subset(
-        &child.authority_scope.counterparties,
+        &child_scope.counterparties,
         &parent.authority_scope.counterparties,
     ) {
         return Err(AvcError::DelegationWidens {
@@ -123,7 +174,7 @@ fn enforce_narrowing(
         });
     }
     if !is_subset(
-        &child.authority_scope.jurisdictions,
+        &child_scope.jurisdictions,
         &parent.authority_scope.jurisdictions,
     ) {
         return Err(AvcError::DelegationWidens {
@@ -133,7 +184,7 @@ fn enforce_narrowing(
 
     if !narrows_optional_u64(
         parent.constraints.max_budget_minor_units,
-        child.constraints.max_budget_minor_units,
+        child_constraints.max_budget_minor_units,
     ) {
         return Err(AvcError::DelegationWidens {
             dimension: "max_budget_minor_units",
@@ -141,20 +192,20 @@ fn enforce_narrowing(
     }
     if !narrows_optional_u32(
         parent.constraints.max_action_risk_bp,
-        child.constraints.max_action_risk_bp,
+        child_constraints.max_action_risk_bp,
     ) {
         return Err(AvcError::DelegationWidens {
             dimension: "max_action_risk_bp",
         });
     }
 
-    if child.constraints.max_delegation_depth >= parent.constraints.max_delegation_depth {
+    if child_constraints.max_delegation_depth >= parent.constraints.max_delegation_depth {
         return Err(AvcError::DelegationWidens {
             dimension: "max_delegation_depth",
         });
     }
 
-    if !narrows_expiry(parent.expires_at, child.expires_at) {
+    if !narrows_expiry(parent.expires_at, child_expires_at) {
         return Err(AvcError::DelegationWidens {
             dimension: "expiry",
         });
@@ -531,5 +582,42 @@ mod tests {
         assert!(!narrows_expiry(Some(ts(20)), None));
         assert!(narrows_expiry(Some(ts(20)), Some(ts(20))));
         assert!(!narrows_expiry(Some(ts(20)), Some(ts(21))));
+    }
+
+    #[test]
+    fn validate_delegation_narrowing_accepts_signed_child_and_rejects_widening() {
+        let parent = parent_credential();
+        let child = delegate_avc(&parent, narrower_child(&parent), |_| fixed_signature()).unwrap();
+        validate_delegation_narrowing(&parent, &child).unwrap();
+
+        let mut widened = narrower_child(&parent);
+        widened.authority_scope.permissions = vec![Permission::Read, Permission::Govern];
+        widened.parent_avc_id = Some(parent.id().unwrap());
+        let widened = issue_avc(widened, |_| fixed_signature()).unwrap();
+        let err = validate_delegation_narrowing(&parent, &widened).unwrap_err();
+        assert!(matches!(
+            err,
+            AvcError::DelegationWidens {
+                dimension: "permissions"
+            }
+        ));
+    }
+
+    #[test]
+    fn validate_delegation_narrowing_rejects_unlinked_child() {
+        let parent = parent_credential();
+        let child = delegate_avc(&parent, narrower_child(&parent), |_| fixed_signature()).unwrap();
+        let mut other_draft = baseline_draft();
+        other_draft.delegated_intent.delegation_allowed = true;
+        other_draft.delegated_intent.purpose = "different parent".into();
+        other_draft.delegated_intent.autonomy_level = AutonomyLevel::ExecuteWithinBounds;
+        other_draft.constraints.max_delegation_depth = 3;
+        other_draft.constraints.max_budget_minor_units = Some(10_000);
+        other_draft.constraints.max_action_risk_bp = Some(5_000);
+        other_draft.authority_scope.counterparties = vec![did("cp-a"), did("cp-b")];
+        let other = issue_avc(other_draft, |_| fixed_signature()).unwrap();
+        assert_ne!(parent.id().unwrap(), other.id().unwrap());
+        let err = validate_delegation_narrowing(&other, &child).unwrap_err();
+        assert!(matches!(err, AvcError::DelegationRejected { .. }));
     }
 }

@@ -123,7 +123,7 @@ pub use credential::{
     DelegatedIntent, MAX_BASIS_POINTS, PolicyRef, TimeWindow, issue_avc,
     require_supported_avc_protocol_version,
 };
-pub use delegation::{delegate_avc, parent_id_of};
+pub use delegation::{delegate_avc, parent_id_of, validate_delegation_narrowing};
 pub use emergency_stop::{
     AVC_EMERGENCY_STOP_SIGNING_DOMAIN, EmergencyStopDisposition, EmergencyStopRecord,
     sign_emergency_stop,
