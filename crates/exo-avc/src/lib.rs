@@ -105,6 +105,7 @@
 
 pub mod credential;
 pub mod delegation;
+pub mod emergency_stop;
 pub mod error;
 pub mod livesafe_public_output_ceremony;
 pub mod llm_usage_receipt;
@@ -123,6 +124,10 @@ pub use credential::{
     require_supported_avc_protocol_version,
 };
 pub use delegation::{delegate_avc, parent_id_of};
+pub use emergency_stop::{
+    AVC_EMERGENCY_STOP_SIGNING_DOMAIN, EmergencyStopDisposition, EmergencyStopRecord,
+    sign_emergency_stop,
+};
 pub use error::AvcError;
 pub use livesafe_public_output_ceremony::{
     LIVESAFE_PUBLIC_ADAPTER_OUTPUT_CREDENTIAL_SUBJECT_DID,
@@ -183,6 +188,7 @@ pub const AVC_SIGNING_DOMAINS: &[&str] = &[
     AVC_ACTION_DESCRIPTOR_DOMAIN,
     AVC_ACTION_SIGNING_DOMAIN,
     AVC_CREDENTIAL_SIGNING_DOMAIN,
+    AVC_EMERGENCY_STOP_SIGNING_DOMAIN,
     AVC_HUMAN_APPROVAL_SIGNING_DOMAIN,
     AVC_LLM_USAGE_EVIDENCE_DOMAIN,
     AVC_LLM_USAGE_EVIDENCE_SIGNATURE_DOMAIN,
@@ -219,6 +225,7 @@ mod hygiene_tests {
         let sources = [
             include_str!("credential.rs"),
             include_str!("delegation.rs"),
+            include_str!("emergency_stop.rs"),
             include_str!("error.rs"),
             include_str!("livesafe_public_output_ceremony.rs"),
             include_str!("lib.rs"),
@@ -251,6 +258,7 @@ mod hygiene_tests {
         let sources = [
             include_str!("credential.rs"),
             include_str!("delegation.rs"),
+            include_str!("emergency_stop.rs"),
             include_str!("error.rs"),
             include_str!("livesafe_public_output_ceremony.rs"),
             include_str!("lib.rs"),
