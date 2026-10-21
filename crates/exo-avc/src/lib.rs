@@ -113,6 +113,7 @@ pub mod public_output_authorization;
 pub mod receipt;
 pub mod registry;
 pub mod revocation;
+pub mod standing;
 pub mod validation;
 
 pub use credential::{
@@ -172,13 +173,17 @@ pub use registry::{
 pub use revocation::{
     AVC_REVOCATION_SIGNING_DOMAIN, AvcRevocation, AvcRevocationReason, revoke_avc,
 };
+pub use standing::{
+    AVC_STANDING_SIGNING_DOMAIN, AvcStanding, AvcStandingRecord, CredentialStanding,
+    sign_avc_standing,
+};
 pub use validation::{
     AVC_ACTION_COMMITMENT_DOMAIN, AVC_ACTION_DESCRIPTOR_DOMAIN, AVC_ACTION_SIGNING_DOMAIN,
-    AVC_HUMAN_APPROVAL_SIGNING_DOMAIN, AVC_LLM_USAGE_ACTION_NAME, AvcActionDescriptor,
-    AvcActionRequest, AvcDecision, AvcHumanApproval, AvcReasonCode, AvcValidationRequest,
-    AvcValidationResult, avc_action_commitment_hash, avc_action_descriptor_hash,
-    avc_action_signature_payload, avc_llm_usage_action_request, human_approval_signature_payload,
-    validate_avc,
+    AVC_HUMAN_APPROVAL_SIGNING_DOMAIN, AVC_LLM_USAGE_ACTION_NAME, AVC_MAX_ANCESTOR_WALK_DEPTH,
+    AvcActionDescriptor, AvcActionRequest, AvcDecision, AvcHumanApproval, AvcReasonCode,
+    AvcValidationRequest, AvcValidationResult, avc_action_commitment_hash,
+    avc_action_descriptor_hash, avc_action_signature_payload, avc_llm_usage_action_request,
+    human_approval_signature_payload, validate_avc,
 };
 
 /// All AVC signing domains as a sorted slice — used by hygiene tests
@@ -198,6 +203,7 @@ pub const AVC_SIGNING_DOMAINS: &[&str] = &[
     AVC_RECEIPT_EXTERNAL_TIMESTAMP_DOMAIN,
     AVC_RECEIPT_SIGNING_DOMAIN,
     AVC_REVOCATION_SIGNING_DOMAIN,
+    AVC_STANDING_SIGNING_DOMAIN,
 ];
 
 #[cfg(test)]
@@ -234,6 +240,7 @@ mod hygiene_tests {
             include_str!("receipt.rs"),
             include_str!("registry.rs"),
             include_str!("revocation.rs"),
+            include_str!("standing.rs"),
             include_str!("validation.rs"),
         ];
         let banned_map = ["Hash", "Map"].concat();
@@ -267,6 +274,7 @@ mod hygiene_tests {
             include_str!("receipt.rs"),
             include_str!("registry.rs"),
             include_str!("revocation.rs"),
+            include_str!("standing.rs"),
             include_str!("validation.rs"),
         ];
         for src in sources {

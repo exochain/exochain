@@ -35,6 +35,7 @@ use crate::{
     error::AvcError,
     receipt::AvcTrustReceipt,
     revocation::AvcRevocation,
+    standing::{AvcStandingRecord, CredentialStanding},
 };
 
 /// Read-only registry interface used by validation.
@@ -60,6 +61,12 @@ pub trait AvcRegistryRead {
     /// Callers must treat `None` as deny. An older verified record is not
     /// consulted when the latest record fails verification.
     fn emergency_stop_disposition(&self, stop_ref: &str) -> Option<EmergencyStopDisposition>;
+    /// Latest verified standing of `credential_id`.
+    ///
+    /// No record means [`CredentialStanding::Active`]. A latest record that
+    /// does not verify is [`CredentialStanding::Unverified`] and must deny;
+    /// an older verified record is not consulted.
+    fn credential_standing(&self, credential_id: &Hash256) -> CredentialStanding;
 }
 
 /// Mutating registry interface used by node API handlers and tests.
@@ -78,6 +85,13 @@ pub trait AvcRegistryWrite: AvcRegistryRead {
     /// reference. An exact replay of the latest record is accepted without
     /// appending a second copy.
     fn put_emergency_stop(&mut self, record: EmergencyStopRecord) -> Result<(), AvcError>;
+    /// Append a signed suspend, quarantine, or resume record.
+    ///
+    /// The actor must be the credential issuer or principal, the signature
+    /// must verify, and `created_at` must be strictly newer than the latest
+    /// record for that credential. An exact replay of the latest record is
+    /// accepted without appending a second copy.
+    fn put_standing(&mut self, record: AvcStandingRecord) -> Result<(), AvcError>;
     fn put_receipt(&mut self, receipt: AvcTrustReceipt) -> Result<(), AvcError>;
     fn put_public_key(&mut self, did: Did, public_key: PublicKey);
     /// Register a runtime issuer key WITH its authorizing
@@ -153,6 +167,9 @@ pub struct AvcRegistryDurableState {
     /// does not verify is unknown and must not be treated as cleared.
     #[serde(default)]
     pub emergency_stops: BTreeMap<String, BTreeMap<Timestamp, EmergencyStopRecord>>,
+    /// Audited suspend/quarantine/resume history, keyed by credential then timestamp.
+    #[serde(default)]
+    pub standings: BTreeMap<Hash256, BTreeMap<Timestamp, AvcStandingRecord>>,
 }
 
 /// Deterministic in-memory implementation of the registry traits.
@@ -179,6 +196,7 @@ pub struct InMemoryAvcRegistry {
     /// registrations via `put_registered_issuer_key` / restore).
     registered_issuer_keys: BTreeMap<Did, RegisteredIssuerKey>,
     emergency_stops: BTreeMap<String, BTreeMap<Timestamp, EmergencyStopRecord>>,
+    standings: BTreeMap<Hash256, BTreeMap<Timestamp, AvcStandingRecord>>,
 }
 
 impl InMemoryAvcRegistry {
@@ -206,6 +224,7 @@ impl InMemoryAvcRegistry {
             receipt_chain_head: self.receipt_chain_head,
             registered_issuer_keys: self.registered_issuer_keys.clone(),
             emergency_stops: self.emergency_stops.clone(),
+            standings: self.standings.clone(),
         }
     }
 
@@ -355,6 +374,22 @@ impl InMemoryAvcRegistry {
             registry.emergency_stops.insert(stop_ref, loaded);
         }
 
+        for (credential_id, history) in state.standings {
+            if history.is_empty() {
+                return Err(AvcError::Registry {
+                    reason: format!(
+                        "durable standing for credential {credential_id} has an empty audit history"
+                    ),
+                });
+            }
+            let mut loaded = BTreeMap::new();
+            for (stored_at, record) in history {
+                Self::validate_durable_standing(&credential_id, stored_at, &record, &registry)?;
+                loaded.insert(stored_at, record);
+            }
+            registry.standings.insert(credential_id, loaded);
+        }
+
         Ok(registry)
     }
 
@@ -380,6 +415,7 @@ impl InMemoryAvcRegistry {
         // resolvable.
         candidate.registered_issuer_keys = durable.registered_issuer_keys;
         candidate.emergency_stops = durable.emergency_stops;
+        candidate.standings = durable.standings;
 
         for revocation in durable.revocations.into_values() {
             candidate.validate_revocation(&revocation)?;
@@ -396,6 +432,7 @@ impl InMemoryAvcRegistry {
         self.receipt_chain_head = candidate.receipt_chain_head;
         self.registered_issuer_keys = candidate.registered_issuer_keys;
         self.emergency_stops = candidate.emergency_stops;
+        self.standings = candidate.standings;
         Ok(())
     }
 
@@ -553,6 +590,15 @@ impl InMemoryAvcRegistry {
     #[must_use]
     pub fn emergency_stop_audit(&self, stop_ref: &str) -> Vec<EmergencyStopRecord> {
         let Some(history) = self.emergency_stops.get(stop_ref) else {
+            return Vec::new();
+        };
+        history.values().cloned().collect()
+    }
+
+    /// Audited standing records for `credential_id`, oldest first.
+    #[must_use]
+    pub fn standing_audit(&self, credential_id: &Hash256) -> Vec<AvcStandingRecord> {
+        let Some(history) = self.standings.get(credential_id) else {
             return Vec::new();
         };
         history.values().cloned().collect()
@@ -901,6 +947,155 @@ impl InMemoryAvcRegistry {
         }
     }
 
+    fn validate_durable_standing(
+        credential_id: &Hash256,
+        stored_at: Timestamp,
+        record: &AvcStandingRecord,
+        registry: &InMemoryAvcRegistry,
+    ) -> Result<(), AvcError> {
+        if record.credential_id != *credential_id {
+            return Err(AvcError::Registry {
+                reason: format!(
+                    "durable standing key {credential_id} does not match credential id {}",
+                    record.credential_id
+                ),
+            });
+        }
+        if record.created_at != stored_at {
+            return Err(AvcError::Registry {
+                reason: format!(
+                    "durable standing for {credential_id} timestamp key does not match record \
+                     created_at"
+                ),
+            });
+        }
+        if record.schema_version != crate::credential::AVC_SCHEMA_VERSION {
+            return Err(AvcError::UnsupportedSchema {
+                got: record.schema_version,
+                supported: crate::credential::AVC_SCHEMA_VERSION,
+            });
+        }
+        if record.signature.is_empty() {
+            return Err(AvcError::InvalidInput {
+                reason: format!(
+                    "durable standing for credential {credential_id} has an empty signature"
+                ),
+            });
+        }
+        let credential =
+            registry
+                .credentials
+                .get(credential_id)
+                .ok_or_else(|| AvcError::InvalidInput {
+                    reason: format!(
+                        "durable standing references unknown credential {credential_id}"
+                    ),
+                })?;
+        if record.actor_did != credential.issuer_did && record.actor_did != credential.principal_did
+        {
+            return Err(AvcError::InvalidInput {
+                reason: format!(
+                    "durable standing actor {} is not authorized for credential {credential_id}",
+                    record.actor_did
+                ),
+            });
+        }
+        Ok(())
+    }
+
+    fn validate_standing_for_insert(&self, record: &AvcStandingRecord) -> Result<(), AvcError> {
+        if record.schema_version != crate::credential::AVC_SCHEMA_VERSION {
+            return Err(AvcError::UnsupportedSchema {
+                got: record.schema_version,
+                supported: crate::credential::AVC_SCHEMA_VERSION,
+            });
+        }
+        if record.signature.is_empty() {
+            return Err(AvcError::InvalidInput {
+                reason: format!(
+                    "standing signature for credential {} must not be empty",
+                    record.credential_id
+                ),
+            });
+        }
+        let credential =
+            self.credentials
+                .get(&record.credential_id)
+                .ok_or_else(|| AvcError::InvalidInput {
+                    reason: format!(
+                        "standing references unknown credential {}",
+                        record.credential_id
+                    ),
+                })?;
+        if record.actor_did != credential.issuer_did && record.actor_did != credential.principal_did
+        {
+            return Err(AvcError::InvalidInput {
+                reason: format!(
+                    "actor {} is not authorized to change standing of credential {}",
+                    record.actor_did, record.credential_id
+                ),
+            });
+        }
+        if let Some(latest) = self
+            .standings
+            .get(&record.credential_id)
+            .and_then(|history| history.values().next_back())
+        {
+            if record.created_at <= latest.created_at {
+                return Err(AvcError::InvalidInput {
+                    reason: format!(
+                        "standing record for {} must be strictly newer than the latest audited \
+                         record",
+                        record.credential_id
+                    ),
+                });
+            }
+        }
+        let public_key =
+            self.public_keys
+                .get(&record.actor_did)
+                .ok_or_else(|| AvcError::InvalidInput {
+                    reason: format!(
+                        "standing actor public key for {} is unresolved",
+                        record.actor_did
+                    ),
+                })?;
+        let payload = record.signing_payload()?;
+        if !crypto::verify(&payload, &record.signature, public_key) {
+            return Err(AvcError::InvalidInput {
+                reason: format!(
+                    "standing signature for credential {} is invalid",
+                    record.credential_id
+                ),
+            });
+        }
+        Ok(())
+    }
+
+    fn verified_standing(&self, record: &AvcStandingRecord) -> CredentialStanding {
+        let Some(credential) = self.credentials.get(&record.credential_id) else {
+            return CredentialStanding::Unverified;
+        };
+        if record.actor_did != credential.issuer_did && record.actor_did != credential.principal_did
+        {
+            return CredentialStanding::Unverified;
+        }
+        let Some(public_key) = self.public_keys.get(&record.actor_did) else {
+            return CredentialStanding::Unverified;
+        };
+        let Ok(payload) = record.signing_payload() else {
+            return CredentialStanding::Unverified;
+        };
+        if !crypto::verify(&payload, &record.signature, public_key) {
+            return CredentialStanding::Unverified;
+        }
+        match record.standing {
+            crate::standing::AvcStanding::Active => CredentialStanding::Active,
+            crate::standing::AvcStanding::Suspended => CredentialStanding::Suspended,
+            crate::standing::AvcStanding::Quarantined => CredentialStanding::Quarantined,
+        }
+    }
+
     fn validate_revocation(&self, revocation: &AvcRevocation) -> Result<(), AvcError> {
         if revocation.schema_version != crate::credential::AVC_SCHEMA_VERSION {
             return Err(AvcError::UnsupportedSchema {
@@ -1126,6 +1321,17 @@ impl AvcRegistryRead for InMemoryAvcRegistry {
         let record = self.emergency_stops.get(stop_ref)?.values().next_back()?;
         self.verified_emergency_stop_disposition(record)
     }
+
+    fn credential_standing(&self, credential_id: &Hash256) -> CredentialStanding {
+        let Some(record) = self
+            .standings
+            .get(credential_id)
+            .and_then(|history| history.values().next_back())
+        else {
+            return CredentialStanding::Active;
+        };
+        self.verified_standing(record)
+    }
 }
 
 impl AvcRegistryWrite for InMemoryAvcRegistry {
@@ -1169,6 +1375,25 @@ impl AvcRegistryWrite for InMemoryAvcRegistry {
         let stop_ref = record.stop_ref.clone();
         self.emergency_stops
             .entry(stop_ref)
+            .or_default()
+            .insert(record.created_at, record);
+        Ok(())
+    }
+
+    fn put_standing(&mut self, record: AvcStandingRecord) -> Result<(), AvcError> {
+        if let Some(latest) = self
+            .standings
+            .get(&record.credential_id)
+            .and_then(|history| history.values().next_back())
+        {
+            if latest == &record {
+                return Ok(());
+            }
+        }
+        self.validate_standing_for_insert(&record)?;
+        let credential_id = record.credential_id;
+        self.standings
+            .entry(credential_id)
             .or_default()
             .insert(record.created_at, record);
         Ok(())
