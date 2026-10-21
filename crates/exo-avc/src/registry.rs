@@ -30,7 +30,10 @@ use exo_core::{Did, Hash256, PublicKey, Timestamp, crypto};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    credential::AutonomousVolitionCredential, error::AvcError, receipt::AvcTrustReceipt,
+    credential::AutonomousVolitionCredential,
+    emergency_stop::{EmergencyStopDisposition, EmergencyStopRecord},
+    error::AvcError,
+    receipt::AvcTrustReceipt,
     revocation::AvcRevocation,
 };
 
@@ -50,6 +53,13 @@ pub trait AvcRegistryRead {
     fn authority_chain_valid(&self, chain_hash: &Hash256, now: &Timestamp) -> bool;
     fn get_credential(&self, credential_id: &Hash256) -> Option<AutonomousVolitionCredential>;
     fn list_credentials_for_subject(&self, subject_did: &Did) -> Vec<AutonomousVolitionCredential>;
+    /// Latest verified disposition of `stop_ref`.
+    ///
+    /// `None` means the reference is unknown: it was never recorded, or the
+    /// latest audited record does not verify against a resolved actor key.
+    /// Callers must treat `None` as deny. An older verified record is not
+    /// consulted when the latest record fails verification.
+    fn emergency_stop_disposition(&self, stop_ref: &str) -> Option<EmergencyStopDisposition>;
 }
 
 /// Mutating registry interface used by node API handlers and tests.
@@ -61,6 +71,13 @@ pub trait AvcRegistryWrite: AvcRegistryRead {
         credential: AutonomousVolitionCredential,
     ) -> Result<Hash256, AvcError>;
     fn put_revocation(&mut self, revocation: AvcRevocation) -> Result<(), AvcError>;
+    /// Append a signed engage or clear record.
+    ///
+    /// The actor key must resolve and the signature must verify. `created_at`
+    /// must be strictly newer than the latest record for the same stop
+    /// reference. An exact replay of the latest record is accepted without
+    /// appending a second copy.
+    fn put_emergency_stop(&mut self, record: EmergencyStopRecord) -> Result<(), AvcError>;
     fn put_receipt(&mut self, receipt: AvcTrustReceipt) -> Result<(), AvcError>;
     fn put_public_key(&mut self, did: Did, public_key: PublicKey);
     /// Register a runtime issuer key WITH its authorizing
@@ -130,6 +147,12 @@ pub struct AvcRegistryDurableState {
     pub receipt_chain_head: Option<Hash256>,
     #[serde(default)]
     pub registered_issuer_keys: BTreeMap<Did, RegisteredIssuerKey>,
+    /// Audited engage/clear history, keyed by stop reference then timestamp.
+    ///
+    /// Signatures are re-checked when the disposition is read. A record that
+    /// does not verify is unknown and must not be treated as cleared.
+    #[serde(default)]
+    pub emergency_stops: BTreeMap<String, BTreeMap<Timestamp, EmergencyStopRecord>>,
 }
 
 /// Deterministic in-memory implementation of the registry traits.
@@ -155,6 +178,7 @@ pub struct InMemoryAvcRegistry {
     /// startup-config anchors via `put_public_key` and for runtime
     /// registrations via `put_registered_issuer_key` / restore).
     registered_issuer_keys: BTreeMap<Did, RegisteredIssuerKey>,
+    emergency_stops: BTreeMap<String, BTreeMap<Timestamp, EmergencyStopRecord>>,
 }
 
 impl InMemoryAvcRegistry {
@@ -181,6 +205,7 @@ impl InMemoryAvcRegistry {
             receipts: self.receipts.clone(),
             receipt_chain_head: self.receipt_chain_head,
             registered_issuer_keys: self.registered_issuer_keys.clone(),
+            emergency_stops: self.emergency_stops.clone(),
         }
     }
 
@@ -316,6 +341,20 @@ impl InMemoryAvcRegistry {
             registry.registered_issuer_keys.insert(stored_did, record);
         }
 
+        for (stop_ref, history) in state.emergency_stops {
+            if history.is_empty() {
+                return Err(AvcError::Registry {
+                    reason: format!("durable emergency stop {stop_ref} has an empty audit history"),
+                });
+            }
+            let mut loaded = BTreeMap::new();
+            for (stored_at, record) in history {
+                Self::validate_durable_emergency_stop(&stop_ref, stored_at, &record)?;
+                loaded.insert(stored_at, record);
+            }
+            registry.emergency_stops.insert(stop_ref, loaded);
+        }
+
         Ok(registry)
     }
 
@@ -340,6 +379,7 @@ impl InMemoryAvcRegistry {
         // unlike cold start) to re-verify each chain before its key becomes
         // resolvable.
         candidate.registered_issuer_keys = durable.registered_issuer_keys;
+        candidate.emergency_stops = durable.emergency_stops;
 
         for revocation in durable.revocations.into_values() {
             candidate.validate_revocation(&revocation)?;
@@ -355,6 +395,7 @@ impl InMemoryAvcRegistry {
         self.receipts = candidate.receipts;
         self.receipt_chain_head = candidate.receipt_chain_head;
         self.registered_issuer_keys = candidate.registered_issuer_keys;
+        self.emergency_stops = candidate.emergency_stops;
         Ok(())
     }
 
@@ -506,6 +547,15 @@ impl InMemoryAvcRegistry {
     #[must_use]
     pub fn revocation_count(&self) -> usize {
         self.revocations.len()
+    }
+
+    /// Audited engage and clear records for `stop_ref`, oldest first.
+    #[must_use]
+    pub fn emergency_stop_audit(&self, stop_ref: &str) -> Vec<EmergencyStopRecord> {
+        let Some(history) = self.emergency_stops.get(stop_ref) else {
+            return Vec::new();
+        };
+        history.values().cloned().collect()
     }
 
     /// Number of receipts currently stored.
@@ -738,6 +788,119 @@ impl InMemoryAvcRegistry {
         Ok(())
     }
 
+    fn validate_durable_emergency_stop(
+        stop_ref: &str,
+        stored_at: Timestamp,
+        record: &EmergencyStopRecord,
+    ) -> Result<(), AvcError> {
+        if stop_ref.trim().is_empty() {
+            return Err(AvcError::InvalidInput {
+                reason: "durable emergency stop ref must not be empty".into(),
+            });
+        }
+        if record.stop_ref != stop_ref {
+            return Err(AvcError::Registry {
+                reason: format!(
+                    "durable emergency stop key {stop_ref} does not match record ref {}",
+                    record.stop_ref
+                ),
+            });
+        }
+        if record.created_at != stored_at {
+            return Err(AvcError::Registry {
+                reason: format!(
+                    "durable emergency stop {stop_ref} timestamp key does not match record \
+                     created_at"
+                ),
+            });
+        }
+        if record.schema_version != crate::credential::AVC_SCHEMA_VERSION {
+            return Err(AvcError::UnsupportedSchema {
+                got: record.schema_version,
+                supported: crate::credential::AVC_SCHEMA_VERSION,
+            });
+        }
+        if record.signature.is_empty() {
+            return Err(AvcError::InvalidInput {
+                reason: format!("durable emergency stop {stop_ref} has an empty signature"),
+            });
+        }
+        Ok(())
+    }
+
+    fn validate_emergency_stop_for_insert(
+        &self,
+        record: &EmergencyStopRecord,
+    ) -> Result<(), AvcError> {
+        if record.schema_version != crate::credential::AVC_SCHEMA_VERSION {
+            return Err(AvcError::UnsupportedSchema {
+                got: record.schema_version,
+                supported: crate::credential::AVC_SCHEMA_VERSION,
+            });
+        }
+        if record.stop_ref.trim().is_empty() {
+            return Err(AvcError::EmptyField {
+                field: "emergency_stop.stop_ref",
+            });
+        }
+        if record.signature.is_empty() {
+            return Err(AvcError::InvalidInput {
+                reason: format!(
+                    "emergency stop signature for {} must not be empty",
+                    record.stop_ref
+                ),
+            });
+        }
+        if let Some(latest) = self
+            .emergency_stops
+            .get(&record.stop_ref)
+            .and_then(|history| history.values().next_back())
+        {
+            if record.created_at <= latest.created_at {
+                return Err(AvcError::InvalidInput {
+                    reason: format!(
+                        "emergency stop record for {} must be strictly newer than the latest \
+                         audited record",
+                        record.stop_ref
+                    ),
+                });
+            }
+        }
+
+        let public_key =
+            self.public_keys
+                .get(&record.actor_did)
+                .ok_or_else(|| AvcError::InvalidInput {
+                    reason: format!(
+                        "emergency stop actor public key for {} is unresolved",
+                        record.actor_did
+                    ),
+                })?;
+        let payload = record.signing_payload()?;
+        if !crypto::verify(&payload, &record.signature, public_key) {
+            return Err(AvcError::InvalidInput {
+                reason: format!(
+                    "emergency stop signature for {} is invalid",
+                    record.stop_ref
+                ),
+            });
+        }
+        Ok(())
+    }
+
+    fn verified_emergency_stop_disposition(
+        &self,
+        record: &EmergencyStopRecord,
+    ) -> Option<EmergencyStopDisposition> {
+        let public_key = self.public_keys.get(&record.actor_did)?;
+        let payload = record.signing_payload().ok()?;
+        if crypto::verify(&payload, &record.signature, public_key) {
+            Some(record.disposition)
+        } else {
+            None
+        }
+    }
+
     fn validate_revocation(&self, revocation: &AvcRevocation) -> Result<(), AvcError> {
         if revocation.schema_version != crate::credential::AVC_SCHEMA_VERSION {
             return Err(AvcError::UnsupportedSchema {
@@ -958,6 +1121,11 @@ impl AvcRegistryRead for InMemoryAvcRegistry {
             .filter_map(|id| self.credentials.get(id).cloned())
             .collect()
     }
+
+    fn emergency_stop_disposition(&self, stop_ref: &str) -> Option<EmergencyStopDisposition> {
+        let record = self.emergency_stops.get(stop_ref)?.values().next_back()?;
+        self.verified_emergency_stop_disposition(record)
+    }
 }
 
 impl AvcRegistryWrite for InMemoryAvcRegistry {
@@ -984,6 +1152,25 @@ impl AvcRegistryWrite for InMemoryAvcRegistry {
         }
         self.validate_revocation(&revocation)?;
         self.revocations.insert(id, revocation);
+        Ok(())
+    }
+
+    fn put_emergency_stop(&mut self, record: EmergencyStopRecord) -> Result<(), AvcError> {
+        if let Some(latest) = self
+            .emergency_stops
+            .get(&record.stop_ref)
+            .and_then(|history| history.values().next_back())
+        {
+            if latest == &record {
+                return Ok(());
+            }
+        }
+        self.validate_emergency_stop_for_insert(&record)?;
+        let stop_ref = record.stop_ref.clone();
+        self.emergency_stops
+            .entry(stop_ref)
+            .or_default()
+            .insert(record.created_at, record);
         Ok(())
     }
 

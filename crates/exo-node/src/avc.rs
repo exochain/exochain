@@ -38,6 +38,9 @@
 //! | `GET`  | `/api/v1/avc/protocol` | Discover node AVC protocol compatibility metadata. |
 //! | `POST` | `/api/v1/avc/delegate` | Register a signed child credential. |
 //! | `POST` | `/api/v1/avc/revoke` | Register a signed revocation. |
+//! | `POST` | `/api/v1/avc/emergency-stop/engage` | Append a signed engage record. |
+//! | `POST` | `/api/v1/avc/emergency-stop/clear` | Append a signed clear record. |
+//! | `GET`  | `/api/v1/avc/emergency-stop?stop_ref=` | Read the audited engage/clear history. |
 //! | `POST` | `/api/v1/avc/issuers` | Register/rotate an issuer DID+public key at runtime; requires a DelegationRegistry-backed authority chain granting `Permission::Govern` (D3), not just the bearer token. |
 //! | `GET`  | `/api/v1/avc/:id` | Fetch a registered credential by hex ID. |
 //! | `GET`  | `/api/v1/agents/:did/avcs` | List credentials for a subject DID. |
@@ -75,8 +78,8 @@ use exo_avc::{
     AvcReceiptEvidenceSubject, AvcReceiptExternalTimestampProof, AvcReceiptRfc3161TimestampProof,
     AvcReceiptRfc3161TrustAnchorKind, AvcReceiptTimestampProvenance, AvcRegistryDurableState,
     AvcRegistryRead, AvcRegistryWrite, AvcRevocation, AvcTrustReceipt, AvcTrustReceiptEvidence,
-    AvcValidationRequest, AvcValidationResult, InMemoryAvcRegistry,
-    LivesafePublicAdapterOutputAuthorizationDraft,
+    AvcValidationRequest, AvcValidationResult, EmergencyStopDisposition, EmergencyStopRecord,
+    InMemoryAvcRegistry, LivesafePublicAdapterOutputAuthorizationDraft,
     LivesafePublicAdapterOutputAuthorizationEnvelope, LlmUsageEvidenceEnvelope,
     avc_action_commitment_hash, avc_action_descriptor_hash, avc_action_signature_payload,
     avc_llm_usage_action_request, create_trust_receipt_with_evidence,
@@ -2318,6 +2321,29 @@ pub struct RevokeResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct EmergencyStopRequest {
+    pub record: EmergencyStopRecord,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct EmergencyStopResponse {
+    pub stop_ref: String,
+    pub disposition: EmergencyStopDisposition,
+    pub status: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EmergencyStopAuditQuery {
+    pub stop_ref: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct EmergencyStopAuditResponse {
+    pub stop_ref: String,
+    pub records: Vec<EmergencyStopRecord>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct EmitReceiptRequest {
     pub validation: AvcValidationRequest,
     pub subject_signature: Signature,
@@ -3714,6 +3740,84 @@ async fn handle_delegate(
     }))
 }
 
+async fn handle_emergency_stop_engage(
+    State(state): State<Arc<AvcApiState>>,
+    Json(payload): Json<EmergencyStopRequest>,
+) -> ApiResult<Json<EmergencyStopResponse>> {
+    apply_emergency_stop(
+        state,
+        payload.record,
+        EmergencyStopDisposition::Engaged,
+        "engaged",
+    )
+    .await
+}
+
+async fn handle_emergency_stop_clear(
+    State(state): State<Arc<AvcApiState>>,
+    Json(payload): Json<EmergencyStopRequest>,
+) -> ApiResult<Json<EmergencyStopResponse>> {
+    apply_emergency_stop(
+        state,
+        payload.record,
+        EmergencyStopDisposition::Cleared,
+        "cleared",
+    )
+    .await
+}
+
+async fn apply_emergency_stop(
+    state: Arc<AvcApiState>,
+    record: EmergencyStopRecord,
+    expected: EmergencyStopDisposition,
+    status: &'static str,
+) -> ApiResult<Json<EmergencyStopResponse>> {
+    if record.disposition != expected {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("emergency stop route requires disposition {expected:?}"),
+        ));
+    }
+    let stop_ref = record.stop_ref.clone();
+    let disposition = record.disposition;
+    with_registry_blocking(state, true, move |registry| {
+        registry.put_emergency_stop(record).map_err(map_avc_error)
+    })
+    .await?;
+    Ok(Json(EmergencyStopResponse {
+        stop_ref,
+        disposition,
+        status: status.into(),
+    }))
+}
+
+async fn handle_emergency_stop_audit(
+    State(state): State<Arc<AvcApiState>>,
+    Query(query): Query<EmergencyStopAuditQuery>,
+) -> ApiResult<Json<EmergencyStopAuditResponse>> {
+    if query.stop_ref.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "stop_ref query parameter is required".into(),
+        ));
+    }
+    let stop_ref = query.stop_ref.clone();
+    let records = with_registry_blocking(state, false, move |registry| {
+        Ok(registry.emergency_stop_audit(&stop_ref))
+    })
+    .await?;
+    if records.is_empty() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            "emergency stop ref has no audited records".into(),
+        ));
+    }
+    Ok(Json(EmergencyStopAuditResponse {
+        stop_ref: query.stop_ref,
+        records,
+    }))
+}
+
 async fn handle_revoke(
     State(state): State<Arc<AvcApiState>>,
     Json(payload): Json<RevokeRequest>,
@@ -4121,6 +4225,18 @@ pub fn avc_router(state: Arc<AvcApiState>) -> Router {
         .route("/api/v1/avc/protocol", get(handle_protocol_info))
         .route("/api/v1/avc/delegate", post(handle_delegate))
         .route("/api/v1/avc/revoke", post(handle_revoke))
+        .route(
+            "/api/v1/avc/emergency-stop/engage",
+            post(handle_emergency_stop_engage),
+        )
+        .route(
+            "/api/v1/avc/emergency-stop/clear",
+            post(handle_emergency_stop_clear),
+        )
+        .route(
+            "/api/v1/avc/emergency-stop",
+            get(handle_emergency_stop_audit),
+        )
         .route("/api/v1/avc/issuers", post(handle_register_issuer))
         .route(
             "/api/v1/avc/issuer-registration-authority",
@@ -4156,10 +4272,11 @@ mod tests {
         AuthorityScope, AutonomyLevel, AvcActionDescriptor, AvcActionRequest, AvcConstraints,
         AvcDecision, AvcDraft, AvcReasonCode, AvcReceiptEvidenceSubject,
         AvcReceiptExternalTimestampProofKind, AvcRevocationReason, AvcSubjectKind, DataClass,
-        DelegatedIntent, EncryptedPayloadRef, LlmUsageCustodyMode, LlmUsageEvidence,
-        LlmUsageEvidenceEnvelope, ProviderUsageMetrics, avc_action_descriptor_hash,
-        avc_llm_usage_action_request, create_trust_receipt, issue_avc, llm_usage_evidence_hash,
-        llm_usage_evidence_signature_payload, revoke_avc,
+        DelegatedIntent, EmergencyStopDisposition, EncryptedPayloadRef, LlmUsageCustodyMode,
+        LlmUsageEvidence, LlmUsageEvidenceEnvelope, ProviderUsageMetrics,
+        avc_action_descriptor_hash, avc_llm_usage_action_request, create_trust_receipt, issue_avc,
+        llm_usage_evidence_hash, llm_usage_evidence_signature_payload, revoke_avc,
+        sign_emergency_stop,
     };
     use exo_core::{Hash256, Signature, Timestamp, crypto, crypto::KeyPair};
     use tower::ServiceExt;
@@ -9658,6 +9775,273 @@ mod tests {
         assert!(
             !state.registry.lock().unwrap().is_revoked(&id),
             "unsigned revocation must not create a tombstone"
+        );
+    }
+
+    fn credential_bound_to_stop(stop_ref: &str) -> AutonomousVolitionCredential {
+        let mut draft = baseline_draft();
+        draft.constraints.emergency_stop_refs = vec![stop_ref.into()];
+        issue_avc(draft, |bytes| issuer_keypair().sign(bytes)).unwrap()
+    }
+
+    fn signed_emergency_stop(
+        stop_ref: &str,
+        disposition: EmergencyStopDisposition,
+        at: Timestamp,
+    ) -> EmergencyStopRecord {
+        sign_emergency_stop(
+            stop_ref,
+            disposition,
+            Did::new("did:exo:issuer").unwrap(),
+            at,
+            |bytes| issuer_keypair().sign(bytes),
+        )
+        .unwrap()
+    }
+
+    async fn post_json(
+        state: &Arc<AvcApiState>,
+        uri: &str,
+        body: Vec<u8>,
+    ) -> axum::response::Response {
+        avc_router(Arc::clone(state))
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(uri)
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    }
+
+    async fn validate_stop_credential(
+        state: &Arc<AvcApiState>,
+        credential: AutonomousVolitionCredential,
+    ) -> AvcValidationResult {
+        let request = AvcValidationRequest {
+            credential,
+            action: None,
+            now: Timestamp::new(1_500_000, 0),
+        };
+        let response = post_json(
+            state,
+            "/api/v1/avc/validate",
+            serde_json::to_vec(&request).unwrap(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        serde_json::from_slice(&read_body(response).await).unwrap()
+    }
+
+    #[tokio::test]
+    async fn emergency_stop_unknown_ref_denies_validation() {
+        let state = fresh_state();
+        let result = validate_stop_credential(&state, credential_bound_to_stop("halt")).await;
+        assert_eq!(result.decision, AvcDecision::Deny);
+        assert_eq!(
+            result.reason_codes,
+            vec![AvcReasonCode::EmergencyStopUnknown]
+        );
+    }
+
+    #[tokio::test]
+    async fn emergency_stop_engage_denies_and_is_audited() {
+        let state = fresh_state();
+        let record = signed_emergency_stop(
+            "halt",
+            EmergencyStopDisposition::Engaged,
+            Timestamp::new(1_100_000, 0),
+        );
+        let body = serde_json::to_vec(&EmergencyStopRequest { record }).unwrap();
+        let response = post_json(&state, "/api/v1/avc/emergency-stop/engage", body).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let parsed: EmergencyStopResponse =
+            serde_json::from_slice(&read_body(response).await).unwrap();
+        assert_eq!(parsed.disposition, EmergencyStopDisposition::Engaged);
+        assert_eq!(parsed.status, "engaged");
+
+        let result = validate_stop_credential(&state, credential_bound_to_stop("halt")).await;
+        assert_eq!(result.decision, AvcDecision::Deny);
+        assert_eq!(
+            result.reason_codes,
+            vec![AvcReasonCode::EmergencyStopEngaged]
+        );
+
+        let audit = avc_router(Arc::clone(&state))
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/api/v1/avc/emergency-stop?stop_ref=halt")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(audit.status(), StatusCode::OK);
+        let parsed: EmergencyStopAuditResponse =
+            serde_json::from_slice(&read_body(audit).await).unwrap();
+        assert_eq!(parsed.records.len(), 1);
+        assert_eq!(
+            parsed.records[0].disposition,
+            EmergencyStopDisposition::Engaged
+        );
+    }
+
+    #[tokio::test]
+    async fn emergency_stop_clear_allows_validation() {
+        let state = fresh_state();
+        let record = signed_emergency_stop(
+            "halt",
+            EmergencyStopDisposition::Cleared,
+            Timestamp::new(1_100_000, 0),
+        );
+        let body = serde_json::to_vec(&EmergencyStopRequest { record }).unwrap();
+        let response = post_json(&state, "/api/v1/avc/emergency-stop/clear", body).await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let result = validate_stop_credential(&state, credential_bound_to_stop("halt")).await;
+        assert_eq!(result.decision, AvcDecision::Allow);
+        assert_eq!(result.reason_codes, vec![AvcReasonCode::Valid]);
+    }
+
+    #[tokio::test]
+    async fn emergency_stop_engage_after_clear_denies() {
+        let state = fresh_state();
+        let clear = signed_emergency_stop(
+            "halt",
+            EmergencyStopDisposition::Cleared,
+            Timestamp::new(1_100_000, 0),
+        );
+        let engage = signed_emergency_stop(
+            "halt",
+            EmergencyStopDisposition::Engaged,
+            Timestamp::new(1_200_000, 0),
+        );
+        let clear_response = post_json(
+            &state,
+            "/api/v1/avc/emergency-stop/clear",
+            serde_json::to_vec(&EmergencyStopRequest { record: clear }).unwrap(),
+        )
+        .await;
+        assert_eq!(clear_response.status(), StatusCode::OK);
+        let engage_response = post_json(
+            &state,
+            "/api/v1/avc/emergency-stop/engage",
+            serde_json::to_vec(&EmergencyStopRequest { record: engage }).unwrap(),
+        )
+        .await;
+        assert_eq!(engage_response.status(), StatusCode::OK);
+
+        let result = validate_stop_credential(&state, credential_bound_to_stop("halt")).await;
+        assert_eq!(result.decision, AvcDecision::Deny);
+        assert_eq!(
+            result.reason_codes,
+            vec![AvcReasonCode::EmergencyStopEngaged]
+        );
+        assert_eq!(
+            state
+                .registry
+                .lock()
+                .unwrap()
+                .emergency_stop_audit("halt")
+                .len(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn emergency_stop_forged_signature_is_not_stored() {
+        let state = fresh_state();
+        let mut record = signed_emergency_stop(
+            "halt",
+            EmergencyStopDisposition::Cleared,
+            Timestamp::new(1_100_000, 0),
+        );
+        record.signature = Signature::from_bytes([9u8; 64]);
+        let response = post_json(
+            &state,
+            "/api/v1/avc/emergency-stop/clear",
+            serde_json::to_vec(&EmergencyStopRequest { record }).unwrap(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            state
+                .registry
+                .lock()
+                .unwrap()
+                .emergency_stop_audit("halt")
+                .is_empty()
+        );
+        let result = validate_stop_credential(&state, credential_bound_to_stop("halt")).await;
+        assert_eq!(result.decision, AvcDecision::Deny);
+        assert_eq!(
+            result.reason_codes,
+            vec![AvcReasonCode::EmergencyStopUnknown]
+        );
+    }
+
+    #[tokio::test]
+    async fn emergency_stop_engage_route_rejects_clear_disposition() {
+        let state = fresh_state();
+        let record = signed_emergency_stop(
+            "halt",
+            EmergencyStopDisposition::Cleared,
+            Timestamp::new(1_100_000, 0),
+        );
+        let response = post_json(
+            &state,
+            "/api/v1/avc/emergency-stop/engage",
+            serde_json::to_vec(&EmergencyStopRequest { record }).unwrap(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            state
+                .registry
+                .lock()
+                .unwrap()
+                .emergency_stop_audit("halt")
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn emergency_stop_duplicate_engage_does_not_duplicate_audit() {
+        let state = fresh_state();
+        let record = signed_emergency_stop(
+            "halt",
+            EmergencyStopDisposition::Engaged,
+            Timestamp::new(1_100_000, 0),
+        );
+        let body = serde_json::to_vec(&EmergencyStopRequest {
+            record: record.clone(),
+        })
+        .unwrap();
+        assert_eq!(
+            post_json(&state, "/api/v1/avc/emergency-stop/engage", body)
+                .await
+                .status(),
+            StatusCode::OK
+        );
+        let replay = serde_json::to_vec(&EmergencyStopRequest { record }).unwrap();
+        assert_eq!(
+            post_json(&state, "/api/v1/avc/emergency-stop/engage", replay)
+                .await
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            state
+                .registry
+                .lock()
+                .unwrap()
+                .emergency_stop_audit("halt")
+                .len(),
+            1
         );
     }
 

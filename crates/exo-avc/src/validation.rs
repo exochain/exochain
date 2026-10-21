@@ -39,6 +39,7 @@ use crate::{
     credential::{
         AVC_SCHEMA_VERSION, AuthorityScope, AutonomousVolitionCredential, AvcConstraints, DataClass,
     },
+    emergency_stop::EmergencyStopDisposition,
     error::AvcError,
     llm_usage_receipt::{
         AVC_LLM_USAGE_EVIDENCE_DOMAIN, LlmUsageCustodyMode, LlmUsageEvidence,
@@ -83,6 +84,8 @@ pub enum AvcReasonCode {
     Revoked,
     Suspended,
     Quarantined,
+    EmergencyStopEngaged,
+    EmergencyStopUnknown,
     AuthorityChainMissing,
     AuthorityChainInvalid,
     ScopeWidening,
@@ -300,6 +303,21 @@ pub fn validate_avc<R: AvcRegistryRead>(
     // Revocation.
     if registry.is_revoked(&credential_id) {
         reasons.insert(AvcReasonCode::Revoked);
+    }
+
+    // Emergency stops named by the credential. An engaged stop denies.
+    // A missing stop, or a latest record that does not verify, is unknown
+    // and also denies. Empty refs leave this check idle.
+    for stop_ref in &credential.constraints.emergency_stop_refs {
+        match registry.emergency_stop_disposition(stop_ref) {
+            Some(EmergencyStopDisposition::Cleared) => {}
+            Some(EmergencyStopDisposition::Engaged) => {
+                reasons.insert(AvcReasonCode::EmergencyStopEngaged);
+            }
+            None => {
+                reasons.insert(AvcReasonCode::EmergencyStopUnknown);
+            }
+        }
     }
 
     // Required consent / policy refs.
@@ -712,6 +730,7 @@ mod tests {
             AVC_SCHEMA_VERSION, AuthorityChainRef, AvcConstraints, AvcDraft, AvcSubjectKind,
             ConsentRef, PolicyRef, TimeWindow, issue_avc, test_support::*,
         },
+        emergency_stop::sign_emergency_stop,
         llm_usage_receipt::{EncryptedPayloadRef, ProviderUsageMetrics},
         registry::{AvcRegistryWrite, InMemoryAvcRegistry},
         revocation::{AvcRevocationReason, revoke_avc},
@@ -2037,10 +2056,124 @@ mod tests {
             max_delegation_depth: 1,
             allowed_time_window: None,
             forbidden_actions: vec!["bad".into()],
-            emergency_stop_refs: vec!["stop".into()],
+            emergency_stop_refs: vec![],
         };
         let cred = h.issue(draft);
         let result = validate_avc(&baseline_request(cred, ts(1_500_000)), &h.registry).unwrap();
         assert_eq!(result.decision, AvcDecision::Allow);
+    }
+
+    fn credential_bound_to_stops(stops: &[&str]) -> AutonomousVolitionCredential {
+        let h = Harness::new();
+        let mut draft = baseline_draft();
+        draft.constraints.emergency_stop_refs =
+            stops.iter().map(|stop| (*stop).to_owned()).collect();
+        h.issue(draft)
+    }
+
+    #[test]
+    fn unknown_emergency_stop_ref_denies() {
+        let h = Harness::new();
+        let cred = {
+            let mut draft = baseline_draft();
+            draft.constraints.emergency_stop_refs = vec!["stop".into()];
+            h.issue(draft)
+        };
+        let result = validate_avc(&baseline_request(cred, ts(1_500_000)), &h.registry).unwrap();
+        assert_eq!(result.decision, AvcDecision::Deny);
+        assert_eq!(
+            result.reason_codes,
+            vec![AvcReasonCode::EmergencyStopUnknown]
+        );
+    }
+
+    #[test]
+    fn engaged_emergency_stop_denies_and_clear_allows() {
+        let h = Harness::new();
+        let cred = {
+            let mut draft = baseline_draft();
+            draft.constraints.emergency_stop_refs = vec!["halt".into()];
+            h.issue(draft)
+        };
+        let mut registry = h.registry;
+        let engaged = sign_emergency_stop(
+            "halt",
+            EmergencyStopDisposition::Engaged,
+            did("issuer"),
+            ts(1_100_000),
+            |bytes| issuer_keypair().sign(bytes),
+        )
+        .unwrap();
+        registry.put_emergency_stop(engaged).unwrap();
+        let denied =
+            validate_avc(&baseline_request(cred.clone(), ts(1_500_000)), &registry).unwrap();
+        assert_eq!(denied.decision, AvcDecision::Deny);
+        assert_eq!(
+            denied.reason_codes,
+            vec![AvcReasonCode::EmergencyStopEngaged]
+        );
+
+        let cleared = sign_emergency_stop(
+            "halt",
+            EmergencyStopDisposition::Cleared,
+            did("issuer"),
+            ts(1_200_000),
+            |bytes| issuer_keypair().sign(bytes),
+        )
+        .unwrap();
+        registry.put_emergency_stop(cleared).unwrap();
+        let allowed = validate_avc(&baseline_request(cred, ts(1_500_000)), &registry).unwrap();
+        assert_eq!(allowed.decision, AvcDecision::Allow);
+        assert_eq!(allowed.reason_codes, vec![AvcReasonCode::Valid]);
+    }
+
+    #[test]
+    fn one_unknown_emergency_stop_denies_even_when_another_is_cleared() {
+        let h = Harness::new();
+        let cred = {
+            let mut draft = baseline_draft();
+            draft.constraints.emergency_stop_refs = vec!["other".into(), "halt".into()];
+            h.issue(draft)
+        };
+        let mut registry = h.registry;
+        let cleared = sign_emergency_stop(
+            "halt",
+            EmergencyStopDisposition::Cleared,
+            did("issuer"),
+            ts(1_100_000),
+            |bytes| issuer_keypair().sign(bytes),
+        )
+        .unwrap();
+        registry.put_emergency_stop(cleared).unwrap();
+        let result = validate_avc(&baseline_request(cred, ts(1_500_000)), &registry).unwrap();
+        assert_eq!(result.decision, AvcDecision::Deny);
+        assert_eq!(
+            result.reason_codes,
+            vec![AvcReasonCode::EmergencyStopUnknown]
+        );
+    }
+
+    #[test]
+    fn engage_after_clear_denies_again() {
+        let h = Harness::new();
+        let cred = credential_bound_to_stops(&["halt"]);
+        let mut registry = h.registry;
+        for (disposition, at) in [
+            (EmergencyStopDisposition::Cleared, ts(1_100_000)),
+            (EmergencyStopDisposition::Engaged, ts(1_200_000)),
+        ] {
+            let record = sign_emergency_stop("halt", disposition, did("issuer"), at, |bytes| {
+                issuer_keypair().sign(bytes)
+            })
+            .unwrap();
+            registry.put_emergency_stop(record).unwrap();
+        }
+        let result = validate_avc(&baseline_request(cred, ts(1_500_000)), &registry).unwrap();
+        assert_eq!(result.decision, AvcDecision::Deny);
+        assert!(
+            result
+                .reason_codes
+                .contains(&AvcReasonCode::EmergencyStopEngaged)
+        );
     }
 }
