@@ -41,6 +41,9 @@
 //! | `POST` | `/api/v1/avc/emergency-stop/engage` | Append a signed engage record. |
 //! | `POST` | `/api/v1/avc/emergency-stop/clear` | Append a signed clear record. |
 //! | `GET`  | `/api/v1/avc/emergency-stop?stop_ref=` | Read the audited engage/clear history. |
+//! | `POST` | `/api/v1/avc/standing/suspend` | Append a signed suspend record. |
+//! | `POST` | `/api/v1/avc/standing/quarantine` | Append a signed quarantine record. |
+//! | `POST` | `/api/v1/avc/standing/resume` | Append a signed resume record. |
 //! | `POST` | `/api/v1/avc/issuers` | Register/rotate an issuer DID+public key at runtime; requires a DelegationRegistry-backed authority chain granting `Permission::Govern` (D3), not just the bearer token. |
 //! | `GET`  | `/api/v1/avc/:id` | Fetch a registered credential by hex ID. |
 //! | `GET`  | `/api/v1/agents/:did/avcs` | List credentials for a subject DID. |
@@ -77,9 +80,10 @@ use exo_avc::{
     AutonomousVolitionCredential, AvcActionDescriptor, AvcActionRequest, AvcDecision,
     AvcReceiptEvidenceSubject, AvcReceiptExternalTimestampProof, AvcReceiptRfc3161TimestampProof,
     AvcReceiptRfc3161TrustAnchorKind, AvcReceiptTimestampProvenance, AvcRegistryDurableState,
-    AvcRegistryRead, AvcRegistryWrite, AvcRevocation, AvcTrustReceipt, AvcTrustReceiptEvidence,
-    AvcValidationRequest, AvcValidationResult, EmergencyStopDisposition, EmergencyStopRecord,
-    InMemoryAvcRegistry, LivesafePublicAdapterOutputAuthorizationDraft,
+    AvcRegistryRead, AvcRegistryWrite, AvcRevocation, AvcStanding, AvcStandingRecord,
+    AvcTrustReceipt, AvcTrustReceiptEvidence, AvcValidationRequest, AvcValidationResult,
+    EmergencyStopDisposition, EmergencyStopRecord, InMemoryAvcRegistry,
+    LivesafePublicAdapterOutputAuthorizationDraft,
     LivesafePublicAdapterOutputAuthorizationEnvelope, LlmUsageEvidenceEnvelope,
     avc_action_commitment_hash, avc_action_descriptor_hash, avc_action_signature_payload,
     avc_llm_usage_action_request, create_trust_receipt_with_evidence,
@@ -2345,6 +2349,18 @@ pub struct EmergencyStopAuditResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct StandingRequest {
+    pub record: AvcStandingRecord,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct StandingResponse {
+    pub credential_id: String,
+    pub standing: AvcStanding,
+    pub status: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct EmitReceiptRequest {
     pub validation: AvcValidationRequest,
     pub subject_signature: Signature,
@@ -3850,6 +3866,58 @@ async fn handle_emergency_stop_audit(
     }))
 }
 
+async fn handle_standing_suspend(
+    State(state): State<Arc<AvcApiState>>,
+    Json(payload): Json<StandingRequest>,
+) -> ApiResult<Json<StandingResponse>> {
+    apply_standing(state, payload.record, AvcStanding::Suspended, "suspended").await
+}
+
+async fn handle_standing_quarantine(
+    State(state): State<Arc<AvcApiState>>,
+    Json(payload): Json<StandingRequest>,
+) -> ApiResult<Json<StandingResponse>> {
+    apply_standing(
+        state,
+        payload.record,
+        AvcStanding::Quarantined,
+        "quarantined",
+    )
+    .await
+}
+
+async fn handle_standing_resume(
+    State(state): State<Arc<AvcApiState>>,
+    Json(payload): Json<StandingRequest>,
+) -> ApiResult<Json<StandingResponse>> {
+    apply_standing(state, payload.record, AvcStanding::Active, "resumed").await
+}
+
+async fn apply_standing(
+    state: Arc<AvcApiState>,
+    record: AvcStandingRecord,
+    expected: AvcStanding,
+    status: &'static str,
+) -> ApiResult<Json<StandingResponse>> {
+    if record.standing != expected {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("standing route requires standing {expected:?}"),
+        ));
+    }
+    let credential_id = record.credential_id;
+    let standing = record.standing;
+    with_registry_blocking(state, true, move |registry| {
+        registry.put_standing(record).map_err(map_avc_error)
+    })
+    .await?;
+    Ok(Json(StandingResponse {
+        credential_id: format!("{credential_id}"),
+        standing,
+        status: status.into(),
+    }))
+}
+
 async fn handle_revoke(
     State(state): State<Arc<AvcApiState>>,
     Json(payload): Json<RevokeRequest>,
@@ -4269,6 +4337,15 @@ pub fn avc_router(state: Arc<AvcApiState>) -> Router {
             "/api/v1/avc/emergency-stop",
             get(handle_emergency_stop_audit),
         )
+        .route(
+            "/api/v1/avc/standing/suspend",
+            post(handle_standing_suspend),
+        )
+        .route(
+            "/api/v1/avc/standing/quarantine",
+            post(handle_standing_quarantine),
+        )
+        .route("/api/v1/avc/standing/resume", post(handle_standing_resume))
         .route("/api/v1/avc/issuers", post(handle_register_issuer))
         .route(
             "/api/v1/avc/issuer-registration-authority",
@@ -4303,12 +4380,12 @@ mod tests {
         AVC_LLM_USAGE_EVIDENCE_DOMAIN, AVC_RECEIPT_SIGNING_DOMAIN, AVC_SCHEMA_VERSION,
         AuthorityScope, AutonomyLevel, AvcActionDescriptor, AvcActionRequest, AvcConstraints,
         AvcDecision, AvcDraft, AvcReasonCode, AvcReceiptEvidenceSubject,
-        AvcReceiptExternalTimestampProofKind, AvcRevocationReason, AvcSubjectKind, DataClass,
-        DelegatedIntent, EmergencyStopDisposition, EncryptedPayloadRef, LlmUsageCustodyMode,
-        LlmUsageEvidence, LlmUsageEvidenceEnvelope, ProviderUsageMetrics,
+        AvcReceiptExternalTimestampProofKind, AvcRevocationReason, AvcStanding, AvcSubjectKind,
+        DataClass, DelegatedIntent, EmergencyStopDisposition, EncryptedPayloadRef,
+        LlmUsageCustodyMode, LlmUsageEvidence, LlmUsageEvidenceEnvelope, ProviderUsageMetrics,
         avc_action_descriptor_hash, avc_llm_usage_action_request, create_trust_receipt,
         delegate_avc, issue_avc, llm_usage_evidence_hash, llm_usage_evidence_signature_payload,
-        revoke_avc, sign_emergency_stop,
+        revoke_avc, sign_avc_standing, sign_emergency_stop,
     };
     use exo_core::{Hash256, Signature, Timestamp, crypto, crypto::KeyPair};
     use tower::ServiceExt;
@@ -10231,6 +10308,199 @@ mod tests {
                 .emergency_stop_audit("halt")
                 .len(),
             1
+        );
+    }
+
+    fn signed_standing(
+        credential_id: Hash256,
+        standing: AvcStanding,
+        at: Timestamp,
+    ) -> AvcStandingRecord {
+        sign_avc_standing(
+            credential_id,
+            Did::new("did:exo:issuer").unwrap(),
+            standing,
+            at,
+            |bytes| issuer_keypair().sign(bytes),
+        )
+        .unwrap()
+    }
+
+    async fn post_standing(
+        state: &Arc<AvcApiState>,
+        uri: &str,
+        record: AvcStandingRecord,
+    ) -> axum::response::Response {
+        post_json(
+            state,
+            uri,
+            serde_json::to_vec(&StandingRequest { record }).unwrap(),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn standing_suspend_denies_until_resume_and_quarantine_denies() {
+        let state = fresh_state();
+        let credential = baseline_credential();
+        let credential_id = credential.id().unwrap();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(credential.clone())
+            .unwrap();
+
+        let suspended = signed_standing(
+            credential_id,
+            AvcStanding::Suspended,
+            Timestamp::new(1_100_000, 0),
+        );
+        assert_eq!(
+            post_standing(&state, "/api/v1/avc/standing/suspend", suspended)
+                .await
+                .status(),
+            StatusCode::OK
+        );
+        let denied = validate_stop_credential(&state, credential.clone()).await;
+        assert_eq!(denied.decision, AvcDecision::Deny);
+        assert_eq!(denied.reason_codes, vec![AvcReasonCode::Suspended]);
+
+        let resumed = signed_standing(
+            credential_id,
+            AvcStanding::Active,
+            Timestamp::new(1_200_000, 0),
+        );
+        assert_eq!(
+            post_standing(&state, "/api/v1/avc/standing/resume", resumed)
+                .await
+                .status(),
+            StatusCode::OK
+        );
+        let allowed = validate_stop_credential(&state, credential.clone()).await;
+        assert_eq!(allowed.decision, AvcDecision::Allow);
+
+        let quarantined = signed_standing(
+            credential_id,
+            AvcStanding::Quarantined,
+            Timestamp::new(1_300_000, 0),
+        );
+        assert_eq!(
+            post_standing(&state, "/api/v1/avc/standing/quarantine", quarantined)
+                .await
+                .status(),
+            StatusCode::OK
+        );
+        let quarantined_result = validate_stop_credential(&state, credential).await;
+        assert_eq!(quarantined_result.decision, AvcDecision::Deny);
+        assert_eq!(
+            quarantined_result.reason_codes,
+            vec![AvcReasonCode::Quarantined]
+        );
+    }
+
+    #[tokio::test]
+    async fn standing_forged_signature_is_not_stored() {
+        let state = fresh_state();
+        let credential = baseline_credential();
+        let credential_id = credential.id().unwrap();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(credential.clone())
+            .unwrap();
+        let mut record = signed_standing(
+            credential_id,
+            AvcStanding::Suspended,
+            Timestamp::new(1_100_000, 0),
+        );
+        record.signature = Signature::from_bytes([9u8; 64]);
+        let response = post_standing(&state, "/api/v1/avc/standing/suspend", record).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            state
+                .registry
+                .lock()
+                .unwrap()
+                .standing_audit(&credential_id)
+                .is_empty()
+        );
+        let result = validate_stop_credential(&state, credential).await;
+        assert_eq!(result.decision, AvcDecision::Allow);
+    }
+
+    #[tokio::test]
+    async fn standing_suspend_route_rejects_resume_record() {
+        let state = fresh_state();
+        let credential = baseline_credential();
+        let credential_id = credential.id().unwrap();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(credential)
+            .unwrap();
+        let record = signed_standing(
+            credential_id,
+            AvcStanding::Active,
+            Timestamp::new(1_100_000, 0),
+        );
+        let response = post_standing(&state, "/api/v1/avc/standing/suspend", record).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            state
+                .registry
+                .lock()
+                .unwrap()
+                .standing_audit(&credential_id)
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn validation_denies_child_of_revoked_or_missing_ancestor() {
+        let state = fresh_state();
+        let parent = baseline_credential();
+        let parent_id = parent.id().unwrap();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(parent)
+            .unwrap();
+        let revocation = revoke_avc(
+            parent_id,
+            Did::new("did:exo:issuer").unwrap(),
+            AvcRevocationReason::IssuerRevoked,
+            Timestamp::new(1_100_000, 0),
+            |bytes| issuer_keypair().sign(bytes),
+        )
+        .unwrap();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_revocation(revocation)
+            .unwrap();
+
+        let mut child_draft = baseline_draft();
+        child_draft.delegated_intent.purpose = "child".into();
+        child_draft.parent_avc_id = Some(parent_id);
+        let child = issue_avc(child_draft, |bytes| issuer_keypair().sign(bytes)).unwrap();
+        let revoked = validate_stop_credential(&state, child).await;
+        assert_eq!(revoked.decision, AvcDecision::Deny);
+        assert!(revoked.reason_codes.contains(&AvcReasonCode::Revoked));
+
+        let mut missing_draft = baseline_draft();
+        missing_draft.delegated_intent.purpose = "missing-parent".into();
+        missing_draft.parent_avc_id = Some(Hash256::from_bytes([0x99; 32]));
+        let missing = issue_avc(missing_draft, |bytes| issuer_keypair().sign(bytes)).unwrap();
+        let missing_result = validate_stop_credential(&state, missing).await;
+        assert_eq!(missing_result.decision, AvcDecision::Deny);
+        assert_eq!(
+            missing_result.reason_codes,
+            vec![AvcReasonCode::AncestorMissing]
         );
     }
 

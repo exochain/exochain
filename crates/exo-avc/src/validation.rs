@@ -47,6 +47,7 @@ use crate::{
     },
     receipt::AvcTrustReceipt,
     registry::AvcRegistryRead,
+    standing::CredentialStanding,
 };
 
 /// Signing domain tag for AVC human approval evidence.
@@ -59,6 +60,11 @@ pub const AVC_ACTION_COMMITMENT_DOMAIN: &str = "exo.avc.action.commitment.v1";
 pub const AVC_ACTION_DESCRIPTOR_DOMAIN: &str = "exo.avc.action.descriptor.v1";
 /// Canonical AVC action name for EXOCHAIN LYNK Protocol usage receipts.
 pub const AVC_LLM_USAGE_ACTION_NAME: &str = "llm.usage.receipt.emit";
+/// Maximum number of parent credentials validation will follow.
+///
+/// A longer chain, or a parent pointer that repeats an ancestor, denies
+/// with [`AvcReasonCode::AncestorDepthExceeded`].
+pub const AVC_MAX_ANCESTOR_WALK_DEPTH: u32 = 16;
 
 // ---------------------------------------------------------------------------
 // Decision / Reason
@@ -86,6 +92,9 @@ pub enum AvcReasonCode {
     Quarantined,
     EmergencyStopEngaged,
     EmergencyStopUnknown,
+    AncestorMissing,
+    AncestorDepthExceeded,
+    StandingUnknown,
     AuthorityChainMissing,
     AuthorityChainInvalid,
     ScopeWidening,
@@ -304,6 +313,8 @@ pub fn validate_avc<R: AvcRegistryRead>(
     if registry.is_revoked(&credential_id) {
         reasons.insert(AvcReasonCode::Revoked);
     }
+    apply_credential_standing(registry, &credential_id, &mut reasons);
+    enforce_ancestor_chain(credential, &credential_id, registry, &mut reasons);
 
     // Emergency stops named by the credential. An engaged stop denies.
     // A missing stop, or a latest record that does not verify, is unknown
@@ -370,6 +381,53 @@ pub fn validate_avc<R: AvcRegistryRead>(
         valid_until: credential.expires_at,
         receipt: None,
     })
+}
+
+fn apply_credential_standing<R: AvcRegistryRead>(
+    registry: &R,
+    credential_id: &Hash256,
+    reasons: &mut BTreeSet<AvcReasonCode>,
+) {
+    match registry.credential_standing(credential_id) {
+        CredentialStanding::Active => {}
+        CredentialStanding::Suspended => {
+            reasons.insert(AvcReasonCode::Suspended);
+        }
+        CredentialStanding::Quarantined => {
+            reasons.insert(AvcReasonCode::Quarantined);
+        }
+        CredentialStanding::Unverified => {
+            reasons.insert(AvcReasonCode::StandingUnknown);
+        }
+    }
+}
+
+fn enforce_ancestor_chain<R: AvcRegistryRead>(
+    credential: &AutonomousVolitionCredential,
+    credential_id: &Hash256,
+    registry: &R,
+    reasons: &mut BTreeSet<AvcReasonCode>,
+) {
+    let mut seen = BTreeSet::new();
+    seen.insert(*credential_id);
+    let mut parent_id = credential.parent_avc_id;
+    let mut depth = 0u32;
+    while let Some(current_id) = parent_id {
+        depth = depth.saturating_add(1);
+        if depth > AVC_MAX_ANCESTOR_WALK_DEPTH || !seen.insert(current_id) {
+            reasons.insert(AvcReasonCode::AncestorDepthExceeded);
+            return;
+        }
+        let Some(ancestor) = registry.get_credential(&current_id) else {
+            reasons.insert(AvcReasonCode::AncestorMissing);
+            return;
+        };
+        if registry.is_revoked(&current_id) {
+            reasons.insert(AvcReasonCode::Revoked);
+        }
+        apply_credential_standing(registry, &current_id, reasons);
+        parent_id = ancestor.parent_avc_id;
+    }
 }
 
 fn reasons_are_only(reasons: &[AvcReasonCode], expected: AvcReasonCode) -> bool {
@@ -734,6 +792,7 @@ mod tests {
         llm_usage_receipt::{EncryptedPayloadRef, ProviderUsageMetrics},
         registry::{AvcRegistryWrite, InMemoryAvcRegistry},
         revocation::{AvcRevocationReason, revoke_avc},
+        standing::{AvcStanding, sign_avc_standing},
     };
 
     const ISSUER_SEED: [u8; 32] = [0x11; 32];
@@ -2175,5 +2234,146 @@ mod tests {
                 .reason_codes
                 .contains(&AvcReasonCode::EmergencyStopEngaged)
         );
+    }
+
+    fn chain(ancestors: u32) -> (InMemoryAvcRegistry, AutonomousVolitionCredential) {
+        let mut h = Harness::new();
+        let mut parent_id = None;
+        let mut leaf = None;
+        for index in 0..=ancestors {
+            let mut draft = baseline_draft();
+            draft.delegated_intent.purpose = format!("link-{index}");
+            draft.parent_avc_id = parent_id;
+            let credential = h.issue(draft);
+            parent_id = Some(credential.id().unwrap());
+            h.registry.put_credential(credential.clone()).unwrap();
+            leaf = Some(credential);
+        }
+        (h.registry, leaf.expect("chain leaf"))
+    }
+
+    #[test]
+    fn ancestor_at_depth_bound_allows_and_past_bound_denies() {
+        let (registry, leaf) = chain(AVC_MAX_ANCESTOR_WALK_DEPTH);
+        let allowed = validate_avc(&baseline_request(leaf, ts(1_500_000)), &registry).unwrap();
+        assert_eq!(allowed.decision, AvcDecision::Allow);
+
+        let (registry, leaf) = chain(AVC_MAX_ANCESTOR_WALK_DEPTH.saturating_add(1));
+        let denied = validate_avc(&baseline_request(leaf, ts(1_500_000)), &registry).unwrap();
+        assert_eq!(denied.decision, AvcDecision::Deny);
+        assert_eq!(
+            denied.reason_codes,
+            vec![AvcReasonCode::AncestorDepthExceeded]
+        );
+    }
+
+    #[test]
+    fn missing_ancestor_denies() {
+        let h = Harness::new();
+        let mut draft = baseline_draft();
+        draft.parent_avc_id = Some(h256(0x99));
+        let cred = h.issue(draft);
+        let result = validate_avc(&baseline_request(cred, ts(1_500_000)), &h.registry).unwrap();
+        assert_eq!(result.decision, AvcDecision::Deny);
+        assert_eq!(result.reason_codes, vec![AvcReasonCode::AncestorMissing]);
+    }
+
+    #[test]
+    fn revoked_ancestor_denies_child_and_grandchild() {
+        let mut h = Harness::new();
+        let root = h.issue(baseline_draft());
+        let root_id = root.id().unwrap();
+        h.registry.put_credential(root).unwrap();
+        let revocation = revoke_avc(
+            root_id,
+            did("issuer"),
+            AvcRevocationReason::IssuerRevoked,
+            ts(1_100_000),
+            |bytes| issuer_keypair().sign(bytes),
+        )
+        .unwrap();
+        h.registry.put_revocation(revocation).unwrap();
+
+        let mut child_draft = baseline_draft();
+        child_draft.delegated_intent.purpose = "child".into();
+        child_draft.parent_avc_id = Some(root_id);
+        let child = h.issue(child_draft);
+        let child_id = child.id().unwrap();
+        h.registry.put_credential(child.clone()).unwrap();
+        let child_result =
+            validate_avc(&baseline_request(child, ts(1_500_000)), &h.registry).unwrap();
+        assert_eq!(child_result.decision, AvcDecision::Deny);
+        assert!(child_result.reason_codes.contains(&AvcReasonCode::Revoked));
+
+        let mut grandchild_draft = baseline_draft();
+        grandchild_draft.delegated_intent.purpose = "grandchild".into();
+        grandchild_draft.parent_avc_id = Some(child_id);
+        let grandchild = h.issue(grandchild_draft);
+        let grandchild_result =
+            validate_avc(&baseline_request(grandchild, ts(1_500_000)), &h.registry).unwrap();
+        assert_eq!(grandchild_result.decision, AvcDecision::Deny);
+        assert!(
+            grandchild_result
+                .reason_codes
+                .contains(&AvcReasonCode::Revoked)
+        );
+    }
+
+    #[test]
+    fn suspend_denies_until_resume_and_quarantine_denies_descendants() {
+        let mut h = Harness::new();
+        let parent = h.issue(baseline_draft());
+        let parent_id = parent.id().unwrap();
+        h.registry.put_credential(parent).unwrap();
+        let suspended = sign_avc_standing(
+            parent_id,
+            did("issuer"),
+            AvcStanding::Suspended,
+            ts(1_100_000),
+            |bytes| issuer_keypair().sign(bytes),
+        )
+        .unwrap();
+        h.registry.put_standing(suspended).unwrap();
+
+        let mut child_draft = baseline_draft();
+        child_draft.delegated_intent.purpose = "child".into();
+        child_draft.parent_avc_id = Some(parent_id);
+        let child = h.issue(child_draft);
+        let child_id = child.id().unwrap();
+        h.registry.put_credential(child.clone()).unwrap();
+        let suspended_child =
+            validate_avc(&baseline_request(child.clone(), ts(1_500_000)), &h.registry).unwrap();
+        assert_eq!(suspended_child.decision, AvcDecision::Deny);
+        assert_eq!(suspended_child.reason_codes, vec![AvcReasonCode::Suspended]);
+
+        let resumed = sign_avc_standing(
+            parent_id,
+            did("issuer"),
+            AvcStanding::Active,
+            ts(1_200_000),
+            |bytes| issuer_keypair().sign(bytes),
+        )
+        .unwrap();
+        h.registry.put_standing(resumed).unwrap();
+        let allowed = validate_avc(&baseline_request(child, ts(1_500_000)), &h.registry).unwrap();
+        assert_eq!(allowed.decision, AvcDecision::Allow);
+
+        let quarantined = sign_avc_standing(
+            parent_id,
+            did("issuer"),
+            AvcStanding::Quarantined,
+            ts(1_300_000),
+            |bytes| issuer_keypair().sign(bytes),
+        )
+        .unwrap();
+        h.registry.put_standing(quarantined).unwrap();
+        let mut grandchild_draft = baseline_draft();
+        grandchild_draft.delegated_intent.purpose = "grandchild".into();
+        grandchild_draft.parent_avc_id = Some(child_id);
+        let grandchild = h.issue(grandchild_draft);
+        let denied =
+            validate_avc(&baseline_request(grandchild, ts(1_500_000)), &h.registry).unwrap();
+        assert_eq!(denied.decision, AvcDecision::Deny);
+        assert_eq!(denied.reason_codes, vec![AvcReasonCode::Quarantined]);
     }
 }
