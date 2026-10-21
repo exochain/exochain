@@ -1,0 +1,11 @@
+{
+  "decision": "Deny",
+  "http_status": 403,
+  "payment_evidence_hash": "5555555555555555555555555555555555555555555555555555555555555555",
+  "payment_signature_header_present": true,
+  "never_moves_money": true,
+  "mandate_hash": "4444444444444444444444444444444444444444444444444444444444444444",
+  "terms_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+  "amount_minor": 100,
+  "currency": "USD"
+}

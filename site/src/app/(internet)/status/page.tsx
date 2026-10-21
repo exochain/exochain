@@ -14,12 +14,18 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import { LiveGatewayProbe } from '@/components/status/LiveGatewayProbe';
 import { Section, Eyebrow, H1, H2, Lede } from '@/components/ui/Section';
 import { Pill } from '@/components/ui/Pill';
-import { LiveGatewayProbe } from '@/components/status/LiveGatewayProbe';
 import { loadPublicStatus } from '@/lib/public-status';
+import { publicMetadata } from '@/lib/public-site';
 
-export const metadata = { title: 'Status' };
+export const metadata = publicMetadata({
+  title: 'Status',
+  description:
+    'Published EXOCHAIN v0.2.7 beta status. The page records the release snapshot and does not invent network metrics.',
+  path: '/status',
+});
 
 export default function Page() {
   const publicStatus = loadPublicStatus();

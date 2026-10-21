@@ -1,0 +1,22 @@
+{
+  "transcript_id": "demo-transcript-1",
+  "kind": "commit",
+  "prev_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+  "terms_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+  "hlc_physical_ms": 1000,
+  "hlc_logical": 1,
+  "actor_did": "did:exo:demo-agent",
+  "grantor_did": "did:exo:demo-principal",
+  "parties": [
+    { "did": "did:exo:demo-principal", "role": "bailor" },
+    { "did": "did:exo:demo-agent", "role": "bailee", "agent_for": "did:exo:demo-principal" },
+    { "did": "did:exo:demo-service", "role": "service" },
+    { "did": "did:exo:demo-witness", "role": "witness" }
+  ],
+  "threshold": 3,
+  "permission_ceiling": ["Read"],
+  "requested_permissions": ["Read"],
+  "amount_minor": 100,
+  "currency": "USD",
+  "signature_hex": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab"
+}

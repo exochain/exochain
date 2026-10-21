@@ -16,8 +16,13 @@
 
 import { DocPage } from '@/components/content/DocPage';
 import { ZeroPriceBanner } from '@/components/ui/ZeroPriceBanner';
+import { publicMetadata } from '@/lib/public-site';
 
-export const metadata = { title: 'Settlement' };
+export const metadata = publicMetadata({
+  title: 'Settlement',
+  description: 'Settlement. EXOCHAIN is the trust fabric for autonomous commerce.',
+  path: '/docs/settlement',
+});
 
 export default function Page() {
   return (

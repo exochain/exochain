@@ -31,9 +31,10 @@ export default function Page() {
           <Card>
             <CardHeader eyebrow="Published" title="See /status" />
             <CardBody className="text-sm">
-              Earlier cards on this page named v0.4.2-alpha and v0.4.1-alpha.
-              Those tags are not EXOCHAIN releases. Use the public status page
-              for the published version, spec, and default-off boundaries.
+              Earlier cards on this page named v0.4.2 and v0.4.1 as pre-release
+              tags. Those tags are not EXOCHAIN releases. Use the public status
+              page for the published v0.2.7 record, spec, and default-off
+              boundaries.
             </CardBody>
           </Card>
       </div>

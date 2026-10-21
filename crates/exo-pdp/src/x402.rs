@@ -20,19 +20,19 @@
 //! that decision onto facilitator HTTP and binds payment evidence by
 //! hash. `PAYMENT-SIGNATURE` header presence is never paid.
 
-use exo_core::Hash256;
 use serde::{Deserialize, Serialize};
 
+pub use crate::payment_evidence::{
+    PAYMENT_EVIDENCE_DOMAIN, PAYMENT_EVIDENCE_SCHEMA_VERSION, PaymentEvidence,
+    PaymentTransactionContext, bind_payment_evidence, canonical_payment_evidence_cbor,
+    payment_evidence_digest, payment_evidence_from_cbor, payment_evidence_preimage,
+};
 use crate::{
-    error::{PdpError, Result},
     evidence::Decision,
     mandate::{MandateAdapter, ProposedAction, WireMandate},
     policy::DecisionRequest,
     service::{DecideResponse, PolicyDecisionPoint},
 };
-
-/// Domain for canonical payment-evidence CBOR. AVC receipts store the hash.
-pub const PAYMENT_EVIDENCE_DOMAIN: &str = "exo.x402.payment.evidence.v1";
 
 pub const HTTP_OK: u16 = 200;
 pub const HTTP_PAYMENT_REQUIRED: u16 = 402;
@@ -46,7 +46,16 @@ pub struct X402VerifyRequest {
     pub mandate: WireMandate,
     #[serde(default)]
     pub proposed: Option<ProposedAction>,
-    /// Hex-encoded BLAKE3 of canonical payment evidence. Not a boolean.
+    /// Structured payment evidence. JSON key order is normalized by
+    /// re-encoding to canonical CBOR; it is not hashed as JSON.
+    #[serde(default)]
+    pub payment_evidence: Option<PaymentEvidence>,
+    /// Hex of the canonical CBOR encoding of [`PaymentEvidence`].
+    /// Any other encoding is rejected.
+    #[serde(default)]
+    pub payment_evidence_cbor_hex: Option<String>,
+    /// Hex BLAKE3 of the domain-separated canonical preimage.
+    /// Accepted only when it matches evidence the verifier can see.
     #[serde(default)]
     pub payment_evidence_hash_hex: Option<String>,
     /// If sent without a bound hash, still unpaid. Never treated as paid.
@@ -128,27 +137,6 @@ pub fn is_never_paywalled_path(path: &str) -> bool {
         || (path.starts_with("/api/v1/agents/") && path.ends_with("/consent"))
 }
 
-fn parse_bound_hash(hex_in: Option<&str>) -> Result<Option<Hash256>> {
-    let Some(raw) = hex_in.map(str::trim).filter(|s| !s.is_empty()) else {
-        return Ok(None);
-    };
-    let bytes = hex::decode(raw).map_err(|e| PdpError::BadRequest(e.to_string()))?;
-    if bytes.len() != 32 {
-        return Err(PdpError::BadRequest(
-            "payment_evidence_hash_hex must be 32 bytes".into(),
-        ));
-    }
-    let mut arr = [0u8; 32];
-    arr.copy_from_slice(&bytes);
-    let hash = Hash256::from_bytes(arr);
-    if hash == Hash256::ZERO {
-        return Err(PdpError::BadRequest(
-            "payment evidence hash must be non-zero".into(),
-        ));
-    }
-    Ok(Some(hash))
-}
-
 /// Run the verify hop against a live PDP.
 pub fn verify(
     pdp: &mut PolicyDecisionPoint,
@@ -170,10 +158,17 @@ pub fn verify(
             ));
         }
     };
+    let payer = mandate.principal.to_string();
+    let payment_evidence_hash = bind_payment_evidence(
+        body.payment_evidence,
+        body.payment_evidence_cbor_hex.as_deref(),
+        body.payment_evidence_hash_hex.as_deref(),
+        &PaymentTransactionContext::from_proposed(&proposed, &payer),
+    )?;
     let req = DecisionRequest {
         mandate,
         proposed,
-        payment_evidence_hash: parse_bound_hash(body.payment_evidence_hash_hex.as_deref())?,
+        payment_evidence_hash,
         now,
     };
     let out = pdp.verify_before_settle(req)?;
@@ -205,7 +200,7 @@ mod tests {
             action: "payment.settle".into(),
             amount_minor: Some(99),
             currency: Some("USD".into()),
-            merchant: None,
+            merchant: Some("did:exo:merchant".into()),
             caveats: vec![Caveat::AmountMax {
                 minor: 1,
                 currency: "USD".into(),
@@ -217,6 +212,15 @@ mod tests {
         };
         m.signature = alice.sign(&m.signable_payload().unwrap());
 
+        let evidence = PaymentEvidence {
+            asset: "USD".into(),
+            nonce: "n-1".into(),
+            payee: "did:exo:merchant".into(),
+            payer: "did:exo:alice".into(),
+            scheme: "exact".into(),
+            network: "internal".into(),
+            amount_minor: 99,
+        };
         let body = X402VerifyRequest {
             mandate: WireMandate {
                 kind: MandateKind::X402Payload,
@@ -225,7 +229,7 @@ mod tests {
                 action: m.action.clone(),
                 amount_minor: m.amount_minor,
                 currency: m.currency.clone(),
-                merchant: None,
+                merchant: m.merchant.clone(),
                 caveats: m.caveats.clone(),
                 expires_ms: None,
                 consume_once: false,
@@ -236,10 +240,14 @@ mod tests {
                 action: "payment.settle".into(),
                 amount_minor: Some(99),
                 currency: Some("USD".into()),
-                merchant: None,
+                merchant: Some("did:exo:merchant".into()),
                 rail: None,
             }),
-            payment_evidence_hash_hex: Some(hex::encode([0x11u8; 32])),
+            payment_evidence: Some(evidence.clone()),
+            payment_evidence_cbor_hex: None,
+            payment_evidence_hash_hex: Some(
+                payment_evidence_digest(&evidence).unwrap().to_string(),
+            ),
             payment_signature_header: None,
             now_ms: Some(1),
         };
@@ -284,7 +292,7 @@ mod tests {
             action: "payment.settle".into(),
             amount_minor: Some(1),
             currency: Some("USD".into()),
-            merchant: None,
+            merchant: Some("did:exo:merchant".into()),
             caveats: vec![],
             expires: None,
             consume_once: false,
@@ -293,6 +301,15 @@ mod tests {
         };
         m.signature = alice.sign(&m.signable_payload().unwrap());
 
+        let evidence = PaymentEvidence {
+            asset: "USD".into(),
+            nonce: "n-1".into(),
+            payee: "did:exo:merchant".into(),
+            payer: "did:exo:alice".into(),
+            scheme: "exact".into(),
+            network: "internal".into(),
+            amount_minor: 1,
+        };
         let body = X402VerifyRequest {
             mandate: WireMandate {
                 kind: MandateKind::X402Payload,
@@ -301,7 +318,7 @@ mod tests {
                 action: m.action,
                 amount_minor: m.amount_minor,
                 currency: m.currency,
-                merchant: None,
+                merchant: m.merchant,
                 caveats: vec![],
                 expires_ms: None,
                 consume_once: false,
@@ -309,7 +326,11 @@ mod tests {
                 raw_hex: None,
             },
             proposed: None,
-            payment_evidence_hash_hex: Some(hex::encode([0x11u8; 32])),
+            payment_evidence: Some(evidence.clone()),
+            payment_evidence_cbor_hex: None,
+            payment_evidence_hash_hex: Some(
+                payment_evidence_digest(&evidence).unwrap().to_string(),
+            ),
             payment_signature_header: None,
             now_ms: Some(2),
         };
@@ -377,6 +398,8 @@ mod tests {
                 raw_hex: None,
             },
             proposed: None,
+            payment_evidence: None,
+            payment_evidence_cbor_hex: None,
             payment_evidence_hash_hex: None,
             payment_signature_header: Some("sig".into()),
             now_ms: Some(2),
@@ -386,6 +409,93 @@ mod tests {
         assert_eq!(resp.decision, Decision::Challenge);
         assert_eq!(resp.http_status, HTTP_PAYMENT_REQUIRED);
         assert_eq!(HEADER_PAYMENT_SIGNATURE, "PAYMENT-SIGNATURE");
+    }
+
+    fn unsigned_verify_request(
+        evidence: Option<PaymentEvidence>,
+        cbor_hex: Option<String>,
+        hash_hex: Option<String>,
+    ) -> X402VerifyRequest {
+        X402VerifyRequest {
+            mandate: WireMandate {
+                kind: MandateKind::X402Payload,
+                principal: "did:exo:alice".into(),
+                agent: "did:exo:agent".into(),
+                action: "payment.settle".into(),
+                amount_minor: Some(1),
+                currency: Some("USD".into()),
+                merchant: Some("did:exo:merchant".into()),
+                caveats: vec![],
+                expires_ms: None,
+                consume_once: false,
+                signature_hex: "11".repeat(64),
+                raw_hex: None,
+            },
+            proposed: None,
+            payment_evidence: evidence,
+            payment_evidence_cbor_hex: cbor_hex,
+            payment_evidence_hash_hex: hash_hex,
+            payment_signature_header: None,
+            now_ms: Some(1),
+        }
+    }
+
+    #[test]
+    fn zero_hash_fails_closed_on_verify() {
+        let evidence = crate::payment_evidence::sample_payment_evidence();
+        let mut pdp = PolicyDecisionPoint::ephemeral();
+        let error = verify(
+            &mut pdp,
+            unsigned_verify_request(Some(evidence), None, Some("00".repeat(32))),
+        )
+        .expect_err("zero hash");
+        assert!(error.to_string().contains("non-zero"));
+    }
+
+    #[test]
+    fn mismatched_hash_fails_closed_on_verify() {
+        let evidence = crate::payment_evidence::sample_payment_evidence();
+        let mut pdp = PolicyDecisionPoint::ephemeral();
+        let error = verify(
+            &mut pdp,
+            unsigned_verify_request(Some(evidence), None, Some(hex::encode([0x11u8; 32]))),
+        )
+        .expect_err("mismatch");
+        assert!(error.to_string().contains("does not match canonical CBOR"));
+    }
+
+    #[test]
+    fn unrelated_transaction_evidence_replay_is_rejected_on_verify() {
+        let mut evidence = crate::payment_evidence::sample_payment_evidence();
+        evidence.payer = "did:exo:alice".into();
+        evidence.amount_minor = 50;
+        evidence.payee = "did:exo:other-merchant".into();
+        let digest = payment_evidence_digest(&evidence).unwrap().to_string();
+        let mut pdp = PolicyDecisionPoint::ephemeral();
+        let error = verify(
+            &mut pdp,
+            unsigned_verify_request(Some(evidence), None, Some(digest)),
+        )
+        .expect_err("replay");
+        let message = error.to_string();
+        assert!(message.contains("requested transaction"), "{message}");
+        assert!(message.contains("amount_minor"), "{message}");
+    }
+
+    #[test]
+    fn noncanonical_cbor_fails_closed_on_verify() {
+        let evidence = crate::payment_evidence::sample_payment_evidence();
+        let digest = payment_evidence_digest(&evidence).unwrap().to_string();
+        let cbor = hex::encode(crate::payment_evidence::noncanonical_payment_evidence_cbor(
+            &evidence,
+        ));
+        let mut pdp = PolicyDecisionPoint::ephemeral();
+        let error = verify(
+            &mut pdp,
+            unsigned_verify_request(None, Some(cbor), Some(digest)),
+        )
+        .expect_err("noncanonical");
+        assert!(error.to_string().contains("not canonical"));
     }
 
     #[test]

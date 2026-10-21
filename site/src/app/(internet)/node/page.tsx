@@ -17,8 +17,13 @@
 import Link from 'next/link';
 import { Section, Eyebrow, H1, H2, Lede } from '@/components/ui/Section';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
+import { publicMetadata } from '@/lib/public-site';
 
-export const metadata = { title: 'Run a Node' };
+export const metadata = publicMetadata({
+  title: 'Run a Node',
+  description: 'Run a Node. EXOCHAIN is the trust fabric for autonomous commerce.',
+  path: '/node',
+});
 
 export default function Page() {
   return (
@@ -39,8 +44,9 @@ export default function Page() {
             <CardHeader title="Node operator" />
             <CardBody>
               <p className="text-sm">
-                This public page does not operate a validator set and does
-                not grant operator status. The extranet node console is a
+                Runs the binary, exposes the gateway surface, and propagates
+                blocks. This public page does not operate a validator set and
+                does not grant operator status. The extranet node console is a
                 mock. Hardware-attestation requirements are defined by the
                 node and governance documents. See{' '}
                 <Link href="/status" className="underline">/status</Link>.

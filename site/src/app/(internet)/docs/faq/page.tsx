@@ -15,8 +15,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { DocPage } from '@/components/content/DocPage';
+import { publicMetadata } from '@/lib/public-site';
 
-export const metadata = { title: 'FAQ' };
+export const metadata = publicMetadata({
+  title: 'FAQ',
+  description: 'FAQ. EXOCHAIN is the trust fabric for autonomous commerce.',
+  path: '/docs/faq',
+});
 
 const QA: { q: string; a: string }[] = [
   {
@@ -36,8 +41,8 @@ const QA: { q: string; a: string }[] = [
     a: 'They remain. Receipts issued before revocation continue to be valid evidence of the authorization that existed at execution time. Future actions under the revoked AVC fail-closed.'
   },
   {
-    q: 'Is the network production-ready?',
-    a: 'No. EXOCHAIN 0.2.7 is a published beta library release, not general availability. The release archives are legacy Rust libraries, not server executables, and the release notes claim no runtime deployment. See /status for the publication record and the default-off unaudited features.'
+    q: 'Is the network a finished production release?',
+    a: 'No. EXOCHAIN 0.2.7 is a published beta library release, not general availability. The release archives are legacy Rust libraries, not server executables, and the release notes claim no runtime deployment. Validator membership, attestation, and pricing policy are subject to change. See /status for the publication record and the Trust Center for current capabilities.',
   }
 ];
 

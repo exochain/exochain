@@ -1,0 +1,204 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://exochain.io/schemas/proposal/v0.3.1/evidence-bundle.schema.json",
+  "title": "EXOCHAIN v0.3.1 proposed portable evidence envelope",
+  "description": "PROPOSAL. Not approved. Not returned by POST /api/v1/avc/validate. Not coverage. The BLAKE3 preimage is canonical CBOR of body only. timestamp and detached signatures are outside that preimage.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "body", "timestamp"],
+  "$defs": {
+    "nonzeroHash": {
+      "type": "string",
+      "pattern": "^(?!0{64})[0-9a-f]{64}$"
+    }
+  },
+  "properties": {
+    "schema": { "const": "exo.market.evidence_bundle.v1" },
+    "body": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "identity",
+        "authority",
+        "agreement",
+        "payment",
+        "execution",
+        "outcome",
+        "artifact_refs"
+      ],
+      "properties": {
+        "identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["principal_did", "agent_did", "credential_hash"],
+          "properties": {
+            "principal_did": { "type": "string", "pattern": "^did:exo:[A-Za-z0-9._:-]+$" },
+            "agent_did": { "type": "string", "pattern": "^did:exo:[A-Za-z0-9._:-]+$" },
+            "credential_hash": { "$ref": "#/$defs/nonzeroHash" }
+          }
+        },
+        "authority": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["chain_hash", "pdp_evidence_hash", "decision"],
+          "properties": {
+            "chain_hash": { "$ref": "#/$defs/nonzeroHash" },
+            "pdp_evidence_hash": { "$ref": "#/$defs/nonzeroHash" },
+            "decision": { "enum": ["Allow", "Deny", "Challenge"] }
+          }
+        },
+        "agreement": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["transcript_id", "terms_hash", "party_dids"],
+          "properties": {
+            "transcript_id": { "type": "string", "minLength": 1 },
+            "terms_hash": { "$ref": "#/$defs/nonzeroHash" },
+            "party_dids": {
+              "type": "array",
+              "minItems": 2,
+              "items": { "type": "string", "pattern": "^did:exo:[A-Za-z0-9._:-]+$" }
+            }
+          }
+        },
+        "payment": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["payment_evidence_hash", "reason"],
+              "properties": {
+                "payment_evidence_hash": { "$ref": "#/$defs/nonzeroHash" },
+                "reason": { "const": "bound" }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["payment_evidence_hash", "reason"],
+              "properties": {
+                "payment_evidence_hash": { "type": "null" },
+                "reason": { "enum": ["not_commercial", "challenge_open", "denied"] }
+              }
+            }
+          ]
+        },
+        "execution": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["fulfillment_hash", "reason"],
+              "properties": {
+                "fulfillment_hash": { "$ref": "#/$defs/nonzeroHash" },
+                "reason": { "const": "fulfilled" }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["fulfillment_hash", "reason"],
+              "properties": {
+                "fulfillment_hash": { "type": "null" },
+                "reason": { "const": "not_executed" }
+              }
+            }
+          ]
+        },
+        "outcome": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["discharge_hash", "dispute_hash", "reason"],
+              "properties": {
+                "discharge_hash": { "$ref": "#/$defs/nonzeroHash" },
+                "dispute_hash": { "type": "null" },
+                "reason": { "const": "discharged" }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["discharge_hash", "dispute_hash", "reason"],
+              "properties": {
+                "discharge_hash": { "type": "null" },
+                "dispute_hash": { "$ref": "#/$defs/nonzeroHash" },
+                "reason": { "const": "disputed" }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["discharge_hash", "dispute_hash", "reason"],
+              "properties": {
+                "discharge_hash": { "type": "null" },
+                "dispute_hash": { "type": "null" },
+                "reason": { "const": "open" }
+              }
+            }
+          ]
+        },
+        "artifact_refs": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "pdp_pack_hash",
+            "legal_bundle_hash",
+            "avc_receipt_hash",
+            "stamp_response_hash"
+          ],
+          "properties": {
+            "pdp_pack_hash": { "$ref": "#/$defs/nonzeroHash" },
+            "legal_bundle_hash": {
+              "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/nonzeroHash" }]
+            },
+            "avc_receipt_hash": {
+              "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/nonzeroHash" }]
+            },
+            "stamp_response_hash": {
+              "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/nonzeroHash" }]
+            }
+          }
+        },
+        "assurance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["coverage_claim", "exochain_is_obligor", "statement"],
+          "properties": {
+            "coverage_claim": { "const": "none" },
+            "exochain_is_obligor": { "const": false },
+            "statement": {
+              "const": "Interface only. EXOCHAIN does not provide insurance, surety, or bonding. No coverage is in force."
+            }
+          }
+        }
+      }
+    },
+    "timestamp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "proof_kind",
+        "authority_did",
+        "policy_oid",
+        "message_imprint_sha256",
+        "nonce_hex",
+        "serial_number_hex",
+        "spki_pin_hex",
+        "tsa_url"
+      ],
+      "properties": {
+        "proof_kind": { "const": "Rfc3161" },
+        "authority_did": { "type": "string", "minLength": 1 },
+        "policy_oid": { "type": "string", "minLength": 1 },
+        "message_imprint_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "nonce_hex": { "type": "string", "pattern": "^[0-9a-f]{2,128}$" },
+        "serial_number_hex": { "type": "string", "pattern": "^[0-9a-f]{2,128}$" },
+        "token_der_base64": { "type": "string" },
+        "spki_pin_hex": { "type": "string", "pattern": "^[0-9a-f]+$" },
+        "tsa_url": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "schema": "exo.market.assurance.interface.v1",
+  "coverage_claim": "in_force",
+  "exochain_is_obligor": false,
+  "instrument_family": "insurance",
+  "issuer_did": "",
+  "subject_bundle_hash": "6666666666666666666666666666666666666666666666666666666666666666",
+  "limit_minor": 0,
+  "currency": "USD",
+  "terms_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+  "statement": "Interface only. EXOCHAIN does not provide insurance, surety, or bonding. No coverage is in force."
+}

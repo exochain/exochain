@@ -21,8 +21,13 @@ import { Pill } from '@/components/ui/Pill';
 import { Disclaimer } from '@/components/ui/Disclaimer';
 import { ZeroPriceBanner } from '@/components/ui/ZeroPriceBanner';
 import { SurfaceMapDiagram } from '@/components/diagrams/SurfaceMap';
+import { publicMetadata } from '@/lib/public-site';
 
-export const metadata = { title: 'Trust Center' };
+export const metadata = publicMetadata({
+  title: 'Trust Center',
+  description: 'Trust Center. EXOCHAIN is the trust fabric for autonomous commerce.',
+  path: '/trust-center',
+});
 
 export default function Page() {
   return (
@@ -125,10 +130,10 @@ export default function Page() {
 
       <Section className="py-8">
         <Disclaimer>
-          EXOCHAIN is in beta (0.x), not general availability. Nothing on
-          this page should be read as a claim of completed third-party audit,
-          regulatory approval, or a deployed production network unless a
-          linked artifact says otherwise.
+          EXOCHAIN is in beta (0.x, published v0.2.7), not general availability.
+          Nothing on this page should be read as a claim of completed
+          third-party audit, regulatory approval, or a deployed production
+          network unless a linked artifact says otherwise.
         </Disclaimer>
       </Section>
     </>

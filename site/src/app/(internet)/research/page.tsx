@@ -17,8 +17,13 @@
 import { Section, Eyebrow, H1, H2, Lede } from '@/components/ui/Section';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
 import { Pill } from '@/components/ui/Pill';
+import { publicMetadata } from '@/lib/public-site';
 
-export const metadata = { title: 'Research' };
+export const metadata = publicMetadata({
+  title: 'Research',
+  description: 'Research. EXOCHAIN is the trust fabric for autonomous commerce.',
+  path: '/research',
+});
 
 const PAPERS = [
   {

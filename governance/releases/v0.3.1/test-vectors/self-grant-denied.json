@@ -1,0 +1,20 @@
+{
+  "transcript_id": "demo-transcript-self-grant",
+  "kind": "counteroffer",
+  "prev_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+  "terms_hash": "3333333333333333333333333333333333333333333333333333333333333333",
+  "hlc_physical_ms": 1001,
+  "hlc_logical": 1,
+  "actor_did": "did:exo:demo-agent",
+  "grantor_did": "did:exo:demo-agent",
+  "parties": [
+    { "did": "did:exo:demo-principal", "role": "bailor" },
+    { "did": "did:exo:demo-agent", "role": "bailee", "agent_for": "did:exo:demo-principal" }
+  ],
+  "threshold": 2,
+  "permission_ceiling": ["Read"],
+  "requested_permissions": ["Read", "Govern"],
+  "amount_minor": 100,
+  "currency": "USD",
+  "signature_hex": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab"
+}

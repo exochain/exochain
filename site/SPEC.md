@@ -237,7 +237,7 @@ Every administrative action — extranet or intranet — writes an audit log ent
 - Three-pillar block: AVC explainer · Trust receipt explainer · Zero-priced launch settlement explainer.
 - "Blockchain is the mechanism. Chain-of-custody is the purpose." callout.
 - Three CTAs by audience: Developers · Enterprises · Validators / Researchers.
-- Status strip: beta · published release · normative spec version · public status link.
+- Status strip: beta · published release v0.2.7 · normative spec v2.2 · Apache-2.0 core · public status link.
 - Footer with full sitemap, legal, brand, contact.
 
 #### `/why`
@@ -323,7 +323,7 @@ Every administrative action — extranet or intranet — writes an audit log ent
 - Governance and agent-economy papers as published.
 
 #### `/status`
-- Maturity banner: `beta`, not general availability.
+- Maturity banner: `beta`, published `v0.2.7`, not general availability.
 - Published release, normative spec version, and default-off unaudited features from `crates/exo-node/src/public-status.json`.
 - Same-origin `/health` and `/ready` text when those routes answer. A 404 means this Next.js process is not `exo-gateway`.
 - **No fictional network metrics.** Do not invent validator counts, peer counts, committed height, uptime percent, or incidents.
@@ -575,13 +575,13 @@ All data fields shown to end users must be sourced from typed mocks in `/web/src
 - Trust Center distinguishes *current capabilities* from *roadmap items* in two clearly-labeled columns.
 - Developer docs mark unstable APIs with an `Unstable` pill at the top of the affected section.
 - Settlement-related pages must show the zero-pricing banner.
-- Status page is the only place public network metrics may appear, and any metric not backed by a live source must be labeled `mock`.
+- The public status page shows the published release from `crates/exo-node/src/public-status.json` and does not invent network metrics. Same-origin `/health` and `/ready` text may appear when those routes answer.
 
 ---
 
 ## 10. Compliance and disclosures (public copy)
 
-- "EXOCHAIN is in beta (0.x), not general availability. The public API may change between minor versions."
+- "EXOCHAIN is in beta (0.x, published v0.2.7), not general availability. The public API may change between minor versions. Normative specification v2.2. Core software is Apache-2.0."
 - "Zero-priced launch settlement is in effect. Every active price resolves to zero with an explicit `ZeroFeeReason`. Future governance amendments may enable nonzero pricing."
 - "Statements about cryptographic assumptions reflect implemented primitives at the time of writing. See `/trust-center` for the current attestation."
 - "EXOCHAIN does not provide investment, legal, or financial advice. AVCs are operational credentials, not securities."

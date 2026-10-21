@@ -19,8 +19,13 @@ import { Section, Eyebrow, H1, H2, Lede } from '@/components/ui/Section';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
 import { Disclaimer } from '@/components/ui/Disclaimer';
 import { Pre } from '@/components/ui/Code';
+import { publicMetadata } from '@/lib/public-site';
 
-export const metadata = { title: 'Autonomous Volition Credentials' };
+export const metadata = publicMetadata({
+  title: 'Autonomous Volition Credentials',
+  description: 'Autonomous Volition Credentials. EXOCHAIN is the trust fabric for autonomous commerce.',
+  path: '/avc',
+});
 
 export default function AVCPage() {
   return (

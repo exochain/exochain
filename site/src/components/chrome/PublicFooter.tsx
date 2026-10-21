@@ -17,18 +17,25 @@
 import Link from 'next/link';
 import { Logo } from './Logo';
 import { Pill } from '../ui/Pill';
-import { loadPublicStatus } from '@/lib/public-status';
+import {
+  CORE_LICENSE,
+  LEGAL_EMAIL,
+  LEGAL_ENTITY,
+  NORMATIVE_SPEC,
+  PRODUCT_CHANNEL,
+  RELEASE_VERSION,
+} from '@/lib/public-site';
 
 const cols = [
   {
-    heading: 'Protocol',
+    heading: 'Trust fabric',
     links: [
-      { href: '/why', label: 'Why EXOCHAIN' },
-      { href: '/avc', label: 'AVC' },
-      { href: '/chain-of-custody', label: 'Chain-of-Custody' },
-      { href: '/trust-receipts', label: 'Trust Receipts' },
-      { href: '/custody-native-blockchain', label: 'Custody-Native Blockchain' }
-    ]
+      { href: '/why', label: 'The problem' },
+      { href: '/proof-of-authority', label: 'Proof of Authority' },
+      { href: '/standards', label: 'Standards' },
+      { href: '/ecosystem', label: 'Ecosystem' },
+      { href: '/engagement', label: 'Engagement' },
+    ],
   },
   {
     heading: 'Build',
@@ -38,49 +45,59 @@ const cols = [
       { href: '/docs', label: 'Docs' },
       { href: '/api', label: 'API Reference' },
       { href: '/node', label: 'Run a Node' },
-      { href: '/app', label: 'Sign in' }
-    ]
+      { href: '/app', label: 'Sign in' },
+    ],
   },
   {
-    heading: 'Trust',
+    heading: 'Protocol',
     links: [
-      { href: '/trust-center', label: 'Trust Center' },
-      { href: '/security', label: 'Security' },
+      { href: '/avc', label: 'AVC credential' },
+      { href: '/chain-of-custody', label: 'Chain-of-Custody' },
+      { href: '/trust-receipts', label: 'Trust Receipts' },
+      { href: '/custody-native-blockchain', label: 'Custody-Native Blockchain' },
       { href: '/governance', label: 'Governance' },
-      { href: '/status', label: 'Status' },
-      { href: '/research', label: 'Research' }
-    ]
+    ],
   },
   {
     heading: 'Company',
     links: [
-      { href: '/blog', label: 'Field Notes' },
       { href: '/contact', label: 'Contact' },
+      { href: '/trust-center', label: 'Trust Center' },
+      { href: '/security', label: 'Security' },
+      { href: '/status', label: 'Status' },
+      { href: '/research', label: 'Research' },
+      { href: '/blog', label: 'Field Notes' },
       { href: '/brand', label: 'Brand & Press' },
       { href: '/legal/privacy', label: 'Privacy' },
-      { href: '/legal/terms', label: 'Terms' }
-    ]
-  }
+      { href: '/legal/terms', label: 'Terms' },
+    ],
+  },
 ];
 
 export function PublicFooter() {
-  const publicStatus = loadPublicStatus();
   return (
     <footer className="mt-24 border-t hairline">
       <div className="max-w-page mx-auto px-6 md:px-10 py-12 grid gap-10 md:grid-cols-5">
         <div className="md:col-span-1">
           <Logo className="text-brand-vault dark:text-brand-white" />
           <p className="mt-4 text-sm text-brand-midnight/75 dark:text-brand-white/70 max-w-xs">
-            Chain-of-custody for autonomous execution.
+            The trust fabric for autonomous commerce.
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
             <Pill tone="neutral" className="border border-brand-charter/40 bg-brand-charter/10 text-brand-vault">
-              {publicStatus.maturity}
+              {PRODUCT_CHANNEL} {RELEASE_VERSION}
             </Pill>
             <Pill tone="neutral" className="border border-brand-signal/25 bg-brand-signal/10 text-brand-cerulean">
-              zero-priced launch
+              spec {NORMATIVE_SPEC}
             </Pill>
           </div>
+          <p className="mt-4 text-xs text-brand-midnight/70 dark:text-brand-white/65">
+            {LEGAL_ENTITY}
+            <br />
+            <a className="underline" href={`mailto:${LEGAL_EMAIL}`}>
+              {LEGAL_EMAIL}
+            </a>
+          </p>
         </div>
         {cols.map((col) => (
           <div key={col.heading}>
@@ -105,14 +122,13 @@ export function PublicFooter() {
       <div className="border-t hairline">
         <div className="max-w-page mx-auto px-6 md:px-10 py-5 flex flex-wrap items-center gap-3 justify-between text-xs text-brand-midnight/65 dark:text-brand-white/60">
           <div>
-            © {new Date().getFullYear()} EXOCHAIN — Apache-2.0 reference
-            implementation.
+            © {new Date().getFullYear()} {LEGAL_ENTITY}. Core software is {CORE_LICENSE}.
           </div>
-          <div className="flex gap-3">
-            <span>
-              EXOCHAIN is in beta (0.x). The public API may change between
-              minor versions. Not general availability.
-            </span>
+          <div className="max-w-xl text-right">
+            EXOCHAIN is in beta ({RELEASE_VERSION}, 0.x), not general availability.
+            The public API may change between minor versions. The same pages are
+            served at exochain.com, exochain.ai, and exochain.net. Canonical URLs
+            use https://exochain.com.
           </div>
         </div>
       </div>

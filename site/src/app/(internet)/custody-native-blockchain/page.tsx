@@ -18,8 +18,13 @@ import { Section, Eyebrow, H1, H2, Lede } from '@/components/ui/Section';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
 import { Pill } from '@/components/ui/Pill';
 import { ZeroPriceBanner } from '@/components/ui/ZeroPriceBanner';
+import { publicMetadata } from '@/lib/public-site';
 
-export const metadata = { title: 'Custody-Native Blockchain' };
+export const metadata = publicMetadata({
+  title: 'Custody-Native Blockchain',
+  description: 'Custody-Native Blockchain. EXOCHAIN is the trust fabric for autonomous commerce.',
+  path: '/custody-native-blockchain',
+});
 
 export default function CustodyNativeBlockchainPage() {
   return (

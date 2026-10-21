@@ -1,0 +1,33 @@
+{
+  "base_url": "https://exochain.io",
+  "routes": {
+    "health": "/health",
+    "ready": "/ready",
+    "avc": {
+      "issue": "/api/v1/avc/issue",
+      "validate": "/api/v1/avc/validate",
+      "receipts_emit": "/api/v1/avc/receipts/emit",
+      "receipts_get": "/api/v1/avc/receipts/:hash",
+      "protocol": "/api/v1/avc/protocol"
+    }
+  },
+  "sdk": {
+    "rust": "crates/exochain-sdk",
+    "typescript": "packages/exochain-sdk",
+    "python": "packages/exochain-py"
+  },
+  "mcp": {
+    "public_transport": false,
+    "transports": ["stdio", "loopback-sse"],
+    "capabilities": ["tools", "resources", "prompts"]
+  },
+  "commercial_services": [
+    {
+      "name": "demo-commercial-service",
+      "agent_card_path": "/.well-known/agent-card.json",
+      "bailment_path": "/api/v1/market/bailments",
+      "x402_verify_path": "/x402/verify",
+      "grants_authority": false
+    }
+  ]
+}

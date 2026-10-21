@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://exochain.io/schemas/proposal/v0.3.1/second-verifier-inputs.schema.json",
+  "title": "EXOCHAIN v0.3.1 second-verifier input allowlist",
+  "description": "PROPOSAL. Not approved. The second verifier receives only these public artifact names.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["allowed_inputs", "forbidden_inputs"],
+  "properties": {
+    "allowed_inputs": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "forbidden_inputs": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    }
+  }
+}
