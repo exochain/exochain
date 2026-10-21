@@ -1,0 +1,22 @@
+{
+  "name": "demo-commercial-service",
+  "description": "An A2A card is not an ExochainDiscoveryResponse.",
+  "version": "0.3.1-proposal",
+  "grants_authority": false,
+  "supported_interfaces": [
+    {
+      "url": "https://example.invalid/api/v1/market",
+      "protocol_binding": "HTTP+JSON",
+      "protocol_version": "0"
+    }
+  ],
+  "skills": [
+    { "id": "bailment", "http_path": "/api/v1/market/bailments" }
+  ],
+  "exochain": {
+    "service_did": "did:exo:demo-service",
+    "signing_key_hex": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+    "signature_hex": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab",
+    "schema": "exo.market.discovery.card.v1"
+  }
+}

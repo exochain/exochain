@@ -1,0 +1,616 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://exochain.io/schemas/proposal/v0.3.1/bailment-negotiation.schema.json",
+  "title": "EXOCHAIN v0.3.1 proposed bailment negotiation message",
+  "description": "PROPOSAL. Not approved. A valid message is not an authorization. threshold is at most the party count, and party sets longer than 16 fail closed in this proposal schema. fulfillment, dispute, and discharge require a kind-specific payload. Other kinds omit payload.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "transcript_id",
+    "kind",
+    "prev_hash",
+    "terms_hash",
+    "hlc_physical_ms",
+    "hlc_logical",
+    "actor_did",
+    "grantor_did",
+    "parties",
+    "threshold",
+    "permission_ceiling",
+    "requested_permissions",
+    "amount_minor",
+    "currency",
+    "signature_hex"
+  ],
+  "properties": {
+    "transcript_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "kind": {
+      "enum": [
+        "proposal",
+        "counteroffer",
+        "commit",
+        "fulfillment",
+        "discharge",
+        "dispute",
+        "reject",
+        "revoke"
+      ]
+    },
+    "prev_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "terms_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "hlc_physical_ms": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "hlc_logical": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "actor_did": {
+      "type": "string",
+      "pattern": "^did:exo:[A-Za-z0-9._:-]+$"
+    },
+    "grantor_did": {
+      "type": "string",
+      "pattern": "^did:exo:[A-Za-z0-9._:-]+$"
+    },
+    "parties": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "did",
+          "role"
+        ],
+        "properties": {
+          "did": {
+            "type": "string",
+            "pattern": "^did:exo:[A-Za-z0-9._:-]+$"
+          },
+          "role": {
+            "enum": [
+              "bailor",
+              "bailee",
+              "beneficiary",
+              "service",
+              "witness"
+            ]
+          },
+          "agent_for": {
+            "type": "string",
+            "pattern": "^did:exo:[A-Za-z0-9._:-]+$"
+          }
+        }
+      }
+    },
+    "threshold": {
+      "type": "integer",
+      "minimum": 2
+    },
+    "permission_ceiling": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "requested_permissions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "amount_minor": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "currency": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 8
+    },
+    "signature_hex": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{128}$"
+    },
+    "payload": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "fulfillment"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "required": [
+          "payload"
+        ],
+        "properties": {
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "fulfillment_hash",
+              "pdp_evidence_hash"
+            ],
+            "properties": {
+              "fulfillment_hash": {
+                "type": "string",
+                "pattern": "^(?!0{64})[0-9a-f]{64}$"
+              },
+              "pdp_evidence_hash": {
+                "type": "string",
+                "pattern": "^(?!0{64})[0-9a-f]{64}$"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "dispute"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "required": [
+          "payload"
+        ],
+        "properties": {
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "reason",
+              "evidence_hash"
+            ],
+            "properties": {
+              "reason": {
+                "enum": [
+                  "non_delivery",
+                  "defective_delivery",
+                  "unauthorized_act",
+                  "amount_mismatch"
+                ]
+              },
+              "evidence_hash": {
+                "type": "string",
+                "pattern": "^(?!0{64})[0-9a-f]{64}$"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "discharge"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "required": [
+          "payload"
+        ],
+        "properties": {
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "fulfillment_hash",
+              "obligation_narrowing_hash"
+            ],
+            "properties": {
+              "fulfillment_hash": {
+                "type": "string",
+                "pattern": "^(?!0{64})[0-9a-f]{64}$"
+              },
+              "obligation_narrowing_hash": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^(?!0{64})[0-9a-f]{64}$"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "proposal",
+              "counteroffer",
+              "commit",
+              "reject",
+              "revoke"
+            ]
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "not": {
+          "required": [
+            "payload"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "parties": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "required": [
+          "parties"
+        ]
+      },
+      "then": {
+        "properties": {
+          "threshold": {
+            "maximum": 2
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "parties": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3
+          }
+        },
+        "required": [
+          "parties"
+        ]
+      },
+      "then": {
+        "properties": {
+          "threshold": {
+            "maximum": 3
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "parties": {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4
+          }
+        },
+        "required": [
+          "parties"
+        ]
+      },
+      "then": {
+        "properties": {
+          "threshold": {
+            "maximum": 4
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "parties": {
+            "type": "array",
+            "minItems": 5,
+            "maxItems": 5
+          }
+        },
+        "required": [
+          "parties"
+        ]
+      },
+      "then": {
+        "properties": {
+          "threshold": {
+            "maximum": 5
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "parties": {
+            "type": "array",
+            "minItems": 6,
+            "maxItems": 6
+          }
+        },
+        "required": [
+          "parties"
+        ]
+      },
+      "then": {
+        "properties": {
+          "threshold": {
+            "maximum": 6
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "parties": {
+            "type": "array",
+            "minItems": 7,
+            "maxItems": 7
+          }
+        },
+        "required": [
+          "parties"
+        ]
+      },
+      "then": {
+        "properties": {
+          "threshold": {
+            "maximum": 7
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "parties": {
+            "type": "array",
+            "minItems": 8,
+            "maxItems": 8
+          }
+        },
+        "required": [
+          "parties"
+        ]
+      },
+      "then": {
+        "properties": {
+          "threshold": {
+            "maximum": 8
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "parties": {
+            "type": "array",
+            "minItems": 9,
+            "maxItems": 9
+          }
+        },
+        "required": [
+          "parties"
+        ]
+      },
+      "then": {
+        "properties": {
+          "threshold": {
+            "maximum": 9
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "parties": {
+            "type": "array",
+            "minItems": 10,
+            "maxItems": 10
+          }
+        },
+        "required": [
+          "parties"
+        ]
+      },
+      "then": {
+        "properties": {
+          "threshold": {
+            "maximum": 10
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "parties": {
+            "type": "array",
+            "minItems": 11,
+            "maxItems": 11
+          }
+        },
+        "required": [
+          "parties"
+        ]
+      },
+      "then": {
+        "properties": {
+          "threshold": {
+            "maximum": 11
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "parties": {
+            "type": "array",
+            "minItems": 12,
+            "maxItems": 12
+          }
+        },
+        "required": [
+          "parties"
+        ]
+      },
+      "then": {
+        "properties": {
+          "threshold": {
+            "maximum": 12
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "parties": {
+            "type": "array",
+            "minItems": 13,
+            "maxItems": 13
+          }
+        },
+        "required": [
+          "parties"
+        ]
+      },
+      "then": {
+        "properties": {
+          "threshold": {
+            "maximum": 13
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "parties": {
+            "type": "array",
+            "minItems": 14,
+            "maxItems": 14
+          }
+        },
+        "required": [
+          "parties"
+        ]
+      },
+      "then": {
+        "properties": {
+          "threshold": {
+            "maximum": 14
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "parties": {
+            "type": "array",
+            "minItems": 15,
+            "maxItems": 15
+          }
+        },
+        "required": [
+          "parties"
+        ]
+      },
+      "then": {
+        "properties": {
+          "threshold": {
+            "maximum": 15
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "parties": {
+            "type": "array",
+            "minItems": 16,
+            "maxItems": 16
+          }
+        },
+        "required": [
+          "parties"
+        ]
+      },
+      "then": {
+        "properties": {
+          "threshold": {
+            "maximum": 16
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "parties": {
+            "type": "array",
+            "minItems": 17
+          }
+        },
+        "required": [
+          "parties"
+        ]
+      },
+      "then": {
+        "properties": {
+          "parties": {
+            "maxItems": 16
+          }
+        }
+      }
+    }
+  ]
+}

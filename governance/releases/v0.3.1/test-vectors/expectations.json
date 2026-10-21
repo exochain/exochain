@@ -1,0 +1,122 @@
+{
+  "assurance-empty-issuer-nonzero-terms.json": {
+    "schema": "financial-assurance.schema.json",
+    "expect": "reject_schema"
+  },
+  "assurance-interface.json": {
+    "schema": "financial-assurance.schema.json",
+    "expect": "accept"
+  },
+  "assurance-named-issuer-zero-terms.json": {
+    "schema": "financial-assurance.schema.json",
+    "expect": "reject_schema"
+  },
+  "assurance-rejects-coverage.json": {
+    "schema": "financial-assurance.schema.json",
+    "expect": "reject_schema"
+  },
+  "bailment-fulfillment-bare.json": {
+    "schema": "bailment-negotiation.schema.json",
+    "expect": "reject_schema"
+  },
+  "bailment-fulfillment.json": {
+    "schema": "bailment-negotiation.schema.json",
+    "expect": "accept_shape"
+  },
+  "bailment-multipartite.json": {
+    "schema": "bailment-negotiation.schema.json",
+    "expect": "accept_shape"
+  },
+  "bailment-threshold-exceeds-parties.json": {
+    "schema": "bailment-negotiation.schema.json",
+    "expect": "reject_schema"
+  },
+  "claim-stamp-request.json": {
+    "schema": "claim-attestation.schema.json",
+    "expect": "accept_shape"
+  },
+  "discovery-card-as-discovery-document.json": {
+    "schema": "exochain-discovery.schema.json",
+    "expect": "reject_schema"
+  },
+  "discovery-card-poison.json": {
+    "schema": "discovery-profile.schema.json",
+    "expect": "reject_signature"
+  },
+  "discovery-card-signed-rejected-as-projection.json": {
+    "schema": "discovery-card-signing-projection.schema.json",
+    "expect": "reject_schema"
+  },
+  "discovery-card-signing-projection.json": {
+    "schema": "discovery-card-signing-projection.schema.json",
+    "expect": "accept"
+  },
+  "discovery-card.json": {
+    "schema": "discovery-profile.schema.json",
+    "expect": "accept"
+  },
+  "evidence-bundle-disputed.json": {
+    "schema": "evidence-bundle.schema.json",
+    "expect": "accept_shape"
+  },
+  "evidence-bundle-manifest.json": {
+    "schema": "evidence-bundle.schema.json",
+    "expect": "accept_shape"
+  },
+  "evidence-bundle-no-assurance.json": {
+    "schema": "evidence-bundle.schema.json",
+    "expect": "accept_shape"
+  },
+  "evidence-bundle-payment-bound-null.json": {
+    "schema": "evidence-bundle.schema.json",
+    "expect": "reject_schema"
+  },
+  "evidence-bundle-payment-denied-with-hash.json": {
+    "schema": "evidence-bundle.schema.json",
+    "expect": "reject_schema"
+  },
+  "evidence-bundle-payment-zero-hash.json": {
+    "schema": "evidence-bundle.schema.json",
+    "expect": "reject_schema"
+  },
+  "exochain-discovery-as-card.json": {
+    "schema": "discovery-profile.schema.json",
+    "expect": "reject_schema"
+  },
+  "exochain-discovery-feature-off.json": {
+    "schema": "exochain-discovery.schema.json",
+    "expect": "accept"
+  },
+  "exochain-discovery.json": {
+    "schema": "exochain-discovery.schema.json",
+    "expect": "accept"
+  },
+  "second-verifier-public-inputs.json": {
+    "schema": "second-verifier-inputs.schema.json",
+    "expect": "accept"
+  },
+  "self-grant-denied.json": {
+    "schema": "bailment-negotiation.schema.json",
+    "expect": "deny_self_grant"
+  },
+  "x402-allow-paid.json": {
+    "schema": "x402-settlement.schema.json",
+    "expect": "accept"
+  },
+  "x402-allow-status-mismatch.json": {
+    "schema": "x402-settlement.schema.json",
+    "expect": "reject_schema"
+  },
+  "x402-allow-unpaid.json": {
+    "schema": "x402-settlement.schema.json",
+    "expect": "accept"
+  },
+  "x402-challenge.json": {
+    "schema": "x402-settlement.schema.json",
+    "expect": "challenge_402"
+  },
+  "x402-deny-outranks-hash.json": {
+    "schema": "x402-settlement.schema.json",
+    "expect": "deny_403"
+  }
+}
