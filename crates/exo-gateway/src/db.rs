@@ -348,6 +348,9 @@ async fn insert_did_document_with_capacity(
         Err(_) => max_documents,
     };
     if existing_documents >= max_documents {
+        tx.rollback()
+            .await
+            .map_err(|source| DidDocumentPersistenceError::Query { source })?;
         return Err(DidDocumentPersistenceError::RegistryCapacityExceeded {
             max_documents,
             attempted_documents: existing_documents.saturating_add(1),
@@ -2908,16 +2911,130 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    struct DidCapacityFixture {
+        database_url: String,
+        schema: String,
+        foreign_did: String,
+    }
+
+    impl DidCapacityFixture {
+        fn new(database_url: String) -> Self {
+            let pid = std::process::id();
+            Self {
+                database_url,
+                schema: format!("did_cap_{pid}"),
+                foreign_did: format!("did:exo:durable-capacity-foreign-{pid}"),
+            }
+        }
+
+        fn scoped_database_url(&self) -> String {
+            let separator = if self.database_url.contains('?') {
+                '&'
+            } else {
+                '?'
+            };
+            format!(
+                "{}{separator}options=-csearch_path%3D{}%2Cpublic",
+                self.database_url, self.schema
+            )
+        }
+
+        async fn prepare(&self, pool: &PgPool) -> Result<(), sqlx::Error> {
+            delete_did_capacity_fixture(pool, &self.schema, &self.foreign_did).await?;
+            sqlx::raw_sql(&format!("CREATE SCHEMA {}", self.schema))
+                .execute(pool)
+                .await?;
+            sqlx::raw_sql(&format!(
+                "CREATE TABLE {}.did_documents (LIKE public.did_documents INCLUDING ALL)",
+                self.schema
+            ))
+            .execute(pool)
+            .await?;
+            sqlx::query(
+                "INSERT INTO public.did_documents \
+                 (did, document, created_at_ms, updated_at_ms, revoked) \
+                 VALUES ($1, '{}'::jsonb, 0, 0, false)",
+            )
+            .bind(&self.foreign_did)
+            .execute(pool)
+            .await?;
+            Ok(())
+        }
+    }
+
+    async fn delete_did_capacity_fixture(
+        pool: &PgPool,
+        schema: &str,
+        foreign_did: &str,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query("DELETE FROM public.did_documents WHERE did = $1")
+            .bind(foreign_did)
+            .execute(pool)
+            .await?;
+        sqlx::raw_sql(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
+            .execute(pool)
+            .await?;
+        Ok(())
+    }
+
+    impl Drop for DidCapacityFixture {
+        fn drop(&mut self) {
+            let database_url = self.database_url.clone();
+            let schema = self.schema.clone();
+            let foreign_did = self.foreign_did.clone();
+            std::thread::spawn(move || {
+                let runtime =
+                    tokio::runtime::Runtime::new().expect("capacity fixture cleanup runtime");
+                runtime.block_on(async move {
+                    let pool = PgPool::connect(&database_url)
+                        .await
+                        .expect("connect for capacity fixture cleanup");
+                    delete_did_capacity_fixture(&pool, &schema, &foreign_did)
+                        .await
+                        .expect("delete capacity fixture");
+                });
+            })
+            .join()
+            .expect("join capacity fixture cleanup");
+        }
+    }
+
     #[tokio::test]
     async fn insert_did_document_enforces_durable_capacity_limit()
     -> std::result::Result<(), Box<dyn std::error::Error>> {
-        let Some(pool) = gateway_test_pool().await else {
+        let Some(admin) = gateway_test_pool().await else {
             return Ok(());
         };
+        let database_url = std::env::var("DATABASE_URL")
+            .expect("DATABASE_URL is set when the gateway test pool connects");
+        let fixture = DidCapacityFixture::new(database_url);
+        fixture.prepare(&admin).await?;
+        let pool = PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&fixture.scoped_database_url())
+            .await?;
+
         let first_did = "did:exo:durable-capacity-first";
         let second_did = "did:exo:durable-capacity-second";
         cleanup_identity_erasure_fixture(&pool, first_did).await?;
         cleanup_identity_erasure_fixture(&pool, second_did).await?;
+
+        let foreign_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM public.did_documents WHERE did = $1")
+                .bind(&fixture.foreign_did)
+                .fetch_one(&pool)
+                .await?;
+        assert_eq!(
+            foreign_count, 1,
+            "a public registry row must exist while this test checks the cap"
+        );
+        let owned_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM did_documents")
+            .fetch_one(&pool)
+            .await?;
+        assert_eq!(
+            owned_count, 0,
+            "the capacity count must not include the public registry row"
+        );
 
         assert!(
             insert_did_document_with_capacity(&pool, &minimal_doc(first_did), 1).await?,
