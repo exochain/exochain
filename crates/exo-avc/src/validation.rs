@@ -40,7 +40,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     credential::{
-        AVC_SCHEMA_VERSION, AuthorityScope, AutonomousVolitionCredential, AvcConstraints, DataClass,
+        AVC_SCHEMA_VERSION, AuthorityScope, AutonomousVolitionCredential, AutonomyLevel,
+        AvcConstraints, DataClass,
     },
     error::AvcError,
     llm_usage_receipt::{
@@ -48,7 +49,7 @@ use crate::{
         validate_llm_usage_evidence,
     },
     receipt::AvcTrustReceipt,
-    registry::AvcRegistryRead,
+    registry::{AvcRegistryRead, EmergencyStopStanding},
 };
 
 /// Signing domain tag for AVC human approval evidence.
@@ -105,6 +106,12 @@ pub enum AvcReasonCode {
     MalformedCredential,
     ForbiddenAction,
     OutsideTimeWindow,
+    ObjectiveDenied,
+    AutonomyDenied,
+    JurisdictionDenied,
+    EmergencyStopEngaged,
+    EmergencyStopUnknown,
+    EmergencyStopUnreadable,
 }
 
 // ---------------------------------------------------------------------------
@@ -243,6 +250,10 @@ struct AvcActionDescriptorPayload<'a> {
 /// is a root. Any ancestor that is revoked or cannot be loaded denies
 /// the credential under validation.
 ///
+/// Levels below `Draft` may only request `Read`. Only
+/// `DelegateWithinBounds` may request `Delegate`. Each emergency-stop
+/// reference must be registered and clear.
+///
 /// # Errors
 /// Returns [`AvcError::Serialization`] if the credential cannot be CBOR
 /// encoded for ID computation. All other failures flow as `Deny`
@@ -309,6 +320,7 @@ pub fn validate_avc<R: AvcRegistryRead>(
     if registry.is_revoked(&credential_id) || parent_chain_revoked(credential, registry) {
         reasons.insert(AvcReasonCode::Revoked);
     }
+    enforce_emergency_stops(credential, registry, &mut reasons);
 
     // Required consent / policy refs.
     for consent_ref in &credential.consent_refs {
@@ -592,7 +604,158 @@ fn evaluate_action<R: AvcRegistryRead>(
         human_approval_required,
     )?;
     enforce_forbidden_action(&credential.constraints, action, reasons);
+    enforce_action_bounds(credential, action, reasons);
     Ok(())
+}
+
+fn enforce_action_bounds(
+    credential: &AutonomousVolitionCredential,
+    action: &AvcActionRequest,
+    reasons: &mut BTreeSet<AvcReasonCode>,
+) {
+    if !autonomy_permits(
+        credential.delegated_intent.autonomy_level,
+        action.requested_permission,
+    ) {
+        reasons.insert(AvcReasonCode::AutonomyDenied);
+    }
+    let Some(action_name) = action.action_name.as_deref() else {
+        reasons.insert(AvcReasonCode::ObjectiveDenied);
+        if !credential.authority_scope.jurisdictions.is_empty() {
+            reasons.insert(AvcReasonCode::JurisdictionDenied);
+        }
+        return;
+    };
+    let claim = claimed_action(action_name);
+    let allowed = &credential.delegated_intent.allowed_objectives;
+    let prohibited = &credential.delegated_intent.prohibited_objectives;
+    let hits_prohibited = prohibited
+        .iter()
+        .any(|objective| objective_covers(objective, claim.objective));
+    let hits_allowed = allowed
+        .iter()
+        .any(|objective| objective_covers(objective, claim.objective));
+    if hits_prohibited || !hits_allowed {
+        reasons.insert(AvcReasonCode::ObjectiveDenied);
+    }
+    let limits = &credential.authority_scope.jurisdictions;
+    match claim.jurisdiction {
+        Some(jurisdiction) => {
+            if jurisdiction.is_empty() || !limits.iter().any(|listed| listed == jurisdiction) {
+                reasons.insert(AvcReasonCode::JurisdictionDenied);
+            }
+        }
+        None => {
+            if !limits.is_empty() {
+                reasons.insert(AvcReasonCode::JurisdictionDenied);
+            }
+        }
+    }
+}
+
+struct ClaimedAction<'a> {
+    objective: &'a str,
+    jurisdiction: Option<&'a str>,
+}
+
+fn claimed_action(action_name: &str) -> ClaimedAction<'_> {
+    match action_name.split_once('@') {
+        Some((objective, jurisdiction)) => ClaimedAction {
+            objective,
+            jurisdiction: Some(jurisdiction),
+        },
+        None => ClaimedAction {
+            objective: action_name,
+            jurisdiction: None,
+        },
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ObjectiveCover {
+    Equal,
+    Prefix,
+}
+
+fn objective_covers(objective: &str, claimed: &str) -> bool {
+    match objective_cover(objective, claimed) {
+        Some(ObjectiveCover::Equal | ObjectiveCover::Prefix) => true,
+        None => false,
+    }
+}
+
+fn objective_cover(objective: &str, claimed: &str) -> Option<ObjectiveCover> {
+    if claimed == objective {
+        Some(ObjectiveCover::Equal)
+    } else if claimed
+        .strip_prefix(objective)
+        .is_some_and(|rest| rest.starts_with(':'))
+    {
+        Some(ObjectiveCover::Prefix)
+    } else {
+        None
+    }
+}
+
+fn autonomy_permits(level: AutonomyLevel, permission: Permission) -> bool {
+    match permission {
+        Permission::Read => true,
+        Permission::Delegate => level >= AutonomyLevel::DelegateWithinBounds,
+        Permission::Write
+        | Permission::Execute
+        | Permission::Spend
+        | Permission::AnchorReceiptCommitment
+        | Permission::Challenge
+        | Permission::Escalate
+        | Permission::Govern => level >= AutonomyLevel::Draft,
+    }
+}
+
+fn enforce_emergency_stops<R: AvcRegistryRead>(
+    credential: &AutonomousVolitionCredential,
+    registry: &R,
+    reasons: &mut BTreeSet<AvcReasonCode>,
+) {
+    if !registry.emergency_stop_store_readable() {
+        reasons.insert(AvcReasonCode::EmergencyStopUnreadable);
+        return;
+    }
+    apply_emergency_stop_refs(
+        &credential.constraints.emergency_stop_refs,
+        registry,
+        reasons,
+    );
+    let mut parent_id = credential.parent_avc_id;
+    let mut seen_parents = BTreeSet::new();
+    while let Some(id) = parent_id {
+        if !seen_parents.insert(id) {
+            break;
+        }
+        let Some(parent) = registry.get_credential(&id) else {
+            reasons.insert(AvcReasonCode::EmergencyStopUnknown);
+            break;
+        };
+        apply_emergency_stop_refs(&parent.constraints.emergency_stop_refs, registry, reasons);
+        parent_id = parent.parent_avc_id;
+    }
+}
+
+fn apply_emergency_stop_refs<R: AvcRegistryRead>(
+    stop_refs: &[String],
+    registry: &R,
+    reasons: &mut BTreeSet<AvcReasonCode>,
+) {
+    for stop_ref in stop_refs {
+        match registry.emergency_stop_standing(stop_ref) {
+            None => {
+                reasons.insert(AvcReasonCode::EmergencyStopUnknown);
+            }
+            Some(EmergencyStopStanding::Engaged) => {
+                reasons.insert(AvcReasonCode::EmergencyStopEngaged);
+            }
+            Some(EmergencyStopStanding::Clear) => {}
+        }
+    }
 }
 
 fn enforce_tool(
@@ -672,7 +835,21 @@ fn enforce_risk<R: AvcRegistryRead>(
         }
     }
 
-    let approval_required = constraints.human_approval_required || risk_threshold_requires_approval;
+    let autonomy_requires_approval = credential.delegated_intent.autonomy_level
+        == AutonomyLevel::ExecuteWithHumanApproval
+        && matches!(
+            action.requested_permission,
+            Permission::Write
+                | Permission::Execute
+                | Permission::Spend
+                | Permission::AnchorReceiptCommitment
+                | Permission::Challenge
+                | Permission::Escalate
+                | Permission::Govern
+        );
+    let approval_required = constraints.human_approval_required
+        || risk_threshold_requires_approval
+        || autonomy_requires_approval;
     if approval_required {
         *human_approval_required = true;
     }
@@ -724,12 +901,36 @@ fn enforce_forbidden_action(
     action: &AvcActionRequest,
     reasons: &mut BTreeSet<AvcReasonCode>,
 ) {
-    let Some(name) = &action.action_name else {
+    let Some(name) = action.action_name.as_deref() else {
         return;
     };
-    if constraints.forbidden_actions.iter().any(|a| a == name) {
+    let presented = canonical_action_objective(name);
+    if constraints
+        .forbidden_actions
+        .iter()
+        .any(|entry| canonical_action_objective(entry) == presented)
+    {
         reasons.insert(AvcReasonCode::ForbiddenAction);
     }
+}
+
+fn canonical_action_objective(name: &str) -> String {
+    let objective = name
+        .split_once('@')
+        .map(|(objective, _)| objective)
+        .unwrap_or(name);
+    canonical_action_name(objective)
+}
+
+fn canonical_action_name(name: &str) -> String {
+    let mut canonical = String::with_capacity(name.len());
+    for ch in name.chars() {
+        if ch.is_ascii_whitespace() {
+            continue;
+        }
+        canonical.push(ch.to_ascii_lowercase());
+    }
+    canonical
 }
 
 #[cfg(test)]
@@ -739,11 +940,13 @@ mod tests {
     use super::*;
     use crate::{
         credential::{
-            AVC_SCHEMA_VERSION, AuthorityChainRef, AvcConstraints, AvcDraft, AvcSubjectKind,
-            ConsentRef, PolicyRef, TimeWindow, issue_avc, test_support::*,
+            AVC_SCHEMA_VERSION, AuthorityChainRef, AutonomyLevel, AvcConstraints, AvcDraft,
+            AvcSubjectKind, ConsentRef, PolicyRef, TimeWindow, issue_avc, test_support::*,
         },
         llm_usage_receipt::{EncryptedPayloadRef, ProviderUsageMetrics},
-        registry::{AvcRegistryWrite, InMemoryAvcRegistry},
+        registry::{
+            AvcRegistryDurableState, AvcRegistryWrite, EmergencyStopStanding, InMemoryAvcRegistry,
+        },
         revocation::{AvcRevocationReason, revoke_avc},
     };
 
@@ -809,7 +1012,7 @@ mod tests {
             estimated_risk_bp: None,
             human_approval: None,
             requires_human_approval: false,
-            action_name: None,
+            action_name: Some("primary@US".into()),
         }
     }
 
@@ -2176,7 +2379,7 @@ mod tests {
 
     #[test]
     fn validation_with_only_constraints_passes_when_no_action() {
-        let h = Harness::new();
+        let mut h = Harness::new();
         let mut draft = baseline_draft();
         draft.constraints = AvcConstraints {
             max_budget_minor_units: Some(1_000),
@@ -2189,8 +2392,373 @@ mod tests {
             forbidden_actions: vec!["bad".into()],
             emergency_stop_refs: vec!["stop".into()],
         };
+        h.registry
+            .set_emergency_stop("stop", EmergencyStopStanding::Clear);
         let cred = h.issue(draft);
         let result = validate_avc(&baseline_request(cred, ts(1_500_000)), &h.registry).unwrap();
         assert_eq!(result.decision, AvcDecision::Allow);
+    }
+
+    fn validate_named_action(
+        harness: &Harness,
+        cred: AutonomousVolitionCredential,
+        action: AvcActionRequest,
+    ) -> AvcValidationResult {
+        let mut request = baseline_request(cred, ts(1_500_000));
+        request.action = Some(action);
+        validate_avc(&request, &harness.registry).unwrap()
+    }
+
+    #[test]
+    fn denies_action_outside_allowed_or_on_prohibited_objective() {
+        let h = Harness::new();
+        let mut draft = baseline_draft();
+        draft.delegated_intent.allowed_objectives =
+            vec!["primary".into(), "execute_payment".into()];
+        draft.delegated_intent.prohibited_objectives = vec!["execute_payment".into()];
+        let cred = h.issue(draft);
+        let actor = cred.subject_did.clone();
+
+        let mut outside = baseline_action(actor.clone());
+        outside.action_name = Some("other".into());
+        let outside_result = validate_named_action(&h, cred.clone(), outside);
+        assert_eq!(outside_result.decision, AvcDecision::Deny);
+        assert!(
+            outside_result
+                .reason_codes
+                .contains(&AvcReasonCode::ObjectiveDenied)
+        );
+
+        let mut prohibited = baseline_action(actor.clone());
+        prohibited.action_name = Some("execute_payment".into());
+        let prohibited_result = validate_named_action(&h, cred.clone(), prohibited);
+        assert_eq!(prohibited_result.decision, AvcDecision::Deny);
+        assert!(
+            prohibited_result
+                .reason_codes
+                .contains(&AvcReasonCode::ObjectiveDenied)
+        );
+
+        let mut allowed = baseline_action(actor);
+        allowed.action_name = Some("primary@US".into());
+        let allowed_result = validate_named_action(&h, cred, allowed);
+        assert_eq!(allowed_result.decision, AvcDecision::Allow);
+    }
+
+    #[test]
+    fn denies_action_autonomy_level_does_not_allow() {
+        let h = Harness::new();
+        let mut draft = baseline_draft();
+        draft.delegated_intent.autonomy_level = AutonomyLevel::ObserveOnly;
+        draft.authority_scope.permissions = vec![Permission::Read, Permission::Execute];
+        let cred = h.issue(draft);
+        let actor = cred.subject_did.clone();
+
+        let mut execute = baseline_action(actor.clone());
+        execute.requested_permission = Permission::Execute;
+        execute.action_name = Some("primary".into());
+        let denied = validate_named_action(&h, cred.clone(), execute);
+        assert_eq!(denied.decision, AvcDecision::Deny);
+        assert!(denied.reason_codes.contains(&AvcReasonCode::AutonomyDenied));
+
+        let mut read = baseline_action(actor);
+        read.action_name = Some("primary@US".into());
+        let allowed = validate_named_action(&h, cred, read);
+        assert_eq!(allowed.decision, AvcDecision::Allow);
+    }
+
+    #[test]
+    fn denies_action_outside_credential_jurisdictions() {
+        let h = Harness::new();
+        let cred = h.issue(baseline_draft());
+        let actor = cred.subject_did.clone();
+
+        let mut outside = baseline_action(actor.clone());
+        outside.action_name = Some("primary@EU".into());
+        let denied = validate_named_action(&h, cred.clone(), outside);
+        assert_eq!(denied.decision, AvcDecision::Deny);
+        assert!(
+            denied
+                .reason_codes
+                .contains(&AvcReasonCode::JurisdictionDenied)
+        );
+
+        let mut inside = baseline_action(actor);
+        inside.action_name = Some("primary@US".into());
+        let allowed = validate_named_action(&h, cred, inside);
+        assert_eq!(allowed.decision, AvcDecision::Allow);
+    }
+
+    #[test]
+    fn denies_engaged_and_unknown_emergency_stop_refs() {
+        let mut h = Harness::new();
+        let mut draft = baseline_draft();
+        draft.constraints.emergency_stop_refs = vec!["halt".into()];
+        let cred = h.issue(draft);
+
+        let unknown =
+            validate_avc(&baseline_request(cred.clone(), ts(1_500_000)), &h.registry).unwrap();
+        assert_eq!(unknown.decision, AvcDecision::Deny);
+        assert!(
+            unknown
+                .reason_codes
+                .contains(&AvcReasonCode::EmergencyStopUnknown)
+        );
+
+        h.registry
+            .set_emergency_stop("halt", EmergencyStopStanding::Engaged);
+        let engaged =
+            validate_avc(&baseline_request(cred.clone(), ts(1_500_000)), &h.registry).unwrap();
+        assert_eq!(engaged.decision, AvcDecision::Deny);
+        assert!(
+            engaged
+                .reason_codes
+                .contains(&AvcReasonCode::EmergencyStopEngaged)
+        );
+        assert!(
+            !engaged
+                .reason_codes
+                .contains(&AvcReasonCode::EmergencyStopUnknown)
+        );
+
+        h.registry
+            .set_emergency_stop("halt", EmergencyStopStanding::Clear);
+        let clear = validate_avc(&baseline_request(cred, ts(1_500_000)), &h.registry).unwrap();
+        assert_eq!(clear.decision, AvcDecision::Allow);
+
+        let root = h.issue(baseline_draft());
+        assert!(root.parent_avc_id.is_none());
+        let root_result =
+            validate_avc(&baseline_request(root, ts(1_500_000)), &h.registry).unwrap();
+        assert_eq!(root_result.decision, AvcDecision::Allow);
+    }
+
+    #[test]
+    fn denies_objective_that_matches_only_a_later_segment() {
+        let h = Harness::new();
+        let actor_for = |allowed: &[&str], prohibited: &[&str]| {
+            let mut draft = baseline_draft();
+            draft.delegated_intent.allowed_objectives = allowed
+                .iter()
+                .map(|objective| (*objective).to_owned())
+                .collect();
+            draft.delegated_intent.prohibited_objectives = prohibited
+                .iter()
+                .map(|objective| (*objective).to_owned())
+                .collect();
+            h.issue(draft)
+        };
+
+        let later = actor_for(&["b", "b:c"], &[]);
+        let mut later_action = baseline_action(later.subject_did.clone());
+        later_action.action_name = Some("a:b:c".into());
+        let later_result = validate_named_action(&h, later, later_action);
+        assert_eq!(later_result.decision, AvcDecision::Deny);
+        assert!(
+            later_result
+                .reason_codes
+                .contains(&AvcReasonCode::ObjectiveDenied)
+        );
+
+        let prefix = actor_for(&["a"], &["b"]);
+        let mut prefix_action = baseline_action(prefix.subject_did.clone());
+        prefix_action.action_name = Some("a:b:c@US".into());
+        let prefix_result = validate_named_action(&h, prefix, prefix_action);
+        assert_eq!(prefix_result.decision, AvcDecision::Allow);
+
+        let equal = actor_for(&["a:b:c"], &[]);
+        let mut equal_action = baseline_action(equal.subject_did.clone());
+        equal_action.action_name = Some("a:b:c@US".into());
+        let equal_result = validate_named_action(&h, equal, equal_action);
+        assert_eq!(equal_result.decision, AvcDecision::Allow);
+
+        let prohibited_prefix = actor_for(&["a:b"], &["a"]);
+        let mut prohibited_action = baseline_action(prohibited_prefix.subject_did.clone());
+        prohibited_action.action_name = Some("a:b:c@US".into());
+        let prohibited_result = validate_named_action(&h, prohibited_prefix, prohibited_action);
+        assert_eq!(prohibited_result.decision, AvcDecision::Deny);
+        assert!(
+            prohibited_result
+                .reason_codes
+                .contains(&AvcReasonCode::ObjectiveDenied)
+        );
+    }
+
+    #[test]
+    fn denies_named_action_without_jurisdiction_when_credential_lists_limits() {
+        let h = Harness::new();
+        let cred = h.issue(baseline_draft());
+        assert!(!cred.authority_scope.jurisdictions.is_empty());
+        let mut action = baseline_action(cred.subject_did.clone());
+        action.action_name = Some("primary".into());
+        let result = validate_named_action(&h, cred, action);
+        assert_eq!(result.decision, AvcDecision::Deny);
+        assert!(
+            result
+                .reason_codes
+                .contains(&AvcReasonCode::JurisdictionDenied)
+        );
+    }
+
+    #[test]
+    fn denies_forbidden_action_name_that_differs_only_by_case_and_spacing() {
+        let h = Harness::new();
+        let mut draft = baseline_draft();
+        draft.authority_scope.jurisdictions.clear();
+        draft.constraints.forbidden_actions = vec!["payment.execute".into()];
+        let cred = h.issue(draft);
+        let mut action = baseline_action(cred.subject_did.clone());
+        action.action_name = Some("Payment . Execute".into());
+        let result = validate_named_action(&h, cred, action);
+        assert_eq!(result.decision, AvcDecision::Deny);
+        assert!(
+            result
+                .reason_codes
+                .contains(&AvcReasonCode::ForbiddenAction)
+        );
+    }
+
+    #[test]
+    fn denies_engaged_emergency_stop_after_store_reopen() {
+        let mut h = Harness::new();
+        let mut draft = baseline_draft();
+        draft.constraints.emergency_stop_refs = vec!["halt".into()];
+        let cred = h.issue(draft);
+        h.registry
+            .set_emergency_stop("halt", EmergencyStopStanding::Engaged);
+        let mut bytes = Vec::new();
+        ciborium::ser::into_writer(&h.registry.durable_state(), &mut bytes).unwrap();
+        let loaded: AvcRegistryDurableState = ciborium::de::from_reader(bytes.as_slice()).unwrap();
+        let mut reopened = InMemoryAvcRegistry::from_durable_state(loaded).unwrap();
+        reopened.put_public_key(did("issuer"), issuer_keypair().public);
+        let result = validate_avc(&baseline_request(cred, ts(1_500_000)), &reopened).unwrap();
+        assert_eq!(result.decision, AvcDecision::Deny);
+        assert!(
+            result
+                .reason_codes
+                .contains(&AvcReasonCode::EmergencyStopEngaged)
+        );
+    }
+
+    #[test]
+    fn denies_when_emergency_stop_store_cannot_be_read() {
+        let mut h = Harness::new();
+        let mut draft = baseline_draft();
+        draft.constraints.emergency_stop_refs = vec!["halt".into()];
+        let cred = h.issue(draft);
+        h.registry
+            .set_emergency_stop("halt", EmergencyStopStanding::Clear);
+        h.registry.mark_emergency_stop_store_unreadable();
+        let result = validate_avc(&baseline_request(cred, ts(1_500_000)), &h.registry).unwrap();
+        assert_eq!(result.decision, AvcDecision::Deny);
+        assert!(
+            result
+                .reason_codes
+                .contains(&AvcReasonCode::EmergencyStopUnreadable)
+        );
+        assert!(
+            !result
+                .reason_codes
+                .contains(&AvcReasonCode::EmergencyStopUnknown)
+        );
+    }
+
+    #[test]
+    fn denies_action_without_action_name_when_an_action_is_adjudicated() {
+        let h = Harness::new();
+        let cred = h.issue(baseline_draft());
+        assert!(!cred.authority_scope.jurisdictions.is_empty());
+        let mut action = baseline_action(cred.subject_did.clone());
+        action.action_name = None;
+        let result = validate_named_action(&h, cred, action);
+        assert_eq!(result.decision, AvcDecision::Deny);
+        assert!(
+            result
+                .reason_codes
+                .contains(&AvcReasonCode::ObjectiveDenied)
+        );
+        assert!(
+            result
+                .reason_codes
+                .contains(&AvcReasonCode::JurisdictionDenied)
+        );
+    }
+
+    #[test]
+    fn denies_execute_with_human_approval_without_signed_approval() {
+        let h = Harness::new();
+        let mut draft = baseline_draft();
+        draft.delegated_intent.autonomy_level = AutonomyLevel::ExecuteWithHumanApproval;
+        draft.authority_scope.permissions =
+            vec![Permission::Read, Permission::Execute, Permission::Spend];
+        let cred = h.issue(draft);
+        let actor = cred.subject_did.clone();
+
+        for permission in [Permission::Execute, Permission::Spend] {
+            let mut action = baseline_action(actor.clone());
+            action.requested_permission = permission;
+            let result = validate_named_action(&h, cred.clone(), action);
+            assert_eq!(result.decision, AvcDecision::HumanApprovalRequired);
+            assert_eq!(
+                result.reason_codes,
+                vec![AvcReasonCode::HumanApprovalMissing]
+            );
+        }
+
+        let mut read = baseline_action(actor);
+        read.requested_permission = Permission::Read;
+        let allowed = validate_named_action(&h, cred, read);
+        assert_eq!(allowed.decision, AvcDecision::Allow);
+    }
+
+    #[test]
+    fn denies_forbidden_action_whose_objective_matches_before_jurisdiction_suffix() {
+        let h = Harness::new();
+        let mut draft = baseline_draft();
+        draft.delegated_intent.allowed_objectives = vec!["execute_payment".into()];
+        draft.constraints.forbidden_actions = vec!["execute_payment".into()];
+        let cred = h.issue(draft);
+        let mut action = baseline_action(cred.subject_did.clone());
+        action.action_name = Some("execute_payment@US".into());
+        let result = validate_named_action(&h, cred, action);
+        assert_eq!(result.decision, AvcDecision::Deny);
+        assert!(
+            result
+                .reason_codes
+                .contains(&AvcReasonCode::ForbiddenAction)
+        );
+    }
+
+    #[test]
+    fn denies_parent_emergency_stop_when_child_drops_the_ref() {
+        let mut h = Harness::new();
+        let mut parent_draft = baseline_draft();
+        parent_draft.constraints.emergency_stop_refs = vec!["halt".into()];
+        parent_draft.delegated_intent.purpose = "parent scope".into();
+        let parent = h.issue(parent_draft);
+        h.registry.put_credential(parent.clone()).unwrap();
+        h.registry
+            .set_emergency_stop("halt", EmergencyStopStanding::Engaged);
+
+        let mut child_draft = baseline_draft();
+        child_draft.parent_avc_id = Some(parent.id().unwrap());
+        child_draft.constraints.emergency_stop_refs.clear();
+        child_draft.delegated_intent.purpose = "child dropped the stop".into();
+        let child = h.issue(child_draft);
+        assert!(child.constraints.emergency_stop_refs.is_empty());
+
+        let denied =
+            validate_avc(&baseline_request(child.clone(), ts(1_500_000)), &h.registry).unwrap();
+        assert_eq!(denied.decision, AvcDecision::Deny);
+        assert!(
+            denied
+                .reason_codes
+                .contains(&AvcReasonCode::EmergencyStopEngaged)
+        );
+
+        h.registry
+            .set_emergency_stop("halt", EmergencyStopStanding::Clear);
+        let clear = validate_avc(&baseline_request(child, ts(1_500_000)), &h.registry).unwrap();
+        assert_eq!(clear.decision, AvcDecision::Allow);
     }
 }

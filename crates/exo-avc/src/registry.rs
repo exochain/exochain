@@ -34,6 +34,12 @@ use crate::{
     revocation::AvcRevocation,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EmergencyStopStanding {
+    Clear,
+    Engaged,
+}
+
 /// Read-only registry interface used by validation.
 pub trait AvcRegistryRead {
     fn resolve_public_key(&self, did: &Did) -> Option<PublicKey>;
@@ -50,6 +56,13 @@ pub trait AvcRegistryRead {
     fn authority_chain_valid(&self, chain_hash: &Hash256, now: &Timestamp) -> bool;
     fn get_credential(&self, credential_id: &Hash256) -> Option<AutonomousVolitionCredential>;
     fn list_credentials_for_subject(&self, subject_did: &Did) -> Vec<AutonomousVolitionCredential>;
+    /// `None` means the reference is not registered.
+    fn emergency_stop_standing(&self, _stop_ref: &str) -> Option<EmergencyStopStanding> {
+        None
+    }
+    fn emergency_stop_store_readable(&self) -> bool {
+        true
+    }
 }
 
 /// Mutating registry interface used by node API handlers and tests.
@@ -130,6 +143,8 @@ pub struct AvcRegistryDurableState {
     pub receipt_chain_head: Option<Hash256>,
     #[serde(default)]
     pub registered_issuer_keys: BTreeMap<Did, RegisteredIssuerKey>,
+    #[serde(default)]
+    pub emergency_stops: BTreeMap<String, EmergencyStopStanding>,
 }
 
 /// Deterministic in-memory implementation of the registry traits.
@@ -147,6 +162,8 @@ pub struct InMemoryAvcRegistry {
     consent_refs: BTreeSet<Hash256>,
     policy_refs: BTreeSet<(Hash256, u16)>,
     authority_chains: BTreeSet<Hash256>,
+    emergency_stops: BTreeMap<String, EmergencyStopStanding>,
+    emergency_stops_unreadable: bool,
     /// Durable per-issuer runtime registrations, keyed by issuer DID, each
     /// carrying the `exo-authority` DelegationRegistry chain that authorized
     /// it (VCG-006b / #736). Distinct from `public_keys`: entries here are
@@ -181,6 +198,7 @@ impl InMemoryAvcRegistry {
             receipts: self.receipts.clone(),
             receipt_chain_head: self.receipt_chain_head,
             registered_issuer_keys: self.registered_issuer_keys.clone(),
+            emergency_stops: self.emergency_stops.clone(),
         }
     }
 
@@ -281,6 +299,7 @@ impl InMemoryAvcRegistry {
         }
         registry.validate_durable_receipt_evidence(state.receipt_chain_head)?;
         registry.receipt_chain_head = state.receipt_chain_head;
+        registry.emergency_stops = state.emergency_stops;
 
         // Structural load only: the chain's cryptographic validity, expiry,
         // and rootedness are re-verified later by
@@ -340,6 +359,8 @@ impl InMemoryAvcRegistry {
         // unlike cold start) to re-verify each chain before its key becomes
         // resolvable.
         candidate.registered_issuer_keys = durable.registered_issuer_keys;
+        candidate.emergency_stops = durable.emergency_stops;
+        candidate.emergency_stops_unreadable = false;
 
         for revocation in durable.revocations.into_values() {
             candidate.validate_revocation(&revocation)?;
@@ -355,6 +376,8 @@ impl InMemoryAvcRegistry {
         self.receipts = candidate.receipts;
         self.receipt_chain_head = candidate.receipt_chain_head;
         self.registered_issuer_keys = candidate.registered_issuer_keys;
+        self.emergency_stops = candidate.emergency_stops;
+        self.emergency_stops_unreadable = false;
         Ok(())
     }
 
@@ -887,6 +910,18 @@ impl InMemoryAvcRegistry {
             .cloned()
     }
 
+    pub fn set_emergency_stop(
+        &mut self,
+        stop_ref: impl Into<String>,
+        standing: EmergencyStopStanding,
+    ) {
+        self.emergency_stops.insert(stop_ref.into(), standing);
+    }
+
+    pub fn mark_emergency_stop_store_unreadable(&mut self) {
+        self.emergency_stops_unreadable = true;
+    }
+
     /// List receipts whose referenced credential belongs to `subject_did`.
     ///
     /// Receipts are stored in a `BTreeMap`, so iteration order is the
@@ -957,6 +992,14 @@ impl AvcRegistryRead for InMemoryAvcRegistry {
         ids.iter()
             .filter_map(|id| self.credentials.get(id).cloned())
             .collect()
+    }
+
+    fn emergency_stop_standing(&self, stop_ref: &str) -> Option<EmergencyStopStanding> {
+        self.emergency_stops.get(stop_ref).copied()
+    }
+
+    fn emergency_stop_store_readable(&self) -> bool {
+        !self.emergency_stops_unreadable
     }
 }
 

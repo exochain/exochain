@@ -47,8 +47,6 @@ pub const LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_SUBJECT: &str = "livesafe
 /// The only public audience admitted by this proof surface.
 pub const LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_AUDIENCE: &str =
     "https://livesafe.ai/api/trust/status";
-const LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_ACTION_NAME: &str =
-    "livesafe.public_adapter_output_authorization";
 
 /// Redacted revocation state carried in the public proof.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -157,6 +155,18 @@ pub fn livesafe_public_adapter_output_authorization_idempotency_hash(
     .map_err(AvcError::from)
 }
 
+fn livesafe_public_adapter_output_authorization_action_name(
+    credential: &AutonomousVolitionCredential,
+    action_name_hash: &Hash256,
+) -> String {
+    let objective =
+        format!("{LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_DOMAIN}:{action_name_hash}");
+    match credential.authority_scope.jurisdictions.first() {
+        Some(jurisdiction) => format!("{objective}@{jurisdiction}"),
+        None => objective,
+    }
+}
+
 /// Build the deterministic AVC action represented by a public-output proof.
 ///
 /// # Errors
@@ -189,8 +199,9 @@ pub fn livesafe_public_adapter_output_authorization_action_request(
         estimated_risk_bp: None,
         human_approval: None,
         requires_human_approval: false,
-        action_name: Some(format!(
-            "{LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_ACTION_NAME}:{action_name_hash}"
+        action_name: Some(livesafe_public_adapter_output_authorization_action_name(
+            credential,
+            &action_name_hash,
         )),
     })
 }
@@ -216,6 +227,38 @@ pub fn livesafe_public_adapter_output_authorization_action_commitment_hash(
         idempotency_key_hash,
         expires_at,
     )?;
+    avc_action_commitment_hash(credential, &action, issued_at)
+}
+
+/// Commitment of the same public-output action before the jurisdiction suffix
+/// was added to the action name.
+///
+/// # Errors
+/// Returns [`AvcError::Serialization`] if canonical hashing fails.
+pub fn livesafe_public_adapter_output_authorization_prior_action_commitment_hash(
+    credential: &AutonomousVolitionCredential,
+    subject: &str,
+    audience: &str,
+    evidence_hash: Hash256,
+    idempotency_key_hash: Hash256,
+    issued_at: &Timestamp,
+    expires_at: &Timestamp,
+) -> Result<Hash256, AvcError> {
+    let mut action = livesafe_public_adapter_output_authorization_action_request(
+        credential,
+        subject,
+        audience,
+        evidence_hash,
+        idempotency_key_hash,
+        expires_at,
+    )?;
+    let objective = action.action_name.as_deref().and_then(|name| {
+        name.split_once('@')
+            .map(|(objective, _)| objective.to_owned())
+    });
+    if let Some(objective) = objective {
+        action.action_name = Some(objective);
+    }
     avc_action_commitment_hash(credential, &action, issued_at)
 }
 
@@ -254,17 +297,36 @@ pub fn validate_livesafe_public_adapter_output_authorization<R: AvcRegistryRead>
         draft.idempotency_key_hash,
         &draft.expires_at,
     )?;
-    let expected_action_commitment =
+    let current_action_commitment =
         avc_action_commitment_hash(&draft.credential, &action, &draft.issued_at)?;
-    if expected_action_commitment != draft.action_commitment_hash {
+    let prior_action_commitment =
+        livesafe_public_adapter_output_authorization_prior_action_commitment_hash(
+            &draft.credential,
+            &draft.subject,
+            &draft.audience,
+            draft.evidence_hash,
+            draft.idempotency_key_hash,
+            &draft.issued_at,
+            &draft.expires_at,
+        )?;
+    if draft.action_commitment_hash != current_action_commitment
+        && draft.action_commitment_hash != prior_action_commitment
+    {
         return Err(AvcError::InvalidInput {
             reason: format!(
-                "LiveSafe public adapter output action commitment mismatch: expected {expected_action_commitment}, got {}",
+                "LiveSafe public adapter output action commitment mismatch: expected {current_action_commitment}, got {}",
                 draft.action_commitment_hash
             ),
         });
     }
 
+    if let Some(expires_at) = draft.credential.expires_at {
+        if expires_at.is_expired(&draft.issued_at) {
+            return Err(AvcError::InvalidInput {
+                reason: "LiveSafe public adapter output authorization denied: [Expired]".into(),
+            });
+        }
+    }
     let validation = validate_avc(
         &AvcValidationRequest {
             credential: draft.credential.clone(),
@@ -441,7 +503,7 @@ fn validate_fixed_proof(
             ),
         });
     }
-    if proof.expires_at <= proof.issued_at {
+    if proof.expires_at.is_expired(&proof.issued_at) {
         return Err(AvcError::InvalidTimestamp {
             reason: "LiveSafe public adapter output proof expires_at must be after issued_at"
                 .into(),
@@ -536,14 +598,14 @@ fn validate_ceremony_evidence_hash_binding(
 fn validate_expiry_bounds(
     draft: &LivesafePublicAdapterOutputAuthorizationDraft,
 ) -> Result<(), AvcError> {
-    if draft.expires_at <= draft.issued_at {
+    if draft.expires_at.is_expired(&draft.issued_at) {
         return Err(AvcError::InvalidTimestamp {
             reason: "LiveSafe public adapter output proof expires_at must be after issued_at"
                 .into(),
         });
     }
     if let Some(credential_expiry) = draft.credential.expires_at {
-        if credential_expiry <= draft.issued_at {
+        if credential_expiry.is_expired(&draft.issued_at) {
             return Err(AvcError::InvalidInput {
                 reason: "LiveSafe public adapter output authorization denied: [Expired]".into(),
             });
