@@ -11618,4 +11618,25 @@ mod external_timestamp_requirement_default_tests {
             "probe {mode} failed\n{combined}"
         );
     }
+
+    #[test]
+    fn unconfigured_authority_warning_fails_closed() {
+        let source = include_str!("avc.rs");
+        let production = source
+            .split("\n// ---------------------------------------------------------------------------\n// Tests")
+            .next()
+            .expect("production section");
+        assert!(
+            !production.contains(
+                "receipt emission will use local EXOCHAIN HLC finality unless external timestamp proof is explicitly required"
+            ),
+            "unconfigured timestamp authority must not warn that receipt emission uses the local HLC"
+        );
+        assert!(
+            production.contains(
+                "receipt emission fails closed unless {AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV} is set to false or 0"
+            ),
+            "unconfigured timestamp authority must warn that receipt emission fails closed"
+        );
+    }
 }
