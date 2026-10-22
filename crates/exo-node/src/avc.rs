@@ -8295,8 +8295,8 @@ mod tests {
             Err(std::env::VarError::NotPresent) => {
                 assert_public_output_timestamp_probe_passed();
             }
-            Ok(mode) if mode == "unset" => {
-                assert_public_output_refuses_local_clock_receipt_when_requirement_unset().await;
+            Ok(mode) if mode == "required" => {
+                assert_public_output_refuses_local_clock_receipt_when_requirement_on().await;
             }
             Ok(mode) => panic!("unknown public output timestamp probe mode {mode}"),
             Err(std::env::VarError::NotUnicode(_)) => {
@@ -8305,14 +8305,15 @@ mod tests {
         }
     }
 
-    async fn assert_public_output_refuses_local_clock_receipt_when_requirement_unset() {
-        assert!(
-            std::env::var_os(AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV).is_none(),
-            "{AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV} must be unset"
+    async fn assert_public_output_refuses_local_clock_receipt_when_requirement_on() {
+        assert_eq!(
+            std::env::var(AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV)
+                .expect("timestamp authority requirement"),
+            "true"
         );
         assert!(
             configured_require_external_timestamp_from_env()
-                .expect("unset external timestamp authority requirement")
+                .expect("external timestamp authority requirement")
         );
 
         let dir = tempfile::tempdir().expect("temp data dir");
@@ -8322,11 +8323,11 @@ mod tests {
                 state.external_timestamp_source,
                 AvcReceiptExternalTimestampSource::Unconfigured
             ),
-            "unset probe must leave the timestamp authority unconfigured"
+            "required probe must leave the timestamp authority unconfigured"
         );
         assert!(
             state.require_external_timestamp,
-            "unset {AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV} must require an external timestamp authority on the public-output route"
+            "{AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV}=true must require an external timestamp authority on the public-output route"
         );
         let evidence_hash = Hash256::from_bytes([0xA7; 32]);
         let credential_id =
@@ -8359,8 +8360,8 @@ mod tests {
         let mut command = Command::new(std::env::current_exe().expect("test executable"));
         command
             .args(["--exact", PUBLIC_OUTPUT_TIMESTAMP_TEST_NAME, "--nocapture"])
-            .env(PUBLIC_OUTPUT_TIMESTAMP_PROBE_ENV, "unset")
-            .env_remove(AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV)
+            .env(PUBLIC_OUTPUT_TIMESTAMP_PROBE_ENV, "required")
+            .env(AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV, "true")
             .env_remove(AVC_EXTERNAL_TIMESTAMP_AUTHORITY_URL_ENV)
             .env_remove(AVC_EXTERNAL_TIMESTAMP_AUTHORITY_KIND_ENV)
             .env_remove(AVC_EXTERNAL_TIMESTAMP_AUTHORITY_DID_ENV)
@@ -8377,7 +8378,7 @@ mod tests {
         );
         assert!(
             output.status.success() && combined.contains("test result: ok. 1 passed;"),
-            "unset public-output probe failed\n{combined}"
+            "required public-output probe failed\n{combined}"
         );
     }
 
