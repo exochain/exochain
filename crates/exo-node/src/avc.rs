@@ -3362,6 +3362,15 @@ async fn handle_public_output_authorization(
             .map_err(map_avc_error);
         }
 
+        if state_for_clock.require_external_timestamp {
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                format!(
+                    "public output authorization refused a local-clock receipt because {AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV} requires an external timestamp authority"
+                ),
+            ));
+        }
+
         let issued_at =
             trusted_local_hlc_timestamp(&state_for_clock).map_err(local_hlc_timestamp_error)?;
         let action_commitment_hash =
