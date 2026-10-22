@@ -39,8 +39,8 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 |--------|-------|--------|
 | Rust crates | 32 | `cargo metadata --no-deps --format-version 1` |
 | Rust source files | 509 | `git ls-files 'crates/**/*.rs'` |
-| Workspace tests (Linux) | 6,699 listed | Measured with `cargo test --workspace -- --list` on this head |
-| Workspace tests (macOS) | 6,703 listed | Linux inventory plus four `target_os = "macos"` tests in `crates/exo-node/src/private_file.rs` |
+| Workspace tests (Linux) | 6,704 listed | Measured with `cargo test --workspace -- --list` on this head |
+| Workspace tests (macOS) | 6,708 listed | Linux inventory plus four `target_os = "macos"` tests in `crates/exo-node/src/private_file.rs` |
 | CI quality gates | 23 | `.github/workflows/ci.yml` numbered gates; required aggregator is separate |
 | Last verified published release | `v0.2.7` (observed `2026-10-09T00:42:24Z`; packages listed in snapshot) | [Publication snapshot](governance/releases/published-release-snapshot.json) |
 | License | Apache-2.0 for EXOCHAIN core primitives; commercial terms for Decision Forum, LegalDyne, CyberMedica, LiveSafe, and CrossChecked products | `governance/commercial-product-licensing.json`; product license files where present |
