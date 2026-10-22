@@ -4589,6 +4589,40 @@ mod tests {
         Arc::new(state)
     }
 
+    async fn durable_finality_state(
+        data_dir: &FsPath,
+    ) -> (
+        Arc<AvcApiState>,
+        Arc<Mutex<crate::store::SqliteDagStore>>,
+    ) {
+        let finality_store = Arc::new(Mutex::new(
+            crate::store::SqliteDagStore::open(data_dir).unwrap(),
+        ));
+        let signer: AvcReceiptSigner = Arc::new(|payload: &[u8]| validator_keypair().sign(payload));
+        let mut state = AvcApiState::with_durable_registry(
+            data_dir,
+            validator_did(),
+            signer,
+            None,
+            Some(Arc::clone(&finality_store)),
+            false,
+        )
+        .await
+        .unwrap();
+        state.external_timestamp_source =
+            fixed_external_timestamp_source(Timestamp::new(1_600_000, 0));
+        seed_avc_trust_keys(&state);
+        (Arc::new(state), finality_store)
+    }
+
+    fn block_registry_persist(data_dir: &FsPath) {
+        let path = data_dir.join(AVC_REGISTRY_DURABLE_STATE_FILE);
+        if path.exists() {
+            std::fs::remove_file(&path).unwrap();
+        }
+        std::fs::create_dir(&path).unwrap();
+    }
+
     async fn fresh_unconfigured_durable_state(data_dir: &FsPath) -> Arc<AvcApiState> {
         let signer: AvcReceiptSigner = Arc::new(|payload: &[u8]| validator_keypair().sign(payload));
         let state = AvcApiState::with_durable_registry(
@@ -7045,6 +7079,125 @@ mod tests {
             .expect("revoked LYNK denial must persist the finality receipt");
         assert_eq!(finality_receipt.outcome, ReceiptOutcome::Denied);
         assert_eq!(finality_receipt.challenge_reference, None);
+    }
+
+    #[tokio::test]
+    async fn avc_llm_usage_receipts_emit_does_not_anchor_deny_when_registry_persist_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, finality_store) = durable_finality_state(dir.path()).await;
+        let credential = lynk_credential();
+        let credential_id = credential.id().unwrap();
+        {
+            let kp = issuer_keypair();
+            let mut registry = state.registry.lock().unwrap();
+            registry.put_credential(credential.clone()).unwrap();
+            let revocation = revoke_avc(
+                credential_id,
+                Did::new("did:exo:issuer").unwrap(),
+                AvcRevocationReason::IssuerRevoked,
+                Timestamp::new(1_100_000, 0),
+                |bytes| kp.sign(bytes),
+            )
+            .unwrap();
+            registry.put_revocation(revocation).unwrap();
+        }
+        let request = lynk_emit_request_for_evidence(
+            credential,
+            lynk_usage_evidence(LlmUsageCustodyMode::ReceiptMinimized),
+        );
+        block_registry_persist(dir.path());
+
+        let response = post_lynk_emit_request(avc_router(Arc::clone(&state)), &request).await;
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let response_text = String::from_utf8(read_body(response).await).unwrap();
+        assert_eq!(response_text, "AVC registry persistence failed");
+        assert!(!response_text.contains("receipt_hash"));
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 0);
+        assert_eq!(
+            finality_store
+                .lock()
+                .unwrap()
+                .committed_height_sync()
+                .unwrap(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn avc_llm_usage_receipts_emit_replay_of_allow_after_revocation_stays_denial() {
+        let dir = tempfile::tempdir().unwrap();
+        let finality_store = Arc::new(Mutex::new(
+            crate::store::SqliteDagStore::open(dir.path()).unwrap(),
+        ));
+        let state = fresh_state_with_finality_store(Arc::clone(&finality_store));
+        let credential = lynk_credential();
+        let credential_id = credential.id().unwrap();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(credential.clone())
+            .unwrap();
+        let request = lynk_emit_request_for_evidence(
+            credential,
+            lynk_usage_evidence(LlmUsageCustodyMode::ReceiptMinimized),
+        );
+        let app = avc_router(Arc::clone(&state));
+        let allow_response = post_lynk_emit_request(app.clone(), &request).await;
+        assert_eq!(allow_response.status(), StatusCode::OK);
+        let allow_parsed: EmitReceiptResponse =
+            serde_json::from_slice(&read_body(allow_response).await).unwrap();
+        assert_eq!(allow_parsed.receipt.decision, AvcDecision::Allow);
+        let anchored_height = finality_store
+            .lock()
+            .unwrap()
+            .committed_height_sync()
+            .unwrap();
+        {
+            let kp = issuer_keypair();
+            let revocation = revoke_avc(
+                credential_id,
+                Did::new("did:exo:issuer").unwrap(),
+                AvcRevocationReason::IssuerRevoked,
+                Timestamp::new(1_100_000, 0),
+                |bytes| kp.sign(bytes),
+            )
+            .unwrap();
+            state
+                .registry
+                .lock()
+                .unwrap()
+                .put_revocation(revocation)
+                .unwrap();
+        }
+
+        let replay = post_lynk_emit_request(app, &request).await;
+
+        assert_eq!(replay.status(), StatusCode::FORBIDDEN);
+        let response_text = String::from_utf8(read_body(replay).await).unwrap();
+        assert!(response_text.contains("Revoked"));
+        assert!(!response_text.contains("action commitment conflict"));
+        assert!(!response_text.contains("receipt_hash"));
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 1);
+        assert_eq!(
+            state
+                .registry
+                .lock()
+                .unwrap()
+                .get_receipt(&allow_parsed.receipt.receipt_id)
+                .expect("stored allow receipt must remain")
+                .decision,
+            AvcDecision::Allow
+        );
+        assert_eq!(
+            finality_store
+                .lock()
+                .unwrap()
+                .committed_height_sync()
+                .unwrap(),
+            anchored_height
+        );
     }
 
     #[tokio::test]
@@ -10526,6 +10679,269 @@ mod tests {
         assert!(!response_text.contains("receipt_hash"));
         assert!(!response_text.contains("LocalHybridLogicalClock"));
         assert_eq!(state.registry.lock().unwrap().receipt_count(), 0);
+        assert_eq!(
+            finality_store
+                .lock()
+                .unwrap()
+                .committed_height_sync()
+                .unwrap(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn receipt_emit_does_not_anchor_deny_when_registry_persist_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, finality_store) = durable_finality_state(dir.path()).await;
+        let credential = baseline_credential();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(credential.clone())
+            .unwrap();
+        let mut action = baseline_action(Did::new("did:exo:agent").unwrap());
+        action.requested_permission = Permission::Write;
+        let request = AvcValidationRequest {
+            credential,
+            action: Some(action),
+            now: Timestamp::new(1_500_000, 0),
+        };
+        let body = serde_json::to_vec(&EmitReceiptRequest {
+            validation: request.clone(),
+            subject_signature: sign_action(&request, &subject_keypair()),
+            subject_public_key: None,
+        })
+        .unwrap();
+        block_registry_persist(dir.path());
+
+        let response = avc_router(Arc::clone(&state))
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/avc/receipts/emit")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let response_text = String::from_utf8(read_body(response).await).unwrap();
+        assert_eq!(response_text, "AVC registry persistence failed");
+        assert!(!response_text.contains("receipt_hash"));
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 0);
+        assert_eq!(
+            finality_store
+                .lock()
+                .unwrap()
+                .committed_height_sync()
+                .unwrap(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn receipt_emit_replay_of_allow_after_revocation_stays_denial() {
+        let dir = tempfile::tempdir().unwrap();
+        let finality_store = Arc::new(Mutex::new(
+            crate::store::SqliteDagStore::open(dir.path()).unwrap(),
+        ));
+        let state = fresh_state_with_finality_store(Arc::clone(&finality_store));
+        let credential = baseline_credential();
+        let credential_id = credential.id().unwrap();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(credential.clone())
+            .unwrap();
+        let request = AvcValidationRequest {
+            credential,
+            action: Some(baseline_action(Did::new("did:exo:agent").unwrap())),
+            now: Timestamp::new(1_500_000, 0),
+        };
+        let body = serde_json::to_vec(&EmitReceiptRequest {
+            validation: request.clone(),
+            subject_signature: sign_action(&request, &subject_keypair()),
+            subject_public_key: None,
+        })
+        .unwrap();
+        let app = avc_router(Arc::clone(&state));
+        let allow_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/avc/receipts/emit")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(allow_response.status(), StatusCode::OK);
+        let allow_parsed: EmitReceiptResponse =
+            serde_json::from_slice(&read_body(allow_response).await).unwrap();
+        assert_eq!(allow_parsed.receipt.decision, AvcDecision::Allow);
+        let anchored_height = finality_store
+            .lock()
+            .unwrap()
+            .committed_height_sync()
+            .unwrap();
+        {
+            let kp = issuer_keypair();
+            let revocation = revoke_avc(
+                credential_id,
+                Did::new("did:exo:issuer").unwrap(),
+                AvcRevocationReason::IssuerRevoked,
+                Timestamp::new(1_100_000, 0),
+                |bytes| kp.sign(bytes),
+            )
+            .unwrap();
+            state
+                .registry
+                .lock()
+                .unwrap()
+                .put_revocation(revocation)
+                .unwrap();
+        }
+
+        let replay = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/avc/receipts/emit")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(replay.status(), StatusCode::FORBIDDEN);
+        let response_text = String::from_utf8(read_body(replay).await).unwrap();
+        assert!(response_text.contains("Revoked"));
+        assert!(!response_text.contains("action commitment conflict"));
+        assert!(!response_text.contains("receipt_hash"));
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 1);
+        assert_eq!(
+            state
+                .registry
+                .lock()
+                .unwrap()
+                .get_receipt(&allow_parsed.receipt.receipt_id)
+                .expect("stored allow receipt must remain")
+                .decision,
+            AvcDecision::Allow
+        );
+        assert_eq!(
+            finality_store
+                .lock()
+                .unwrap()
+                .committed_height_sync()
+                .unwrap(),
+            anchored_height
+        );
+    }
+
+    #[tokio::test]
+    async fn receipt_emit_replay_of_allow_after_expiry_stays_denial() {
+        let dir = tempfile::tempdir().unwrap();
+        let finality_store = Arc::new(Mutex::new(
+            crate::store::SqliteDagStore::open(dir.path()).unwrap(),
+        ));
+        let state = fresh_state_with_finality_store(Arc::clone(&finality_store));
+        let credential = credential_expiring_at(Timestamp::new(1_500_000, 0));
+        let credential_id = credential.id().unwrap();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(credential.clone())
+            .unwrap();
+        let action = baseline_action(Did::new("did:exo:agent").unwrap());
+        let request = AvcValidationRequest {
+            credential: credential.clone(),
+            action: Some(action.clone()),
+            now: Timestamp::new(1_500_000, 0),
+        };
+        let action_commitment_hash =
+            avc_action_commitment_hash(&credential, &action, &request.now).unwrap();
+        let allow = AvcValidationResult {
+            credential_id,
+            decision: AvcDecision::Allow,
+            reason_codes: vec![AvcReasonCode::Valid],
+            normalized_holder_did: credential.subject_did.clone(),
+            valid_until: credential.expires_at,
+            receipt: None,
+        };
+        let stored = create_trust_receipt_with_evidence(
+            &allow,
+            Some(action.action_id),
+            AvcTrustReceiptEvidence {
+                action_commitment_hash: Some(action_commitment_hash),
+                action_descriptor: Some(AvcActionDescriptor::from_action(&action)),
+                llm_usage_evidence_hash: None,
+                payment_evidence_hash: None,
+                previous_receipt_hash: None,
+                timestamp_provenance: Some(AvcReceiptTimestampProvenance::FixedTestTimestamp),
+                external_timestamp_proof: None,
+            },
+            validator_did(),
+            Timestamp::new(1_400_000, 0),
+            |bytes| validator_keypair().sign(bytes),
+        )
+        .unwrap();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_receipt(stored.clone())
+            .unwrap();
+        let body = serde_json::to_vec(&EmitReceiptRequest {
+            validation: request,
+            subject_signature: sign_action(
+                &AvcValidationRequest {
+                    credential: credential.clone(),
+                    action: Some(action),
+                    now: Timestamp::new(1_500_000, 0),
+                },
+                &subject_keypair(),
+            ),
+            subject_public_key: None,
+        })
+        .unwrap();
+
+        let response = avc_router(Arc::clone(&state))
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/avc/receipts/emit")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let response_text = String::from_utf8(read_body(response).await).unwrap();
+        assert!(response_text.contains("Expired"));
+        assert!(!response_text.contains("action commitment conflict"));
+        assert!(!response_text.contains("receipt_hash"));
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 1);
+        assert_eq!(
+            state
+                .registry
+                .lock()
+                .unwrap()
+                .get_receipt(&stored.receipt_id)
+                .expect("stored allow receipt must remain")
+                .decision,
+            AvcDecision::Allow
+        );
         assert_eq!(
             finality_store
                 .lock()
