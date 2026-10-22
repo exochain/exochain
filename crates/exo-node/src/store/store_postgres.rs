@@ -39,10 +39,10 @@ use serde::de::DeserializeOwned;
 use sqlx::{Postgres, Row, Transaction, postgres::PgRow};
 
 use super::{
-    PostgresDagNodeStore, SqliteDagStore, decode_cbor, decode_did, decode_hash_bytes,
-    decode_signature_bytes, encode_cbor, governance_payload_meta_key, sqlite_i64_to_u64,
-    sqlite_u64_to_i64, store_err, validate_commit_certificate, validate_ed25519_signature,
-    validate_signature, validate_vote,
+    PostgresDagNodeStore, PostgresFinalityHandle, SqliteDagStore, decode_cbor, decode_did,
+    decode_hash_bytes, decode_signature_bytes, encode_cbor, governance_payload_meta_key,
+    sqlite_i64_to_u64, sqlite_u64_to_i64, store_err, validate_commit_certificate,
+    validate_ed25519_signature, validate_signature, validate_vote,
 };
 
 fn row_type_decode_error(
@@ -997,6 +997,94 @@ impl PostgresDagNodeStore {
         result
             .map(|bytes| decode_cbor(&bytes, "dagdb_node_economy_anchors.cbor_data"))
             .transpose()
+    }
+
+    pub(super) async fn committed_height_for_on_transaction(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        hash: &Hash256,
+    ) -> DagResult<Option<u64>> {
+        let height: Option<i64> = sqlx::query_scalar(
+            "SELECT height FROM dagdb_node_committed \
+             WHERE tenant_id = $1 AND namespace = $2 AND hash = $3",
+        )
+        .bind(&self.tenant_id)
+        .bind(&self.namespace)
+        .bind(hash.as_bytes().to_vec())
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(store_err)?;
+        height
+            .map(|value| sqlite_i64_to_u64(value, "dagdb_node_committed.height"))
+            .transpose()
+    }
+
+    pub(super) async fn committed_height_on_transaction(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+    ) -> DagResult<u64> {
+        let height: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(height), 0) FROM dagdb_node_committed \
+             WHERE tenant_id = $1 AND namespace = $2",
+        )
+        .bind(&self.tenant_id)
+        .bind(&self.namespace)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(store_err)?;
+        sqlite_i64_to_u64(height, "dagdb_node_committed.height")
+    }
+
+    pub(super) async fn put_committed_node_with_receipt_on_transaction(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        node: &DagNode,
+        height: u64,
+        receipt: &TrustReceipt,
+    ) -> DagResult<()> {
+        if receipt.action_hash != node.hash {
+            return Err(store_err(
+                "dagdb_node_trust_receipts.action_hash must match committed node hash",
+            ));
+        }
+        self.bind_tenant(tx).await.map_err(store_err)?;
+        self.insert_node_tx(tx, node).await?;
+        self.insert_committed_tx(tx, &node.hash, height).await?;
+        self.insert_receipt_tx(tx, receipt).await?;
+        Ok(())
+    }
+}
+
+impl PostgresFinalityHandle {
+    pub async fn committed_height_for_on_transaction(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        hash: &Hash256,
+    ) -> DagResult<Option<u64>> {
+        self.store.bind_tenant(tx).await.map_err(store_err)?;
+        self.store
+            .committed_height_for_on_transaction(tx, hash)
+            .await
+    }
+
+    pub async fn committed_height_on_transaction(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+    ) -> DagResult<u64> {
+        self.store.bind_tenant(tx).await.map_err(store_err)?;
+        self.store.committed_height_on_transaction(tx).await
+    }
+
+    pub async fn put_committed_node_with_receipt_on_transaction(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        node: &DagNode,
+        height: u64,
+        receipt: &TrustReceipt,
+    ) -> DagResult<()> {
+        self.store
+            .put_committed_node_with_receipt_on_transaction(tx, node, height, receipt)
+            .await
     }
 }
 

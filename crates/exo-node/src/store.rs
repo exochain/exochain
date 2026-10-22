@@ -27,6 +27,8 @@
 
 mod store_postgres;
 
+#[cfg_attr(not(test), allow(unused_imports))]
+use std::sync::Arc;
 use std::{collections::BTreeSet, future::Future, path::Path};
 
 use exo_core::types::{Did, Hash256, Signature, Timestamp, TrustReceipt};
@@ -152,12 +154,22 @@ fn validate_commit_certificate(cert: &CommitCertificate) -> DagResult<()> {
 /// which returns this same handle backed by the tenant-scoped DAG DB tables.
 pub struct SqliteDagStore {
     backend: NodeStoreBackend,
+    anchor_batch_open: bool,
+    #[cfg(test)]
+    before_anchor_commit: Option<Arc<dyn Fn() + Send + Sync>>,
+    #[cfg(test)]
+    fail_next_anchor_commit: bool,
 }
 
 enum NodeStoreBackend {
     #[allow(dead_code)]
     LegacySqlite(Connection),
     DagDb(PostgresDagNodeStore),
+}
+
+#[derive(Clone)]
+pub struct PostgresFinalityHandle {
+    store: PostgresDagNodeStore,
 }
 
 #[derive(Clone)]
@@ -187,6 +199,11 @@ impl DagDbNodeStore {
         store.verify_schema().await?;
         Ok(SqliteDagStore {
             backend: NodeStoreBackend::DagDb(store),
+            anchor_batch_open: false,
+            #[cfg(test)]
+            before_anchor_commit: None,
+            #[cfg(test)]
+            fail_next_anchor_commit: false,
         })
     }
 }
@@ -225,6 +242,17 @@ impl SqliteDagStore {
             NodeStoreBackend::LegacySqlite(_) => None,
             NodeStoreBackend::DagDb(store) => Some(store),
         }
+    }
+
+    pub fn postgres_finality_handle(&self) -> DagResult<PostgresFinalityHandle> {
+        let Some(store) = self.dagdb() else {
+            return Err(store_err(
+                "Postgres finality handle requires a Postgres-backed store",
+            ));
+        };
+        Ok(PostgresFinalityHandle {
+            store: store.clone(),
+        })
     }
 
     fn sqlite_conn(&self) -> DagResult<&Connection> {
@@ -358,7 +386,108 @@ impl SqliteDagStore {
 
         Ok(Self {
             backend: NodeStoreBackend::LegacySqlite(conn),
+            anchor_batch_open: false,
+            #[cfg(test)]
+            before_anchor_commit: None,
+            #[cfg(test)]
+            fail_next_anchor_commit: false,
         })
+    }
+
+    pub fn is_postgres_backed(&self) -> bool {
+        self.dagdb().is_some()
+    }
+
+    pub fn begin_anchor_batch(&mut self) -> DagResult<()> {
+        if self.is_postgres_backed() {
+            return Err(store_err(
+                "SQLite anchor batch is unavailable for a Postgres-backed finality store",
+            ));
+        }
+        if self.anchor_batch_open {
+            return Err(store_err("SQLite anchor batch is already open"));
+        }
+        self.sqlite_conn_mut()?
+            .execute_batch("BEGIN IMMEDIATE")
+            .map_err(store_err)?;
+        self.anchor_batch_open = true;
+        Ok(())
+    }
+
+    pub fn insert_anchor_in_open_batch(
+        &mut self,
+        node: &DagNode,
+        height: u64,
+        receipt: &TrustReceipt,
+    ) -> DagResult<()> {
+        if !self.anchor_batch_open {
+            return Err(store_err("SQLite anchor batch is not open"));
+        }
+        if receipt.action_hash != node.hash {
+            return Err(store_err(
+                "trust_receipts.action_hash must match committed node hash",
+            ));
+        }
+        Self::insert_node_tx(self.sqlite_conn_mut()?, node)?;
+        Self::insert_committed_tx(self.sqlite_conn_mut()?, &node.hash, height)?;
+        Self::insert_receipt_tx(self.sqlite_conn_mut()?, receipt)?;
+        Ok(())
+    }
+
+    pub fn commit_anchor_batch(&mut self) -> DagResult<()> {
+        if !self.anchor_batch_open {
+            return Ok(());
+        }
+        #[cfg(test)]
+        {
+            if let Some(probe) = self.before_anchor_commit.clone() {
+                probe();
+            }
+            if self.fail_next_anchor_commit {
+                self.fail_next_anchor_commit = false;
+                return Err(store_err("injected sqlite anchor commit failure"));
+            }
+        }
+        self.sqlite_conn_mut()?
+            .execute_batch("COMMIT")
+            .map_err(store_err)?;
+        self.anchor_batch_open = false;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub fn set_before_anchor_commit_for_test(
+        &mut self,
+        probe: Option<Arc<dyn Fn() + Send + Sync>>,
+    ) {
+        self.before_anchor_commit = probe;
+    }
+
+    #[cfg(test)]
+    pub fn fail_next_anchor_commit_for_test(&mut self) {
+        self.fail_next_anchor_commit = true;
+    }
+
+    pub fn rollback_anchor_batch(&mut self) -> DagResult<()> {
+        if !self.anchor_batch_open {
+            return Ok(());
+        }
+        self.sqlite_conn_mut()?
+            .execute_batch("ROLLBACK")
+            .map_err(store_err)?;
+        self.anchor_batch_open = false;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub fn forget_committed_hash_for_test(&mut self, hash: &Hash256) -> DagResult<()> {
+        self.sqlite_conn_mut()?
+            .execute(
+                "DELETE FROM committed WHERE hash = ?1",
+                params![hash.0.as_slice()],
+            )
+            .map_err(store_err)?;
+        Ok(())
     }
 
     /// Convenience accessor for the current committed height.
@@ -555,7 +684,7 @@ impl SqliteDagStore {
         Ok(())
     }
 
-    fn ensure_node_exists_tx(tx: &rusqlite::Transaction<'_>, hash: &Hash256) -> DagResult<()> {
+    fn ensure_node_exists_tx(tx: &Connection, hash: &Hash256) -> DagResult<()> {
         match tx.query_row(
             "SELECT 1 FROM dag_nodes WHERE hash = ?1",
             params![hash.0.as_slice()],
@@ -567,11 +696,7 @@ impl SqliteDagStore {
         }
     }
 
-    fn insert_committed_tx(
-        tx: &rusqlite::Transaction<'_>,
-        hash: &Hash256,
-        height: u64,
-    ) -> DagResult<()> {
+    fn insert_committed_tx(tx: &Connection, hash: &Hash256, height: u64) -> DagResult<()> {
         let height = sqlite_u64_to_i64(height, "committed.height")?;
         tx.execute(
             "INSERT OR REPLACE INTO committed (hash, height) VALUES (?1, ?2)",
@@ -581,10 +706,7 @@ impl SqliteDagStore {
         Ok(())
     }
 
-    fn insert_certificate_tx(
-        tx: &rusqlite::Transaction<'_>,
-        cert: &CommitCertificate,
-    ) -> DagResult<()> {
+    fn insert_certificate_tx(tx: &Connection, cert: &CommitCertificate) -> DagResult<()> {
         let round = sqlite_u64_to_i64(cert.round, "commit_certificates.round")?;
         validate_commit_certificate(cert)?;
         let cbor_buf = encode_cbor(cert, "commit_certificates.cbor_data")?;
@@ -596,7 +718,7 @@ impl SqliteDagStore {
         Ok(())
     }
 
-    fn insert_receipt_tx(tx: &rusqlite::Transaction<'_>, receipt: &TrustReceipt) -> DagResult<()> {
+    fn insert_receipt_tx(tx: &Connection, receipt: &TrustReceipt) -> DagResult<()> {
         validate_signature(&receipt.signature, "trust_receipts.signature")?;
         let timestamp_ms =
             sqlite_u64_to_i64(receipt.timestamp.physical_ms, "trust_receipts.timestamp_ms")?;
@@ -1113,7 +1235,7 @@ impl SqliteDagStore {
 // ---------------------------------------------------------------------------
 
 impl SqliteDagStore {
-    fn insert_node_tx(tx: &rusqlite::Transaction<'_>, node: &DagNode) -> DagResult<()> {
+    fn insert_node_tx(tx: &Connection, node: &DagNode) -> DagResult<()> {
         let cbor = Self::encode_node(node)?;
 
         tx.execute(
