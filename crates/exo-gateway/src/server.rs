@@ -5083,6 +5083,7 @@ pub async fn serve_with_extra_routes(
 mod tests {
     use std::{
         net::{IpAddr, SocketAddr},
+        process,
         sync::atomic::{AtomicU64, Ordering},
         time::Duration,
     };
@@ -9383,6 +9384,70 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 
+    fn login_fixture_did(label: &str) -> String {
+        format!("did:exo:login-{label}-{}", process::id())
+    }
+
+    struct LoginFixtureGuard {
+        did: String,
+    }
+
+    impl LoginFixtureGuard {
+        fn arm(did: &str) -> Self {
+            Self {
+                did: did.to_owned(),
+            }
+        }
+    }
+
+    impl Drop for LoginFixtureGuard {
+        fn drop(&mut self) {
+            let did = self.did.clone();
+            let Ok(url) = std::env::var("DATABASE_URL") else {
+                return;
+            };
+            let _ = std::thread::spawn(move || {
+                let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                else {
+                    return;
+                };
+                runtime.block_on(async move {
+                    let Ok(pool) = sqlx::postgres::PgPoolOptions::new()
+                        .max_connections(1)
+                        .connect(&url)
+                        .await
+                    else {
+                        return;
+                    };
+                    let _ = sqlx::query("DELETE FROM sessions WHERE actor_did = $1")
+                        .bind(&did)
+                        .execute(&pool)
+                        .await;
+                    let _ = sqlx::query("DELETE FROM did_documents WHERE did = $1")
+                        .bind(&did)
+                        .execute(&pool)
+                        .await;
+                });
+            })
+            .join();
+        }
+    }
+
+    async fn clear_login_fixture(pool: &sqlx::PgPool, did: &str) {
+        sqlx::query("DELETE FROM sessions WHERE actor_did = $1")
+            .bind(did)
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM did_documents WHERE did = $1")
+            .bind(did)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
     struct FreshLoginAttempt {
         status: StatusCode,
         body: String,
@@ -9392,7 +9457,7 @@ mod tests {
     async fn login_with_fresh_signing_key(
         pool: &sqlx::PgPool,
         did: &str,
-        metadata: SessionIssueMetadata,
+        metadata: &SessionIssueMetadata,
         gateway_now_ms: u64,
     ) -> FreshLoginAttempt {
         let (registry, sk) = signing_registry_for(did);
@@ -9403,9 +9468,18 @@ mod tests {
             .resolve(&did_key)
             .expect("signing DID document")
             .clone();
-        db::insert_did_document(pool, &doc)
+        sqlx::query("DELETE FROM did_documents WHERE did = $1")
+            .bind(did)
+            .execute(pool)
+            .await
+            .unwrap();
+        let inserted = db::insert_did_document(pool, &doc)
             .await
             .expect("persist signing DID document");
+        assert!(
+            inserted,
+            "login fixture must store the signing key for {did}"
+        );
         let stored = db::find_did_document(pool, did)
             .await
             .expect("read signing DID document");
@@ -9414,7 +9488,7 @@ mod tests {
             .is_some_and(|stored_doc| stored_doc.public_keys == doc.public_keys);
         let timestamp = Timestamp::new(gateway_now_ms, 0);
         let signature = sign(
-            &session_login_auth_signing_payload(did, &metadata, timestamp).unwrap(),
+            &session_login_auth_signing_payload(did, metadata, timestamp).unwrap(),
             &sk,
         );
         let body = serde_json::json!({
@@ -9451,20 +9525,12 @@ mod tests {
             Some(pool) => pool,
             None => return,
         };
-        let did = "did:exo:login-stale-document";
-        sqlx::query("DELETE FROM sessions WHERE actor_did = $1")
-            .bind(did)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM did_documents WHERE did = $1")
-            .bind(did)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let did = login_fixture_did("stale-document");
+        let _guard = LoginFixtureGuard::arm(&did);
+        clear_login_fixture(&pool, &did).await;
 
         let (stale_pk, _) = generate_keypair();
-        let stale_did = Did::new(did).unwrap();
+        let stale_did = Did::new(&did).unwrap();
         let stale_doc = did_document_with_ed25519_key(&stale_did, &stale_pk);
         assert!(
             db::insert_did_document(&pool, &stale_doc)
@@ -9477,18 +9543,8 @@ mod tests {
             created_at: 10_000,
             expires_at: 20_000,
         };
-        let attempt = login_with_fresh_signing_key(&pool, did, metadata, 10_000).await;
-
-        sqlx::query("DELETE FROM sessions WHERE actor_did = $1")
-            .bind(did)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM did_documents WHERE did = $1")
-            .bind(did)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let attempt = login_with_fresh_signing_key(&pool, &did, &metadata, 10_000).await;
+        clear_login_fixture(&pool, &did).await;
 
         assert_eq!(
             (attempt.status, attempt.signer_key_stored),
@@ -9500,71 +9556,26 @@ mod tests {
 
     #[tokio::test]
     async fn auth_login_valid_signature_creates_session_row_with_caller_metadata() {
-        use sqlx::Row;
-
         let pool = match gateway_test_pool().await {
             Some(pool) => pool,
             None => return,
         };
-        let did = "did:exo:login-alice";
-        sqlx::query("DELETE FROM sessions WHERE actor_did = $1")
-            .bind(did)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM did_documents WHERE did = $1")
-            .bind(did)
-            .execute(&pool)
-            .await
-            .unwrap();
-
-        let (registry, sk) = signing_registry();
-        let did_key = Did::new(did).unwrap();
-        let doc = registry
-            .read()
-            .unwrap()
-            .resolve(&did_key)
-            .expect("signing DID document")
-            .clone();
-        db::insert_did_document(&pool, &doc)
-            .await
-            .expect("persist signing DID document");
+        let did = login_fixture_did("session-row");
+        let _guard = LoginFixtureGuard::arm(&did);
+        clear_login_fixture(&pool, &did).await;
         let metadata = SessionIssueMetadata {
             created_at: 10_000,
             expires_at: 20_000,
         };
-        let timestamp = Timestamp::new(10_000, 0);
-        let trusted_gateway_time = Timestamp::new(10_000, 0);
-        let signature = sign(
-            &session_login_auth_signing_payload(did, &metadata, timestamp).unwrap(),
-            &sk,
-        );
-        let body = serde_json::json!({
-            "did": did,
-            "createdAt": metadata.created_at,
-            "expiresAt": metadata.expires_at,
-            "authTimestampPhysicalMs": timestamp.physical_ms,
-            "authTimestampLogical": timestamp.logical,
-            "signature": hex::encode(signature.to_bytes())
-        });
+        let attempt = login_with_fresh_signing_key(&pool, &did, &metadata, 10_000).await;
 
-        let response = handle_auth_login(
-            State(db_state_at(
-                pool.clone(),
-                Arc::new(RwLock::new(LocalDidRegistry::new())),
-                trusted_gateway_time.physical_ms,
-            )),
-            Json(body),
-        )
-        .await
-        .into_response();
-
-        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(attempt.status, StatusCode::OK, "{}", attempt.body);
+        assert!(attempt.signer_key_stored, "{}", attempt.body);
         let rows = sqlx::query(
             "SELECT actor_did, created_at, expires_at, revoked \
              FROM sessions WHERE actor_did = $1",
         )
-        .bind(did)
+        .bind(&did)
         .fetch_all(&pool)
         .await
         .unwrap();
@@ -9573,17 +9584,7 @@ mod tests {
         assert_eq!(rows[0].get::<i64, _>("created_at"), metadata.created_at);
         assert_eq!(rows[0].get::<i64, _>("expires_at"), metadata.expires_at);
         assert!(!rows[0].get::<bool, _>("revoked"));
-
-        sqlx::query("DELETE FROM sessions WHERE actor_did = $1")
-            .bind(did)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM did_documents WHERE did = $1")
-            .bind(did)
-            .execute(&pool)
-            .await
-            .unwrap();
+        clear_login_fixture(&pool, &did).await;
     }
 
     #[tokio::test]
@@ -9592,29 +9593,9 @@ mod tests {
             Some(pool) => pool,
             None => return,
         };
-        let did = "did:exo:login-alice";
-        sqlx::query("DELETE FROM sessions WHERE actor_did = $1")
-            .bind(did)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM did_documents WHERE did = $1")
-            .bind(did)
-            .execute(&pool)
-            .await
-            .unwrap();
-
-        let (registry, sk) = signing_registry();
-        let did_key = Did::new(did).unwrap();
-        let doc = registry
-            .read()
-            .unwrap()
-            .resolve(&did_key)
-            .expect("signing DID document")
-            .clone();
-        db::insert_did_document(&pool, &doc)
-            .await
-            .expect("persist signing DID document");
+        let did = login_fixture_did("expiry");
+        let _guard = LoginFixtureGuard::arm(&did);
+        clear_login_fixture(&pool, &did).await;
 
         let gateway_now_ms = 10_000_u64;
         let gateway_now_ms_i64 = 10_000_i64;
@@ -9622,45 +9603,18 @@ mod tests {
             created_at: gateway_now_ms_i64,
             expires_at: gateway_now_ms_i64 + 3_600_001,
         };
-        let timestamp = Timestamp::new(gateway_now_ms, 0);
-        let signature = sign(
-            &session_login_auth_signing_payload(did, &metadata, timestamp).unwrap(),
-            &sk,
-        );
-        let body = serde_json::json!({
-            "did": did,
-            "createdAt": metadata.created_at,
-            "expiresAt": metadata.expires_at,
-            "authTimestampPhysicalMs": timestamp.physical_ms,
-            "authTimestampLogical": timestamp.logical,
-            "signature": hex::encode(signature.to_bytes())
-        });
+        let attempt = login_with_fresh_signing_key(&pool, &did, &metadata, gateway_now_ms).await;
 
-        let response = handle_auth_login(
-            State(db_state_at(
-                pool.clone(),
-                Arc::new(RwLock::new(LocalDidRegistry::new())),
-                gateway_now_ms,
-            )),
-            Json(body),
-        )
-        .await
-        .into_response();
-
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(attempt.status, StatusCode::BAD_REQUEST, "{}", attempt.body);
+        assert!(attempt.signer_key_stored, "{}", attempt.body);
         let session_count: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM sessions WHERE actor_did = $1")
-                .bind(did)
+                .bind(&did)
                 .fetch_one(&pool)
                 .await
                 .unwrap();
         assert_eq!(session_count, 0);
-
-        sqlx::query("DELETE FROM did_documents WHERE did = $1")
-            .bind(did)
-            .execute(&pool)
-            .await
-            .unwrap();
+        clear_login_fixture(&pool, &did).await;
     }
 
     #[test]
