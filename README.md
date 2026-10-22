@@ -39,8 +39,8 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 |--------|-------|--------|
 | Rust crates | 32 | `cargo metadata --no-deps --format-version 1` |
 | Rust source files | 509 | `git ls-files 'crates/**/*.rs'` |
-| Workspace tests (Linux) | 6,651 listed | Measured with `cargo test --workspace -- --list` after the public-status regressions |
-| Workspace tests (macOS) | 6,655 listed | Prior macOS inventory plus the same portable payment-evidence and public-status tests |
+| Workspace tests (Linux) | 6,654 listed | Measured with `cargo test --workspace -- --list` on this head |
+| Workspace tests (macOS) | 6,658 listed | Linux inventory plus four `target_os = "macos"` tests in `crates/exo-node/src/private_file.rs` |
 | CI quality gates | 23 | `.github/workflows/ci.yml` numbered gates; required aggregator is separate |
 | Last verified published release | `v0.2.7` (observed `2026-10-09T00:42:24Z`; packages listed in snapshot) | [Publication snapshot](governance/releases/published-release-snapshot.json) |
 | License | Apache-2.0 for EXOCHAIN core primitives; commercial terms for Decision Forum, LegalDyne, CyberMedica, LiveSafe, and CrossChecked products | `governance/commercial-product-licensing.json`; product license files where present |
@@ -52,7 +52,7 @@ The `v0.2.7` GitHub Release states that each native archive contains 29 legacy `
 
 ### What is verified today
 
-- **Workspace test inventories are platform-specific**: the Linux count above was measured with `cargo test --workspace -- --list` after the public-status regressions; the macOS count is the prior macOS inventory plus those same portable tests. `tools/test_repo_truth.sh` checks the native platform's actual listed count against its README row and fails CI on a mismatch. macOS includes additional ACL-specific tests; debug and release inventories can differ.
+- **Workspace test inventories are platform-specific**: the Linux count above was measured with `cargo test --workspace -- --list` on this head. The macOS count is that Linux count plus the four `target_os = "macos"` tests in `crates/exo-node/src/private_file.rs`. `tools/test_repo_truth.sh` checks the native platform's actual listed count against its README row and fails CI on a mismatch. macOS includes additional ACL-specific tests; debug and release inventories can differ.
 - **Build succeeds** for all library crates, binaries, tests, and benchmarks
 - **Clippy clean** under `-D warnings` for all workspace targets
 - **Format clean** under `cargo +nightly-2026-09-21 fmt --all -- --check`

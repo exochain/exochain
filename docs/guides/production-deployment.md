@@ -96,7 +96,7 @@ POSTGRES_PASSWORD=<your-secret> docker compose -f docker-compose.prod.yml up -d
 | `EXO_AVC_EXTERNAL_TIMESTAMP_AUTHORITY_DID` | Yes (strict AVC receipt proof) | — | Authority DID; Microsoft production value is `did:exo:microsoft-public-rsa-tsa` |
 | `EXO_AVC_EXTERNAL_TIMESTAMP_AUTHORITY_PUBLIC_KEY_HEX` | Yes (strict AVC receipt proof) | — | Pinned TSA signer SPKI DER hex values from live preflight; use a comma-separated set when Microsoft returns multiple signer keys |
 | `EXO_AVC_RFC3161_TIMESTAMP_POLICY_OID` | Yes (strict AVC receipt proof) | — | Microsoft Azure Artifact Signing policy OID `1.3.6.1.4.1.601.10.3.1` |
-| `EXO_AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY` | Yes (strict AVC receipt proof) | `false` | Set to `true` to fail closed when RFC 3161 proof is absent or unverifiable |
+| `EXO_AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY` | Yes (strict AVC receipt proof) | `true` | Required when unset. `false` and `0` are the explicit opt-out. |
 | `BIND_ADDRESS` | No | `127.0.0.1:8443` | Host and port the gateway listens on |
 | `LOG_LEVEL` | No | `info` | Tracing filter: `trace`, `debug`, `info`, `warn`, `error` |
 

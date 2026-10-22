@@ -1343,7 +1343,7 @@ where
             ca_env = AVC_RFC3161_TIMESTAMP_CA_SPKI_HEX_ENV,
             policy_env = AVC_RFC3161_TIMESTAMP_POLICY_OID_ENV,
             require_env = AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV,
-            "AVC external timestamp authority is not configured; receipt emission will use local EXOCHAIN HLC finality unless external timestamp proof is explicitly required"
+            "AVC external timestamp authority is not configured; receipt emission fails closed unless {AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV} is set to false or 0"
         );
         return Ok(AvcReceiptExternalTimestampSource::Unconfigured);
     }
@@ -1440,7 +1440,7 @@ where
 fn configured_require_external_timestamp_from_env() -> anyhow::Result<bool> {
     let value = match std::env::var(AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV) {
         Ok(value) => value,
-        Err(std::env::VarError::NotPresent) => return Ok(false),
+        Err(std::env::VarError::NotPresent) => return Ok(true),
         Err(std::env::VarError::NotUnicode(_)) => {
             anyhow::bail!("{AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV} must be valid UTF-8");
         }
@@ -11545,5 +11545,98 @@ mod avc_issuer_registration_authority_tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+}
+
+#[cfg(test)]
+mod external_timestamp_requirement_default_tests {
+    use std::process::Command;
+
+    use super::{
+        AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV,
+        configured_require_external_timestamp_from_env,
+    };
+
+    const PROBE_ENV: &str = "EXO_AVC_TIMESTAMP_REQUIREMENT_DEFAULT_PROBE";
+    const TEST_NAME: &str = "avc::external_timestamp_requirement_default_tests::unset_env_requires_external_timestamp_authority_and_explicit_opt_out_disables_it";
+
+    #[test]
+    fn unset_env_requires_external_timestamp_authority_and_explicit_opt_out_disables_it() {
+        match std::env::var(PROBE_ENV) {
+            Err(std::env::VarError::NotPresent) => {
+                assert_probe_passed("unset");
+                assert_probe_passed("opt-out");
+            }
+            Ok(mode) if mode == "unset" => assert_unset_requires_external_timestamp_authority(),
+            Ok(mode) if mode == "opt-out" => assert_explicit_opt_out_disables_requirement(),
+            Ok(mode) => panic!("unknown timestamp requirement probe mode {mode}"),
+            Err(std::env::VarError::NotUnicode(_)) => panic!("{PROBE_ENV} must be valid UTF-8"),
+        }
+    }
+
+    #[allow(clippy::bool_assert_comparison)]
+    fn assert_unset_requires_external_timestamp_authority() {
+        assert!(
+            std::env::var_os(AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV).is_none(),
+            "{AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV} must be unset"
+        );
+        let required = configured_require_external_timestamp_from_env()
+            .expect("unset external timestamp authority requirement");
+        assert_eq!(required, true);
+    }
+
+    #[allow(clippy::bool_assert_comparison)]
+    fn assert_explicit_opt_out_disables_requirement() {
+        assert_eq!(
+            std::env::var(AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV)
+                .expect("opt-out probe sets the requirement"),
+            "false"
+        );
+        let required = configured_require_external_timestamp_from_env()
+            .expect("opt-out external timestamp authority requirement");
+        assert_eq!(required, false);
+    }
+
+    fn assert_probe_passed(mode: &str) {
+        let mut command = Command::new(std::env::current_exe().expect("test executable"));
+        command
+            .args(["--exact", TEST_NAME, "--nocapture"])
+            .env(PROBE_ENV, mode);
+        if mode == "opt-out" {
+            command.env(AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV, "false");
+        } else {
+            command.env_remove(AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV);
+        }
+        let output = command.output().expect("timestamp requirement probe");
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            output.status.success() && combined.contains("test result: ok. 1 passed;"),
+            "probe {mode} failed\n{combined}"
+        );
+    }
+
+    #[test]
+    fn unconfigured_authority_warning_fails_closed() {
+        let source = include_str!("avc.rs");
+        let production = source
+            .split("\n// ---------------------------------------------------------------------------\n// Tests")
+            .next()
+            .expect("production section");
+        assert!(
+            !production.contains(
+                "receipt emission will use local EXOCHAIN HLC finality unless external timestamp proof is explicitly required"
+            ),
+            "unconfigured timestamp authority must not warn that receipt emission uses the local HLC"
+        );
+        assert!(
+            production.contains(
+                "receipt emission fails closed unless {AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV} is set to false or 0"
+            ),
+            "unconfigured timestamp authority must warn that receipt emission fails closed"
+        );
     }
 }
