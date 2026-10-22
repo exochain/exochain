@@ -8033,6 +8033,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn receipt_emit_denies_past_unix_expiry_under_the_default_clock() {
+        let signer: AvcReceiptSigner = Arc::new(|payload: &[u8]| validator_keypair().sign(payload));
+        let state = Arc::new(AvcApiState {
+            registry: Arc::new(Mutex::new(InMemoryAvcRegistry::new())),
+            validator_did: validator_did(),
+            receipt_signer: signer,
+            external_timestamp_source: AvcReceiptExternalTimestampSource::Unconfigured,
+            receipt_clock: Arc::new(Mutex::new(HybridClock::new())),
+            require_external_timestamp: false,
+            finality_store: None,
+            durability: AvcRegistryDurability::None,
+            authority: Arc::new(Mutex::new(
+                exo_authority::delegation::DelegationRegistry::new(),
+            )),
+        });
+        seed_avc_trust_keys(&state);
+        let credential = credential_expiring_at(Timestamp::new(1_577_836_800_000, 0));
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(credential.clone())
+            .unwrap();
+        let request = AvcValidationRequest {
+            credential,
+            action: Some(baseline_action(Did::new("did:exo:agent").unwrap())),
+            now: Timestamp::new(1_500_000, 0),
+        };
+        let body = serde_json::to_vec(&EmitReceiptRequest {
+            validation: request.clone(),
+            subject_signature: sign_action(&request, &subject_keypair()),
+            subject_public_key: None,
+        })
+        .unwrap();
+
+        let response = avc_router(Arc::clone(&state))
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/avc/receipts/emit")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_ne!(response.status(), StatusCode::OK);
+        let response_body = read_body(response).await;
+        let response_text = String::from_utf8_lossy(&response_body);
+        assert!(
+            !response_text.contains("\"decision\":\"Allow\""),
+            "a 2020 Unix expiry must not be Allowed under the default clock: {response_text}"
+        );
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 0);
+    }
+
+    #[tokio::test]
     async fn receipt_emit_accepts_http_external_timestamp_authority_proof() {
         let (endpoint, timestamp_authority) =
             serve_test_timestamp_authority(TestTimestampAuthorityMode::Valid).await;

@@ -1069,6 +1069,32 @@ mod tests {
     }
 
     #[test]
+    fn denies_unix_expiry_when_caller_now_is_the_genesis_physical_time() {
+        let h = Harness::new();
+        let mut draft = baseline_draft();
+        draft.expires_at = Some(ts(1_577_836_800_000));
+        let cred = h.issue(draft);
+        let result = validate_avc(&baseline_request(cred, ts(1_000_000)), &h.registry).unwrap();
+        assert_eq!(result.decision, AvcDecision::Deny);
+        assert!(result.reason_codes.contains(&AvcReasonCode::Expired));
+    }
+
+    #[test]
+    fn denies_unix_expiry_when_injected_now_is_after_it() {
+        let h = Harness::new();
+        let mut draft = baseline_draft();
+        draft.expires_at = Some(ts(1_577_836_800_000));
+        let cred = h.issue(draft);
+        let result = validate_avc(
+            &baseline_request(cred, ts(1_700_000_000_000)),
+            &h.registry,
+        )
+        .unwrap();
+        assert_eq!(result.decision, AvcDecision::Deny);
+        assert!(result.reason_codes.contains(&AvcReasonCode::Expired));
+    }
+
+    #[test]
     fn denies_not_yet_valid_credential() {
         let h = Harness::new();
         let cred = h.issue(baseline_draft());

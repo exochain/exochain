@@ -1923,6 +1923,30 @@ mod tests {
         let _ = h.finish();
     }
 
+    #[test]
+    fn unix_expiry_in_2020_is_expired_at_the_deterministic_genesis_clock() {
+        let expires_at = Timestamp::new(1_577_836_800_000, 0);
+        let now = Timestamp::new(1_000_000, 0);
+        assert!(
+            expires_at.is_expired(&now),
+            "2020-01-01 must not stay open when now is the genesis physical time"
+        );
+    }
+
+    #[test]
+    fn explicit_now_after_a_unix_expiry_is_expired() {
+        let expires_at = Timestamp::new(1_577_836_800_000, 0);
+        let now = Timestamp::new(1_700_000_000_000, 0);
+        assert!(expires_at.is_expired(&now));
+    }
+
+    #[test]
+    fn deterministic_expiry_after_the_genesis_physical_time_stays_open() {
+        let expires_at = Timestamp::new(2_000_000, 0);
+        let now = Timestamp::new(1_000_000, 0);
+        assert!(!expires_at.is_expired(&now));
+    }
+
     // -- Version -----------------------------------------------------------
 
     #[test]

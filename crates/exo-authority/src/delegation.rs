@@ -892,6 +892,36 @@ mod tests {
     }
 
     #[test]
+    fn unix_expiration_is_rejected_while_now_is_the_genesis_physical_time() {
+        let mut reg = DelegationRegistry::new();
+        let keypair = KeyPair::generate();
+        let public_key = public_key(&keypair);
+        let from = did("alice");
+        let to = did("bob");
+        let now = ts(1_000_000);
+        let err = reg
+            .delegate(
+                DelegationGrant {
+                    from: &from,
+                    to: &to,
+                    scope: &[Permission::Read],
+                    expires: ts(1_577_836_800_000),
+                    now: &now,
+                    parent_link_id: None,
+                    delegatee_kind: DelegateeKind::Human,
+                    delegator_public_key: &public_key,
+                },
+                |payload| keypair.sign(payload),
+            )
+            .expect_err("a 2020 Unix expiration must not be accepted at the genesis clock");
+        assert!(
+            matches!(err, AuthorityError::InvalidDelegation { .. }),
+            "unexpected error: {err}"
+        );
+        assert!(reg.audit_events().is_empty());
+    }
+
+    #[test]
     fn delegate_signs_link_with_delegator_key() {
         let mut reg = DelegationRegistry::new();
         let keypair = KeyPair::generate();
