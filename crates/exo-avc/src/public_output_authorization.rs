@@ -47,8 +47,6 @@ pub const LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_SUBJECT: &str = "livesafe
 /// The only public audience admitted by this proof surface.
 pub const LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_AUDIENCE: &str =
     "https://livesafe.ai/api/trust/status";
-const LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_ACTION_NAME: &str =
-    "livesafe.public_adapter_output_authorization";
 
 /// Redacted revocation state carried in the public proof.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -190,7 +188,7 @@ pub fn livesafe_public_adapter_output_authorization_action_request(
         human_approval: None,
         requires_human_approval: false,
         action_name: Some(format!(
-            "{LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_ACTION_NAME}:{action_name_hash}"
+            "{LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_DOMAIN}:{action_name_hash}"
         )),
     })
 }

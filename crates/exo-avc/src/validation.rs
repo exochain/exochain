@@ -40,7 +40,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     credential::{
-        AVC_SCHEMA_VERSION, AuthorityScope, AutonomousVolitionCredential, AvcConstraints, DataClass,
+        AVC_SCHEMA_VERSION, AuthorityScope, AutonomousVolitionCredential, AutonomyLevel,
+        AvcConstraints, DataClass,
     },
     error::AvcError,
     llm_usage_receipt::{
@@ -48,7 +49,7 @@ use crate::{
         validate_llm_usage_evidence,
     },
     receipt::AvcTrustReceipt,
-    registry::AvcRegistryRead,
+    registry::{AvcRegistryRead, EmergencyStopStanding},
 };
 
 /// Signing domain tag for AVC human approval evidence.
@@ -248,6 +249,10 @@ struct AvcActionDescriptorPayload<'a> {
 /// is a root. Any ancestor that is revoked or cannot be loaded denies
 /// the credential under validation.
 ///
+/// Levels below `Draft` may only request `Read`. Only
+/// `DelegateWithinBounds` may request `Delegate`. Each emergency-stop
+/// reference must be registered and clear.
+///
 /// # Errors
 /// Returns [`AvcError::Serialization`] if the credential cannot be CBOR
 /// encoded for ID computation. All other failures flow as `Deny`
@@ -314,6 +319,7 @@ pub fn validate_avc<R: AvcRegistryRead>(
     if registry.is_revoked(&credential_id) || parent_chain_revoked(credential, registry) {
         reasons.insert(AvcReasonCode::Revoked);
     }
+    enforce_emergency_stops(credential, registry, &mut reasons);
 
     // Required consent / policy refs.
     for consent_ref in &credential.consent_refs {
@@ -597,7 +603,123 @@ fn evaluate_action<R: AvcRegistryRead>(
         human_approval_required,
     )?;
     enforce_forbidden_action(&credential.constraints, action, reasons);
+    enforce_action_bounds(credential, action, reasons);
     Ok(())
+}
+
+fn enforce_action_bounds(
+    credential: &AutonomousVolitionCredential,
+    action: &AvcActionRequest,
+    reasons: &mut BTreeSet<AvcReasonCode>,
+) {
+    if !autonomy_permits(
+        credential.delegated_intent.autonomy_level,
+        action.requested_permission,
+    ) {
+        reasons.insert(AvcReasonCode::AutonomyDenied);
+    }
+    let Some(action_name) = action.action_name.as_deref() else {
+        return;
+    };
+    let claim = claimed_action(action_name);
+    let allowed = &credential.delegated_intent.allowed_objectives;
+    let prohibited = &credential.delegated_intent.prohibited_objectives;
+    let hits_prohibited = prohibited
+        .iter()
+        .any(|objective| objective_covers(objective, claim.objective));
+    let hits_allowed = allowed
+        .iter()
+        .any(|objective| objective_covers(objective, claim.objective));
+    if hits_prohibited || !hits_allowed {
+        reasons.insert(AvcReasonCode::ObjectiveDenied);
+    }
+    if let Some(jurisdiction) = claim.jurisdiction {
+        if jurisdiction.is_empty()
+            || !credential
+                .authority_scope
+                .jurisdictions
+                .iter()
+                .any(|listed| listed == jurisdiction)
+        {
+            reasons.insert(AvcReasonCode::JurisdictionDenied);
+        }
+    }
+}
+
+struct ClaimedAction<'a> {
+    objective: &'a str,
+    jurisdiction: Option<&'a str>,
+}
+
+fn claimed_action(action_name: &str) -> ClaimedAction<'_> {
+    match action_name.split_once('@') {
+        Some((objective, jurisdiction)) => ClaimedAction {
+            objective,
+            jurisdiction: Some(jurisdiction),
+        },
+        None => ClaimedAction {
+            objective: action_name,
+            jurisdiction: None,
+        },
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ObjectiveCover {
+    Equal,
+    Prefix,
+}
+
+fn objective_covers(objective: &str, claimed: &str) -> bool {
+    match objective_cover(objective, claimed) {
+        Some(ObjectiveCover::Equal | ObjectiveCover::Prefix) => true,
+        None => false,
+    }
+}
+
+fn objective_cover(objective: &str, claimed: &str) -> Option<ObjectiveCover> {
+    if claimed == objective {
+        Some(ObjectiveCover::Equal)
+    } else if claimed
+        .strip_prefix(objective)
+        .is_some_and(|rest| rest.starts_with(':'))
+    {
+        Some(ObjectiveCover::Prefix)
+    } else {
+        None
+    }
+}
+
+fn autonomy_permits(level: AutonomyLevel, permission: Permission) -> bool {
+    match permission {
+        Permission::Read => true,
+        Permission::Delegate => level >= AutonomyLevel::DelegateWithinBounds,
+        Permission::Write
+        | Permission::Execute
+        | Permission::Spend
+        | Permission::AnchorReceiptCommitment
+        | Permission::Challenge
+        | Permission::Escalate
+        | Permission::Govern => level >= AutonomyLevel::Draft,
+    }
+}
+
+fn enforce_emergency_stops<R: AvcRegistryRead>(
+    credential: &AutonomousVolitionCredential,
+    registry: &R,
+    reasons: &mut BTreeSet<AvcReasonCode>,
+) {
+    for stop_ref in &credential.constraints.emergency_stop_refs {
+        match registry.emergency_stop_standing(stop_ref) {
+            None => {
+                reasons.insert(AvcReasonCode::EmergencyStopUnknown);
+            }
+            Some(EmergencyStopStanding::Engaged) => {
+                reasons.insert(AvcReasonCode::EmergencyStopEngaged);
+            }
+            Some(EmergencyStopStanding::Clear) => {}
+        }
+    }
 }
 
 fn enforce_tool(
@@ -2181,7 +2303,7 @@ mod tests {
 
     #[test]
     fn validation_with_only_constraints_passes_when_no_action() {
-        let h = Harness::new();
+        let mut h = Harness::new();
         let mut draft = baseline_draft();
         draft.constraints = AvcConstraints {
             max_budget_minor_units: Some(1_000),
@@ -2194,6 +2316,8 @@ mod tests {
             forbidden_actions: vec!["bad".into()],
             emergency_stop_refs: vec!["stop".into()],
         };
+        h.registry
+            .set_emergency_stop("stop", EmergencyStopStanding::Clear);
         let cred = h.issue(draft);
         let result = validate_avc(&baseline_request(cred, ts(1_500_000)), &h.registry).unwrap();
         assert_eq!(result.decision, AvcDecision::Allow);
@@ -2331,5 +2455,56 @@ mod tests {
         let root_result =
             validate_avc(&baseline_request(root, ts(1_500_000)), &h.registry).unwrap();
         assert_eq!(root_result.decision, AvcDecision::Allow);
+    }
+
+    #[test]
+    fn denies_objective_that_matches_only_a_later_segment() {
+        let h = Harness::new();
+        let actor_for = |allowed: &[&str], prohibited: &[&str]| {
+            let mut draft = baseline_draft();
+            draft.delegated_intent.allowed_objectives = allowed
+                .iter()
+                .map(|objective| (*objective).to_owned())
+                .collect();
+            draft.delegated_intent.prohibited_objectives = prohibited
+                .iter()
+                .map(|objective| (*objective).to_owned())
+                .collect();
+            h.issue(draft)
+        };
+
+        let later = actor_for(&["b", "b:c"], &[]);
+        let mut later_action = baseline_action(later.subject_did.clone());
+        later_action.action_name = Some("a:b:c".into());
+        let later_result = validate_named_action(&h, later, later_action);
+        assert_eq!(later_result.decision, AvcDecision::Deny);
+        assert!(
+            later_result
+                .reason_codes
+                .contains(&AvcReasonCode::ObjectiveDenied)
+        );
+
+        let prefix = actor_for(&["a"], &["b"]);
+        let mut prefix_action = baseline_action(prefix.subject_did.clone());
+        prefix_action.action_name = Some("a:b:c".into());
+        let prefix_result = validate_named_action(&h, prefix, prefix_action);
+        assert_eq!(prefix_result.decision, AvcDecision::Allow);
+
+        let equal = actor_for(&["a:b:c"], &[]);
+        let mut equal_action = baseline_action(equal.subject_did.clone());
+        equal_action.action_name = Some("a:b:c".into());
+        let equal_result = validate_named_action(&h, equal, equal_action);
+        assert_eq!(equal_result.decision, AvcDecision::Allow);
+
+        let prohibited_prefix = actor_for(&["a:b"], &["a"]);
+        let mut prohibited_action = baseline_action(prohibited_prefix.subject_did.clone());
+        prohibited_action.action_name = Some("a:b:c".into());
+        let prohibited_result = validate_named_action(&h, prohibited_prefix, prohibited_action);
+        assert_eq!(prohibited_result.decision, AvcDecision::Deny);
+        assert!(
+            prohibited_result
+                .reason_codes
+                .contains(&AvcReasonCode::ObjectiveDenied)
+        );
     }
 }

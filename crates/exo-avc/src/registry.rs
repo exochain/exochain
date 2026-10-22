@@ -34,10 +34,6 @@ use crate::{
     revocation::AvcRevocation,
 };
 
-/// Whether a named emergency-stop reference is clear or engaged.
-///
-/// Validation denies a credential when any of its references is missing
-/// from the registry or is [`EmergencyStopStanding::Engaged`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EmergencyStopStanding {
     Clear,
@@ -61,8 +57,7 @@ pub trait AvcRegistryRead {
     fn get_credential(&self, credential_id: &Hash256) -> Option<AutonomousVolitionCredential>;
     fn list_credentials_for_subject(&self, subject_did: &Did) -> Vec<AutonomousVolitionCredential>;
     /// `None` means the reference is not registered.
-    fn emergency_stop_standing(&self, stop_ref: &str) -> Option<EmergencyStopStanding> {
-        let _ = stop_ref;
+    fn emergency_stop_standing(&self, _stop_ref: &str) -> Option<EmergencyStopStanding> {
         None
     }
 }
@@ -903,7 +898,6 @@ impl InMemoryAvcRegistry {
             .cloned()
     }
 
-    /// Record whether `stop_ref` is clear or engaged.
     pub fn set_emergency_stop(
         &mut self,
         stop_ref: impl Into<String>,
