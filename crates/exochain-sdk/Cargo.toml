@@ -62,16 +62,36 @@ blake3 = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
 http = { version = "=1.4.0", optional = true }
 zeroize = { workspace = true, optional = true }
+# Published floors. Downstream resolution of http-client does not see this
+# workspace's Cargo.lock, and reqwest/libp2p ranges still allow the vulnerable
+# rustls, webpki, and quinn-proto releases.
+rustls = { workspace = true, optional = true }
+rustls-webpki = { workspace = true, optional = true }
+webpki-roots = { workspace = true, optional = true }
+quinn-proto = { workspace = true, optional = true }
 
 [features]
 default = []
 # Real async HTTP client (`DagDbHttpClient`) for calling a live DAG DB gateway.
 # Off by default: consumers who only need the request-spec builder pay no HTTP
 # dependency cost.
-http-client = ["dep:http", "dep:reqwest", "dep:zeroize"]
+http-client = [
+    "dep:http",
+    "dep:reqwest",
+    "dep:zeroize",
+    "dep:rustls",
+    "dep:rustls-webpki",
+    "dep:webpki-roots",
+    "dep:quinn-proto",
+]
 
 [dev-dependencies]
 # Async test runtime + a minimal in-process TCP server stand in for a live
 # gateway when exercising the HTTP client; no external mock-server crate is a
 # workspace dependency.
 tokio = { workspace = true }
+
+[package.metadata.cargo-machete]
+# Published advisory floors. http-client activates them so downstream
+# resolution cannot select the vulnerable releases; no Rust path names them.
+ignored = ["quinn-proto", "rustls", "rustls-webpki", "webpki-roots"]
