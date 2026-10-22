@@ -253,7 +253,7 @@ impl AuthorityRevocation {
             });
         }
         if let Some(expires) = &self.revoked_link.expires {
-            if expires.is_expired(&self.revoked_at) {
+            if *expires <= self.revoked_at {
                 return Err(AuthorityError::ExpiredLink {
                     index: self.revoked_link.depth,
                 });
@@ -929,6 +929,46 @@ mod tests {
             "unexpected error: {err}"
         );
         assert!(reg.audit_events().is_empty());
+    }
+
+    #[test]
+    fn genesis_revoked_at_keeps_a_signed_unix_link_while_authorization_denies_it() {
+        let keypair = KeyPair::generate();
+        let public_key = public_key(&keypair);
+        let from = did("alice");
+        let to = did("bob");
+        let genesis = ts(1_000_000);
+        let mut link = AuthorityLink {
+            delegator_did: from.clone(),
+            delegate_did: to,
+            scope: vec![Permission::Read],
+            created: genesis,
+            expires: Some(ts(1_577_836_800_000)),
+            signature: Signature::empty(),
+            depth: 0,
+            delegatee_kind: DelegateeKind::Human,
+        };
+        let payload = link.signing_payload().expect("link payload");
+        link.signature = keypair.sign(&payload);
+
+        let chain = AuthorityChain {
+            links: vec![link.clone()],
+            max_depth: DEFAULT_MAX_DEPTH,
+        };
+        let authorization = chain::verify_chain(&chain, &genesis, |_| Some(public_key));
+        assert!(
+            matches!(authorization, Err(AuthorityError::ExpiredLink { index: 0 })),
+            "authorization must still deny a Unix expiry at genesis, got {authorization:?}"
+        );
+
+        let revocation =
+            AuthorityRevocation::for_link(link, &from, &genesis, &public_key, |payload| {
+                keypair.sign(payload)
+            })
+            .expect("genesis revoked_at must not expire an already-signed Unix link");
+        revocation
+            .verify(|_| Some(public_key))
+            .expect("verify must accept the signed revocation");
     }
 
     #[test]

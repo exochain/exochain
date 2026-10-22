@@ -32,7 +32,10 @@
 use std::collections::BTreeSet;
 
 use exo_authority::permission::Permission;
-use exo_core::{Did, Hash256, PublicKey, Signature, Timestamp, crypto, hash::hash_structured};
+use exo_core::{
+    Did, Hash256, PublicKey, Signature, Timestamp, crypto, hash::hash_structured,
+    hlc::unix_expiry_untrusted_at_genesis,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -264,7 +267,9 @@ pub fn validate_avc<R: AvcRegistryRead>(
         }
     }
     if let Some(window) = &credential.constraints.allowed_time_window {
-        if !window.contains(&request.now) {
+        if unix_expiry_untrusted_at_genesis(&window.not_after, &request.now)
+            || !window.contains(&request.now)
+        {
             reasons.insert(AvcReasonCode::OutsideTimeWindow);
         }
     }
@@ -1115,6 +1120,25 @@ mod tests {
                 .reason_codes
                 .contains(&AvcReasonCode::OutsideTimeWindow)
         );
+    }
+
+    #[test]
+    fn denies_unix_not_after_when_caller_now_is_the_genesis_physical_time() {
+        let h = Harness::new();
+        let mut draft = baseline_draft();
+        draft.constraints.allowed_time_window = Some(TimeWindow {
+            not_before: ts(1_000_000),
+            not_after: ts(1_577_836_800_000),
+        });
+        let cred = h.issue(draft);
+        let result = validate_avc(&baseline_request(cred, ts(1_000_000)), &h.registry).unwrap();
+        assert_eq!(result.decision, AvcDecision::Deny);
+        assert!(
+            result
+                .reason_codes
+                .contains(&AvcReasonCode::OutsideTimeWindow)
+        );
+        assert!(!result.reason_codes.contains(&AvcReasonCode::Expired));
     }
 
     #[test]
