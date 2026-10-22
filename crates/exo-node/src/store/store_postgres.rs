@@ -39,10 +39,10 @@ use serde::de::DeserializeOwned;
 use sqlx::{Postgres, Row, Transaction, postgres::PgRow};
 
 use super::{
-    PostgresDagNodeStore, SqliteDagStore, decode_cbor, decode_did, decode_hash_bytes,
-    decode_signature_bytes, encode_cbor, governance_payload_meta_key, sqlite_i64_to_u64,
-    sqlite_u64_to_i64, store_err, validate_commit_certificate, validate_ed25519_signature,
-    validate_signature, validate_vote,
+    PostgresDagNodeStore, PostgresFinalityHandle, SqliteDagStore, decode_cbor, decode_did,
+    decode_hash_bytes, decode_signature_bytes, encode_cbor, governance_payload_meta_key,
+    sqlite_i64_to_u64, sqlite_u64_to_i64, store_err, validate_commit_certificate,
+    validate_ed25519_signature, validate_signature, validate_vote,
 };
 
 fn row_type_decode_error(
@@ -1055,32 +1055,24 @@ impl PostgresDagNodeStore {
     }
 }
 
-impl SqliteDagStore {
+impl PostgresFinalityHandle {
     pub async fn committed_height_for_on_transaction(
         &self,
         tx: &mut Transaction<'_, Postgres>,
         hash: &Hash256,
     ) -> DagResult<Option<u64>> {
-        let Some(store) = self.dagdb() else {
-            return Err(store_err(
-                "Postgres finality height lookup requires a Postgres-backed store",
-            ));
-        };
-        store.bind_tenant(tx).await.map_err(store_err)?;
-        store.committed_height_for_on_transaction(tx, hash).await
+        self.store.bind_tenant(tx).await.map_err(store_err)?;
+        self.store
+            .committed_height_for_on_transaction(tx, hash)
+            .await
     }
 
     pub async fn committed_height_on_transaction(
         &self,
         tx: &mut Transaction<'_, Postgres>,
     ) -> DagResult<u64> {
-        let Some(store) = self.dagdb() else {
-            return Err(store_err(
-                "Postgres finality height lookup requires a Postgres-backed store",
-            ));
-        };
-        store.bind_tenant(tx).await.map_err(store_err)?;
-        store.committed_height_on_transaction(tx).await
+        self.store.bind_tenant(tx).await.map_err(store_err)?;
+        self.store.committed_height_on_transaction(tx).await
     }
 
     pub async fn put_committed_node_with_receipt_on_transaction(
@@ -1090,12 +1082,7 @@ impl SqliteDagStore {
         height: u64,
         receipt: &TrustReceipt,
     ) -> DagResult<()> {
-        let Some(store) = self.dagdb() else {
-            return Err(store_err(
-                "Postgres finality insert requires a Postgres-backed store",
-            ));
-        };
-        store
+        self.store
             .put_committed_node_with_receipt_on_transaction(tx, node, height, receipt)
             .await
     }

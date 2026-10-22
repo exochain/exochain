@@ -3083,8 +3083,13 @@ async fn stage_postgres_allow_anchors(
         clear_failed_allow_residue(registry, session);
         return Err(finality_store_missing_error());
     };
-    let store = store.lock().map_err(|_| finality_store_lock_error())?;
-    let base = store
+    let finality = {
+        let store = store.lock().map_err(|_| finality_store_lock_error())?;
+        store
+            .postgres_finality_handle()
+            .map_err(|error| exochain_finality_error(anyhow::anyhow!(error)))?
+    };
+    let base = finality
         .committed_height_on_transaction(tx)
         .await
         .map_err(|error| exochain_finality_error(anyhow::anyhow!(error)))?;
@@ -3093,7 +3098,7 @@ async fn stage_postgres_allow_anchors(
         let (node, finality_receipt) =
             build_exochain_finality_node_and_receipt(&noted.receipt, &state.receipt_signer)
                 .map_err(exochain_finality_error)?;
-        let existing = store
+        let existing = finality
             .committed_height_for_on_transaction(tx, &node.hash)
             .await
             .map_err(|error| exochain_finality_error(anyhow::anyhow!(error)))?;
@@ -3144,9 +3149,14 @@ async fn insert_postgres_staged_anchors(
     let Some(store) = state.finality_store.clone() else {
         return Err(finality_store_missing_error());
     };
-    let store = store.lock().map_err(|_| finality_store_lock_error())?;
-    for staged in &session.staged {
+    let finality = {
+        let store = store.lock().map_err(|_| finality_store_lock_error())?;
         store
+            .postgres_finality_handle()
+            .map_err(|error| exochain_finality_error(anyhow::anyhow!(error)))?
+    };
+    for staged in &session.staged {
+        finality
             .put_committed_node_with_receipt_on_transaction(
                 tx,
                 &staged.node,
@@ -3169,7 +3179,7 @@ fn rollback_postgres_transaction(transaction: Transaction<'_, Postgres>) {
     }
 }
 
-fn commit_sqlite_anchor_batch_then_registry(
+fn commit_sqlite_anchor_batch_before_registry(
     state: &AvcApiState,
     guard: &mut InMemoryAvcRegistry,
     session: &AllowAnchorSession,
@@ -3191,17 +3201,21 @@ fn commit_sqlite_anchor_batch_then_registry(
             return Err(exochain_finality_error(anyhow::anyhow!(error)));
         }
     }
-    if let Err(error) = persist_durable_registry(guard, &state.durability) {
-        let _ = store.rollback_anchor_batch();
-        *guard = rollback.clone();
-        return Err(persistence_error(error));
-    }
     if let Err(error) = store.commit_anchor_batch() {
         let _ = store.rollback_anchor_batch();
-        drop(store);
-        let mutated = guard.clone();
-        roll_back_registry_mutation(guard, rollback.clone(), mutated, &state.durability, true)?;
+        *guard = rollback.clone();
         return Err(exochain_finality_error(anyhow::anyhow!(error)));
+    }
+    drop(store);
+    if let Err(error) = persist_durable_registry(guard, &state.durability) {
+        *guard = rollback.clone();
+        if let Err(restore_error) = persist_durable_registry(guard, &state.durability) {
+            tracing::error!(
+                err = %restore_error,
+                "failed to restore the previous AVC registry file after the anchor commit"
+            );
+        }
+        return Err(persistence_error(error));
     }
     Ok(())
 }
@@ -3217,6 +3231,20 @@ fn commit_registry_with_allow_anchors(
         let handle = tokio::runtime::Handle::current();
         let sqlite_staged = !session.staged.is_empty() && !session.postgres_planned;
         if sqlite_staged {
+            let prepared = handle.block_on(async {
+                if session.postgres_pending {
+                    stage_postgres_allow_anchors(state, guard, session, &mut transaction).await?;
+                    insert_postgres_staged_anchors(state, session, &mut transaction).await?;
+                }
+                Ok::<(), ApiError>(())
+            });
+            if let Err(error) = prepared {
+                rollback_postgres_transaction(transaction);
+                if !session.persist_removal {
+                    *guard = rollback.clone();
+                }
+                return Err(error);
+            }
             let Some(store) = state.finality_store.clone() else {
                 rollback_postgres_transaction(transaction);
                 *guard = rollback.clone();
@@ -3242,11 +3270,15 @@ fn commit_registry_with_allow_anchors(
                     return Err(exochain_finality_error(anyhow::anyhow!(error)));
                 }
             }
+            if let Err(error) = store.commit_anchor_batch() {
+                let _ = store.rollback_anchor_batch();
+                drop(store);
+                rollback_postgres_transaction(transaction);
+                *guard = rollback.clone();
+                return Err(exochain_finality_error(anyhow::anyhow!(error)));
+            }
+            drop(store);
             let outcome = handle.block_on(async {
-                if session.postgres_pending {
-                    stage_postgres_allow_anchors(state, guard, session, &mut transaction).await?;
-                    insert_postgres_staged_anchors(state, session, &mut transaction).await?;
-                }
                 let durable = guard.durable_state();
                 persist_postgres_durable_registry_state_in_transaction(&durable, &mut transaction)
                     .await
@@ -3258,31 +3290,13 @@ fn commit_registry_with_allow_anchors(
                 })?;
                 Ok::<(), ApiError>(())
             });
-            match outcome {
-                Ok(()) => {
-                    if let Err(error) = store.commit_anchor_batch() {
-                        let _ = store.rollback_anchor_batch();
-                        drop(store);
-                        let mutated = guard.clone();
-                        roll_back_registry_mutation(
-                            guard,
-                            rollback.clone(),
-                            mutated,
-                            &state.durability,
-                            true,
-                        )?;
-                        return Err(exochain_finality_error(anyhow::anyhow!(error)));
-                    }
-                    Ok(())
+            if let Err(error) = outcome {
+                if !session.persist_removal {
+                    *guard = rollback.clone();
                 }
-                Err(error) => {
-                    let _ = store.rollback_anchor_batch();
-                    if !session.persist_removal {
-                        *guard = rollback.clone();
-                    }
-                    Err(error)
-                }
+                return Err(error);
             }
+            Ok(())
         } else {
             let outcome = handle.block_on(async {
                 if session.postgres_pending {
@@ -3349,7 +3363,7 @@ fn commit_registry_with_allow_anchors(
             Ok(())
         }
     } else if !session.staged.is_empty() {
-        commit_sqlite_anchor_batch_then_registry(state, guard, session, rollback)
+        commit_sqlite_anchor_batch_before_registry(state, guard, session, rollback)
     } else {
         persist_durable_registry(guard, &state.durability).map_err(|error| {
             *guard = rollback.clone();
@@ -6966,12 +6980,15 @@ mod tests {
         };
         let dir = tempfile::tempdir().unwrap();
         let signer: AvcReceiptSigner = Arc::new(|payload: &[u8]| validator_keypair().sign(payload));
+        let finality = Arc::new(Mutex::new(
+            crate::store::SqliteDagStore::open(dir.path()).expect("sqlite finality store"),
+        ));
         let mut state = AvcApiState::with_durable_registry(
             dir.path(),
             validator_did(),
             Arc::clone(&signer),
             Some(pool.clone()),
-            None,
+            Some(finality),
             false,
         )
         .await
@@ -13184,7 +13201,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn receipt_emit_registry_persist_failure_leaves_no_anchor() {
+    async fn receipt_emit_registry_persist_failure_leaves_anchor_without_allow_file() {
         let dir = tempfile::tempdir().unwrap();
         let (state, store) = durable_finality_state(dir.path()).await;
         let credential = baseline_credential();
@@ -13202,7 +13219,10 @@ mod tests {
         assert!(body.contains("AVC registry persistence failed"), "{body}");
         assert!(!body.contains("Allow"), "{body}");
         assert_eq!(state.registry.lock().unwrap().receipt_count(), 0);
-        assert_eq!(finality_height(&store), 0);
+        assert_eq!(finality_height(&store), 1);
+        assert!(
+            load_file_durable_registry(&dir.path().join(AVC_REGISTRY_DURABLE_STATE_FILE)).is_err()
+        );
     }
 
     #[tokio::test]
@@ -13535,6 +13555,207 @@ mod tests {
         assert_eq!(finality_height(&store), 1);
     }
 
+    fn durable_receipt_count(dir: &FsPath) -> usize {
+        load_file_durable_registry(&dir.join(AVC_REGISTRY_DURABLE_STATE_FILE))
+            .map(|registry| registry.receipt_count())
+            .unwrap_or(0)
+    }
+
+    #[tokio::test]
+    async fn registry_file_stays_previous_until_sqlite_anchor_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, store) = durable_finality_state(dir.path()).await;
+        let credential = baseline_credential();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(credential.clone())
+            .unwrap();
+        let observed = Arc::new(AtomicUsize::new(usize::MAX));
+        {
+            let observed = Arc::clone(&observed);
+            let path = dir.path().join(AVC_REGISTRY_DURABLE_STATE_FILE);
+            store
+                .lock()
+                .unwrap()
+                .set_before_anchor_commit_for_test(Some(Arc::new(move || {
+                    let count = load_file_durable_registry(&path)
+                        .map(|registry| registry.receipt_count())
+                        .unwrap_or(0);
+                    observed.store(count, Ordering::SeqCst);
+                })));
+        }
+
+        let (status, body) =
+            post_allow_emit(&state, &credential, Hash256::from_bytes([0x81; 32])).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            observed.load(Ordering::SeqCst),
+            0,
+            "the durable registry file must not contain the new Allow before the anchor COMMIT"
+        );
+        assert_eq!(finality_height(&store), 1);
+        assert_eq!(durable_receipt_count(dir.path()), 1);
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn failed_sqlite_anchor_commit_restores_the_previous_registry_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, store) = durable_finality_state(dir.path()).await;
+        let credential = baseline_credential();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(credential.clone())
+            .unwrap();
+        let (status, body) =
+            post_allow_emit(&state, &credential, Hash256::from_bytes([0x82; 32])).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(durable_receipt_count(dir.path()), 1);
+        assert_eq!(finality_height(&store), 1);
+        store.lock().unwrap().fail_next_anchor_commit_for_test();
+
+        let (status, body) =
+            post_allow_emit(&state, &credential, Hash256::from_bytes([0x83; 32])).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+        assert!(!body.contains("Allow"), "{body}");
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 1);
+        assert_eq!(durable_receipt_count(dir.path()), 1);
+        assert_eq!(finality_height(&store), 1);
+        let loaded =
+            load_file_durable_registry(&dir.path().join(AVC_REGISTRY_DURABLE_STATE_FILE)).unwrap();
+        assert!(
+            loaded
+                .get_receipt_by_action_id(&Hash256::from_bytes([0x83; 32]))
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn nonterminal_unanchored_allow_is_reanchored_in_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = open_finality_store(dir.path());
+        let state = fresh_state_with_finality_store(Arc::clone(&store));
+        let credential = baseline_credential();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(credential.clone())
+            .unwrap();
+        for action_id in [
+            Hash256::from_bytes([0x91; 32]),
+            Hash256::from_bytes([0x92; 32]),
+            Hash256::from_bytes([0x93; 32]),
+        ] {
+            let (status, body) = post_allow_emit(&state, &credential, action_id).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+        }
+        let head_id = state.registry.lock().unwrap().receipt_chain_head().unwrap();
+        let middle_id = state
+            .registry
+            .lock()
+            .unwrap()
+            .get_receipt(&head_id)
+            .unwrap()
+            .previous_receipt_hash
+            .unwrap();
+        let middle = state
+            .registry
+            .lock()
+            .unwrap()
+            .get_receipt(&middle_id)
+            .unwrap();
+        assert_ne!(middle.receipt_id, head_id);
+        assert!(middle.previous_receipt_hash.is_some());
+        let middle_action = middle.action_id.unwrap();
+        let middle_node = exochain_finality_node_hash(&middle).unwrap();
+        store
+            .lock()
+            .unwrap()
+            .forget_committed_hash_for_test(&middle_node)
+            .unwrap();
+
+        let (status, body) = post_allow_emit(&state, &credential, middle_action).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let reanchored: EmitReceiptResponse = serde_json::from_str(&body).unwrap();
+        assert_eq!(reanchored.receipt.receipt_id, middle_id);
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 3);
+        assert_eq!(
+            state.registry.lock().unwrap().receipt_chain_head(),
+            Some(head_id)
+        );
+        assert_eq!(finality_height(&store), 4);
+        let response = avc_router(Arc::clone(&state))
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/avc/receipts/{middle_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        store
+            .lock()
+            .unwrap()
+            .forget_committed_hash_for_test(&middle_node)
+            .unwrap();
+        state
+            .finality_anchor_faults_remaining
+            .store(1, Ordering::SeqCst);
+        let (status, body) = post_allow_emit(&state, &credential, middle_action).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+        assert!(!body.contains("Allow"), "{body}");
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 3);
+        assert_eq!(
+            state.registry.lock().unwrap().receipt_chain_head(),
+            Some(head_id)
+        );
+        assert!(
+            state
+                .registry
+                .lock()
+                .unwrap()
+                .get_receipt(&middle_id)
+                .is_some()
+        );
+        assert_eq!(finality_height(&store), 3);
+        let response = avc_router(Arc::clone(&state))
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/avc/receipts/{middle_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let response = avc_router(Arc::clone(&state))
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/avc/receipts?actor=did:exo:agent&limit=10")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let listed: ListAvcReceiptsResponse =
+            serde_json::from_slice(&read_body(response).await).unwrap();
+        assert_eq!(listed.receipts.len(), 2);
+        assert!(
+            listed
+                .receipts
+                .iter()
+                .all(|receipt| receipt.receipt_id != middle_id)
+        );
+    }
+
     #[tokio::test]
     async fn allow_anchor_commits_on_the_shared_postgres_pool() {
         if std::env::var("EXO_TEST_AVC_POSTGRES_DURABILITY")
@@ -13544,19 +13765,21 @@ mod tests {
         {
             return;
         }
-        let Ok(database_url) = std::env::var("DATABASE_URL") else {
-            return;
-        };
-        let Ok(migrated) = exo_gateway::db::init_pool(&database_url).await else {
-            return;
-        };
+        let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+        let migrated = exo_gateway::db::init_pool(&database_url)
+            .await
+            .expect("migrated disposable Postgres pool");
         clear_postgres_avc_registry_state(&migrated).await.unwrap();
+        let connect_options: sqlx::postgres::PgConnectOptions =
+            database_url.parse().expect("DATABASE_URL");
+        let connect_options = connect_options.options([("search_path", "dagdb,public".to_owned())]);
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(1)
             .acquire_timeout(std::time::Duration::from_secs(2))
-            .connect(&database_url)
+            .connect_with(connect_options)
             .await
-            .unwrap();
+            .expect("single-connection Postgres pool");
+        let height_pool = pool.clone();
         let store = crate::store::DagDbNodeStore::open(
             pool.clone(),
             "dag_db-local".into(),
@@ -13572,7 +13795,7 @@ mod tests {
             validator_did(),
             signer,
             Some(pool),
-            Some(Arc::clone(&finality)),
+            Some(finality),
             false,
         )
         .await
@@ -13582,18 +13805,25 @@ mod tests {
         seed_avc_trust_keys(&state);
         let state = Arc::new(state);
         let credential = baseline_credential();
-        state
-            .registry
-            .lock()
-            .unwrap()
-            .put_credential(credential.clone())
-            .unwrap();
+        assert_eq!(
+            issue_credential(avc_router(Arc::clone(&state)), credential.clone()).await,
+            StatusCode::OK
+        );
         let (status, body) =
             post_allow_emit(&state, &credential, Hash256::from_bytes([0x64; 32])).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert!(body.contains("Allow"), "{body}");
         assert_eq!(state.registry.lock().unwrap().receipt_count(), 1);
-        assert_eq!(finality_height(&finality), 1);
+        let height: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(height), 0) FROM dagdb_node_committed \
+             WHERE tenant_id = $1 AND namespace = $2",
+        )
+        .bind("dag_db-local")
+        .bind("dag_db")
+        .fetch_one(&height_pool)
+        .await
+        .expect("shared-pool committed height");
+        assert_eq!(height, 1);
     }
 
     #[test]

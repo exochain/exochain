@@ -27,6 +27,8 @@
 
 mod store_postgres;
 
+#[cfg_attr(not(test), allow(unused_imports))]
+use std::sync::Arc;
 use std::{collections::BTreeSet, future::Future, path::Path};
 
 use exo_core::types::{Did, Hash256, Signature, Timestamp, TrustReceipt};
@@ -153,12 +155,21 @@ fn validate_commit_certificate(cert: &CommitCertificate) -> DagResult<()> {
 pub struct SqliteDagStore {
     backend: NodeStoreBackend,
     anchor_batch_open: bool,
+    #[cfg(test)]
+    before_anchor_commit: Option<Arc<dyn Fn() + Send + Sync>>,
+    #[cfg(test)]
+    fail_next_anchor_commit: bool,
 }
 
 enum NodeStoreBackend {
     #[allow(dead_code)]
     LegacySqlite(Connection),
     DagDb(PostgresDagNodeStore),
+}
+
+#[derive(Clone)]
+pub struct PostgresFinalityHandle {
+    store: PostgresDagNodeStore,
 }
 
 #[derive(Clone)]
@@ -189,6 +200,10 @@ impl DagDbNodeStore {
         Ok(SqliteDagStore {
             backend: NodeStoreBackend::DagDb(store),
             anchor_batch_open: false,
+            #[cfg(test)]
+            before_anchor_commit: None,
+            #[cfg(test)]
+            fail_next_anchor_commit: false,
         })
     }
 }
@@ -227,6 +242,17 @@ impl SqliteDagStore {
             NodeStoreBackend::LegacySqlite(_) => None,
             NodeStoreBackend::DagDb(store) => Some(store),
         }
+    }
+
+    pub fn postgres_finality_handle(&self) -> DagResult<PostgresFinalityHandle> {
+        let Some(store) = self.dagdb() else {
+            return Err(store_err(
+                "Postgres finality handle requires a Postgres-backed store",
+            ));
+        };
+        Ok(PostgresFinalityHandle {
+            store: store.clone(),
+        })
     }
 
     fn sqlite_conn(&self) -> DagResult<&Connection> {
@@ -361,6 +387,10 @@ impl SqliteDagStore {
         Ok(Self {
             backend: NodeStoreBackend::LegacySqlite(conn),
             anchor_batch_open: false,
+            #[cfg(test)]
+            before_anchor_commit: None,
+            #[cfg(test)]
+            fail_next_anchor_commit: false,
         })
     }
 
@@ -408,11 +438,34 @@ impl SqliteDagStore {
         if !self.anchor_batch_open {
             return Ok(());
         }
+        #[cfg(test)]
+        {
+            if let Some(probe) = self.before_anchor_commit.clone() {
+                probe();
+            }
+            if self.fail_next_anchor_commit {
+                self.fail_next_anchor_commit = false;
+                return Err(store_err("injected sqlite anchor commit failure"));
+            }
+        }
         self.sqlite_conn_mut()?
             .execute_batch("COMMIT")
             .map_err(store_err)?;
         self.anchor_batch_open = false;
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub fn set_before_anchor_commit_for_test(
+        &mut self,
+        probe: Option<Arc<dyn Fn() + Send + Sync>>,
+    ) {
+        self.before_anchor_commit = probe;
+    }
+
+    #[cfg(test)]
+    pub fn fail_next_anchor_commit_for_test(&mut self) {
+        self.fail_next_anchor_commit = true;
     }
 
     pub fn rollback_anchor_batch(&mut self) -> DagResult<()> {
