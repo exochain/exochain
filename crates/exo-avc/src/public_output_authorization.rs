@@ -230,6 +230,38 @@ pub fn livesafe_public_adapter_output_authorization_action_commitment_hash(
     avc_action_commitment_hash(credential, &action, issued_at)
 }
 
+/// Commitment of the same public-output action before the jurisdiction suffix
+/// was added to the action name.
+///
+/// # Errors
+/// Returns [`AvcError::Serialization`] if canonical hashing fails.
+pub fn livesafe_public_adapter_output_authorization_prior_action_commitment_hash(
+    credential: &AutonomousVolitionCredential,
+    subject: &str,
+    audience: &str,
+    evidence_hash: Hash256,
+    idempotency_key_hash: Hash256,
+    issued_at: &Timestamp,
+    expires_at: &Timestamp,
+) -> Result<Hash256, AvcError> {
+    let mut action = livesafe_public_adapter_output_authorization_action_request(
+        credential,
+        subject,
+        audience,
+        evidence_hash,
+        idempotency_key_hash,
+        expires_at,
+    )?;
+    let objective = action.action_name.as_deref().and_then(|name| {
+        name.split_once('@')
+            .map(|(objective, _)| objective.to_owned())
+    });
+    if let Some(objective) = objective {
+        action.action_name = Some(objective);
+    }
+    avc_action_commitment_hash(credential, &action, issued_at)
+}
+
 /// Validate the narrow LiveSafe public-output authorization and return the
 /// underlying AVC validation result for receipt anchoring.
 ///
@@ -265,12 +297,24 @@ pub fn validate_livesafe_public_adapter_output_authorization<R: AvcRegistryRead>
         draft.idempotency_key_hash,
         &draft.expires_at,
     )?;
-    let expected_action_commitment =
+    let current_action_commitment =
         avc_action_commitment_hash(&draft.credential, &action, &draft.issued_at)?;
-    if expected_action_commitment != draft.action_commitment_hash {
+    let prior_action_commitment =
+        livesafe_public_adapter_output_authorization_prior_action_commitment_hash(
+            &draft.credential,
+            &draft.subject,
+            &draft.audience,
+            draft.evidence_hash,
+            draft.idempotency_key_hash,
+            &draft.issued_at,
+            &draft.expires_at,
+        )?;
+    if draft.action_commitment_hash != current_action_commitment
+        && draft.action_commitment_hash != prior_action_commitment
+    {
         return Err(AvcError::InvalidInput {
             reason: format!(
-                "LiveSafe public adapter output action commitment mismatch: expected {expected_action_commitment}, got {}",
+                "LiveSafe public adapter output action commitment mismatch: expected {current_action_commitment}, got {}",
                 draft.action_commitment_hash
             ),
         });

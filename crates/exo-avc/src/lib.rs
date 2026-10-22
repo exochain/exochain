@@ -149,6 +149,7 @@ pub use public_output_authorization::{
     livesafe_public_adapter_output_authorization_action_commitment_hash,
     livesafe_public_adapter_output_authorization_action_request,
     livesafe_public_adapter_output_authorization_idempotency_hash,
+    livesafe_public_adapter_output_authorization_prior_action_commitment_hash,
     mint_livesafe_public_adapter_output_authorization_proof,
     validate_livesafe_public_adapter_output_authorization,
     verify_livesafe_public_adapter_output_authorization_proof,
@@ -613,6 +614,37 @@ mod public_output_authorization_tests {
 
         assert!(error.to_string().contains("Expired"));
         assert_eq!(draft.issued_at, ts(1_000_000));
+    }
+
+    #[test]
+    fn public_output_prior_action_name_commitment_replays() {
+        let credential = issue_credential(livesafe_draft());
+        let current = draft_for(credential.clone());
+        let prior = livesafe_public_adapter_output_authorization_prior_action_commitment_hash(
+            &current.credential,
+            &current.subject,
+            &current.audience,
+            current.evidence_hash,
+            current.idempotency_key_hash,
+            &current.issued_at,
+            &current.expires_at,
+        )
+        .expect("prior action commitment");
+        assert_ne!(current.action_commitment_hash, prior);
+
+        let mut replay = current.clone();
+        replay.action_commitment_hash = prior;
+        let registry = registry_with_issuer(Some(vec![Permission::Read]));
+        let proof = mint(replay, &registry).expect("prior commitment must still mint");
+        assert_eq!(proof.proof.action_commitment_hash, prior);
+
+        let mut other_request = current;
+        other_request.idempotency_key_hash = h256(0xE3);
+        other_request.action_commitment_hash = prior;
+        let error =
+            validate_livesafe_public_adapter_output_authorization(&other_request, &registry)
+                .expect_err("a prior commitment from a different idempotency key must not match");
+        assert!(error.to_string().contains("action commitment mismatch"));
     }
 
     #[test]

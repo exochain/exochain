@@ -79,8 +79,10 @@ use exo_avc::{
     avc_llm_usage_action_request, create_trust_receipt_with_evidence, delegate_avc,
     livesafe_public_adapter_output_authorization_action_commitment_hash,
     livesafe_public_adapter_output_authorization_action_request,
-    livesafe_public_adapter_output_authorization_idempotency_hash, llm_usage_evidence_hash,
-    llm_usage_evidence_signature_payload, mint_livesafe_public_adapter_output_authorization_proof,
+    livesafe_public_adapter_output_authorization_idempotency_hash,
+    livesafe_public_adapter_output_authorization_prior_action_commitment_hash,
+    llm_usage_evidence_hash, llm_usage_evidence_signature_payload,
+    mint_livesafe_public_adapter_output_authorization_proof,
     require_supported_avc_protocol_version, validate_avc,
     validate_livesafe_public_adapter_output_authorization,
 };
@@ -3467,10 +3469,28 @@ fn replay_stored_public_output_authorization(
     let Some(existing) = registry.get_receipt_by_action_id(&parts.idempotency_key_hash) else {
         return Ok(None);
     };
-    let action_commitment_hash =
+    let Some(action_commitment_hash) = existing.action_commitment_hash else {
+        return Err((
+            StatusCode::CONFLICT,
+            "public output authorization idempotency key conflict".into(),
+        ));
+    };
+    let current_commitment =
         public_output_action_commitment(credential, parts, &existing.created_at)?;
+    let prior_commitment =
+        livesafe_public_adapter_output_authorization_prior_action_commitment_hash(
+            credential,
+            &parts.subject,
+            &parts.audience,
+            parts.evidence_hash,
+            parts.idempotency_key_hash,
+            &existing.created_at,
+            &parts.expires_at,
+        )
+        .map_err(map_avc_error)?;
     if existing.credential_id != parts.credential_id
-        || existing.action_commitment_hash != Some(action_commitment_hash)
+        || (action_commitment_hash != current_commitment
+            && action_commitment_hash != prior_commitment)
     {
         return Err((
             StatusCode::CONFLICT,
@@ -4640,7 +4660,7 @@ mod tests {
             estimated_risk_bp: None,
             human_approval: None,
             requires_human_approval: false,
-            action_name: None,
+            action_name: Some("primary@US".into()),
         }
     }
 
@@ -9114,6 +9134,87 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn public_output_authorization_replays_receipt_committed_before_jurisdiction_suffix() {
+        let state = fresh_state();
+        let evidence_hash = Hash256::from_bytes([0xE8; 32]);
+        let credential = livesafe_public_output_credential_for_evidence(evidence_hash);
+        let credential_id = store_livesafe_public_output_credential(&state, credential.clone());
+        let issued_at = Timestamp::new(1_500_000, 0);
+        let expires_at = Timestamp::new(1_700_000, 0);
+        let idempotency_key = "public-output-prior-action-name";
+        let idempotency_key_hash =
+            livesafe_public_adapter_output_authorization_idempotency_hash(idempotency_key).unwrap();
+        let subject = exo_avc::LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_SUBJECT;
+        let audience = exo_avc::LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_AUDIENCE;
+        let prior = livesafe_public_adapter_output_authorization_prior_action_commitment_hash(
+            &credential,
+            subject,
+            audience,
+            evidence_hash,
+            idempotency_key_hash,
+            &issued_at,
+            &expires_at,
+        )
+        .unwrap();
+        let current = livesafe_public_adapter_output_authorization_action_commitment_hash(
+            &credential,
+            subject,
+            audience,
+            evidence_hash,
+            idempotency_key_hash,
+            &issued_at,
+            &expires_at,
+        )
+        .unwrap();
+        assert_ne!(prior, current);
+        let validation = {
+            let registry = state.registry.lock().unwrap();
+            validate_avc(
+                &AvcValidationRequest {
+                    credential: credential.clone(),
+                    action: None,
+                    now: issued_at,
+                },
+                &*registry,
+            )
+            .unwrap()
+        };
+        let receipt = create_trust_receipt_with_evidence(
+            &validation,
+            Some(idempotency_key_hash),
+            AvcTrustReceiptEvidence {
+                action_commitment_hash: Some(prior),
+                action_descriptor: None,
+                llm_usage_evidence_hash: None,
+                payment_evidence_hash: None,
+                previous_receipt_hash: None,
+                timestamp_provenance: Some(AvcReceiptTimestampProvenance::LocalHybridLogicalClock),
+                external_timestamp_proof: None,
+            },
+            validator_did(),
+            issued_at,
+            |bytes| validator_keypair().sign(bytes),
+        )
+        .unwrap();
+        state.registry.lock().unwrap().put_receipt(receipt).unwrap();
+
+        let app = avc_router_with_bearer_gate(Arc::clone(&state));
+        let request = public_output_authorization_request(
+            credential_id,
+            idempotency_key,
+            evidence_hash,
+            audience,
+        );
+        let response =
+            post_public_output_authorization(app, request, Some("vcg-006a-admin-token")).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let envelope: LivesafePublicAdapterOutputAuthorizationEnvelope =
+            serde_json::from_slice(&read_body(response).await).unwrap();
+        assert_eq!(envelope.proof.action_commitment_hash, prior);
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 1);
+    }
+
+    #[tokio::test]
     async fn public_output_authorization_conflicts_on_idempotency_key_reuse_with_changed_expiry() {
         let state = fresh_state();
         let evidence_hash = Hash256::from_bytes([0xE7; 32]);
@@ -10016,7 +10117,7 @@ mod tests {
             estimated_risk_bp: None,
             human_approval: None,
             requires_human_approval: true,
-            action_name: None,
+            action_name: Some("primary@US".into()),
         };
         let request = AvcValidationRequest {
             credential,
