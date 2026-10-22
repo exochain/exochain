@@ -2782,6 +2782,30 @@ fn require_action(request: &AvcValidationRequest) -> ApiResult<&AvcActionRequest
     ))
 }
 
+fn action_name_objective(action_name: Option<&str>) -> Option<&str> {
+    action_name.map(|name| match name.split_once('@') {
+        Some((objective, _)) => objective,
+        None => name,
+    })
+}
+
+fn bind_submitted_action_name(
+    evidence_action: &mut AvcActionRequest,
+    submitted_request: &AvcValidationRequest,
+) {
+    let Some(submitted_action) = submitted_request.action.as_ref() else {
+        return;
+    };
+    if action_name_objective(evidence_action.action_name.as_deref())
+        != action_name_objective(submitted_action.action_name.as_deref())
+    {
+        return;
+    }
+    evidence_action
+        .action_name
+        .clone_from(&submitted_action.action_name);
+}
+
 fn require_matching_llm_usage_action(
     request: &AvcValidationRequest,
     expected_action: &AvcActionRequest,
@@ -3162,9 +3186,10 @@ async fn handle_llm_usage_emit_receipt(
     let receipt_signer = Arc::clone(&state.receipt_signer);
     let envelope = payload.llm_usage_evidence.clone();
     let llm_evidence_hash = llm_usage_evidence_hash(&envelope.evidence).map_err(map_avc_error)?;
-    let evidence_action =
+    let mut evidence_action =
         avc_llm_usage_action_request(&envelope.evidence).map_err(map_avc_error)?;
     let submitted_request = payload.validation.clone();
+    bind_submitted_action_name(&mut evidence_action, &submitted_request);
     require_matching_llm_usage_action(&submitted_request, &evidence_action)?;
     let action_id = evidence_action.action_id;
     let action_commitment_hash = avc_action_commitment_hash(
@@ -4801,7 +4826,8 @@ mod tests {
         evidence: LlmUsageEvidence,
     ) -> LlmUsageReceiptEmitRequest {
         let envelope = lynk_envelope(evidence);
-        let action = avc_llm_usage_action_request(&envelope.evidence).unwrap();
+        let mut action = avc_llm_usage_action_request(&envelope.evidence).unwrap();
+        action.action_name = Some(format!("{}@US", exo_avc::AVC_LLM_USAGE_ACTION_NAME));
         let validation = AvcValidationRequest {
             credential,
             action: Some(action),
@@ -6605,9 +6631,10 @@ mod tests {
             Some(AVC_LLM_USAGE_EVIDENCE_DOMAIN)
         );
         assert_eq!(action_descriptor.data_class, Some(DataClass::Internal));
+        let expected_action_name = format!("{}@US", exo_avc::AVC_LLM_USAGE_ACTION_NAME);
         assert_eq!(
             action_descriptor.action_name.as_deref(),
-            Some(exo_avc::AVC_LLM_USAGE_ACTION_NAME)
+            Some(expected_action_name.as_str())
         );
         assert_eq!(
             parsed.receipt.timestamp_provenance,
@@ -6619,6 +6646,32 @@ mod tests {
         );
         assert!(parsed.receipt.verify_id().unwrap());
         assert_eq!(state.registry.lock().unwrap().receipt_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn avc_llm_usage_receipts_emit_rejects_bare_action_name_when_credential_lists_us() {
+        let state = fresh_state();
+        let credential = lynk_credential();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(credential.clone())
+            .unwrap();
+        let mut request = lynk_emit_request_for_evidence(
+            credential,
+            lynk_usage_evidence(LlmUsageCustodyMode::ReceiptMinimized),
+        );
+        request.validation.action.as_mut().unwrap().action_name =
+            Some(exo_avc::AVC_LLM_USAGE_ACTION_NAME.into());
+        request.subject_signature = sign_action(&request.validation, &subject_keypair());
+
+        let response = post_lynk_emit_request(avc_router(Arc::clone(&state)), &request).await;
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = String::from_utf8(read_body(response).await).unwrap();
+        assert!(body.contains("JurisdictionDenied"));
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 0);
     }
 
     #[tokio::test]
