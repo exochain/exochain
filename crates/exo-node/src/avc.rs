@@ -6235,6 +6235,71 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn delegate_rejects_objective_outside_parent_without_storing_child() {
+        let state = fresh_state();
+        let parent = delegating_parent();
+        let parent_id = parent.id().unwrap();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(parent.clone())
+            .unwrap();
+        let mut draft = baseline_draft();
+        draft.created_at = parent.created_at;
+        draft.expires_at = parent.expires_at;
+        draft.parent_avc_id = Some(parent_id);
+        draft.delegated_intent.autonomy_level = AutonomyLevel::Draft;
+        draft.delegated_intent.allowed_objectives = vec!["extra".into(), "primary".into()];
+        draft.authority_scope.permissions = vec![Permission::Read];
+        draft.constraints.max_delegation_depth = 0;
+        let child = {
+            let kp = issuer_keypair();
+            issue_avc(draft, |bytes| kp.sign(bytes)).unwrap()
+        };
+        let child_id = child.id().unwrap();
+
+        let response = post_delegate(&state, &parent_id, child).await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let registry = state.registry.lock().unwrap();
+        assert!(registry.get_credential(&child_id).is_none());
+        assert!(registry.get_credential(&parent_id).is_some());
+        assert_eq!(registry.credential_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn delegate_rejects_dropped_parent_prohibition_without_storing_child() {
+        let state = fresh_state();
+        let mut draft = baseline_draft();
+        draft.delegated_intent.delegation_allowed = true;
+        draft.delegated_intent.autonomy_level = AutonomyLevel::ExecuteWithinBounds;
+        draft.delegated_intent.prohibited_objectives = vec!["harm".into()];
+        draft.constraints.max_delegation_depth = 1;
+        let parent = {
+            let kp = issuer_keypair();
+            issue_avc(draft, |bytes| kp.sign(bytes)).unwrap()
+        };
+        let parent_id = parent.id().unwrap();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(parent.clone())
+            .unwrap();
+        let child = delegated_child(&parent, AutonomyLevel::Draft, vec![Permission::Read]);
+        let child_id = child.id().unwrap();
+
+        let response = post_delegate(&state, &parent_id, child).await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let registry = state.registry.lock().unwrap();
+        assert!(registry.get_credential(&child_id).is_none());
+        assert!(registry.get_credential(&parent_id).is_some());
+        assert_eq!(registry.credential_count(), 1);
+    }
+
+    #[tokio::test]
     async fn delegate_rejects_revoked_parent_without_storing_child() {
         let state = fresh_state();
         let parent = delegating_parent();
