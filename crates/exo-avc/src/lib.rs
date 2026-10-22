@@ -389,12 +389,18 @@ mod public_output_authorization_tests {
     fn draft_for(
         credential: AutonomousVolitionCredential,
     ) -> LivesafePublicAdapterOutputAuthorizationDraft {
+        draft_at(credential, ts(1_500_000), ts(1_700_000))
+    }
+
+    fn draft_at(
+        credential: AutonomousVolitionCredential,
+        issued_at: Timestamp,
+        expires_at: Timestamp,
+    ) -> LivesafePublicAdapterOutputAuthorizationDraft {
         let idempotency_key_hash =
             livesafe_public_adapter_output_authorization_idempotency_hash("idem-live-1")
                 .expect("idempotency hash");
         let evidence_hash = h256(0xE1);
-        let issued_at = ts(1_500_000);
-        let expires_at = ts(1_700_000);
         let action_commitment_hash =
             livesafe_public_adapter_output_authorization_action_commitment_hash(
                 &credential,
@@ -536,6 +542,77 @@ mod public_output_authorization_tests {
         .expect_err("tampered proof rejected");
 
         assert!(error.to_string().contains("signature"));
+    }
+
+    #[test]
+    fn public_output_proof_denies_unix_expiry_at_genesis_issued_at() {
+        let credential = issue_credential(livesafe_draft());
+        let envelope = sign_unchecked(draft_at(credential, ts(1_000_000), ts(1_577_836_800_000)))
+            .expect("signed proof");
+
+        let error = verify_livesafe_public_adapter_output_authorization_proof(
+            &envelope.proof,
+            &proof_signer_keypair().public,
+        )
+        .expect_err("unix proof expiry at genesis issued_at");
+
+        assert!(
+            error
+                .to_string()
+                .contains("expires_at must be after issued_at")
+        );
+    }
+
+    #[test]
+    fn public_output_draft_denies_unix_expiry_at_genesis_issued_at() {
+        let unix_expiry = ts(1_577_836_800_000);
+        let mut credential_draft = livesafe_draft();
+        credential_draft.expires_at = Some(unix_expiry);
+        let credential = issue_credential(credential_draft);
+        let registry = registry_with_issuer(Some(vec![Permission::Read]));
+
+        let error = validate_livesafe_public_adapter_output_authorization(
+            &draft_at(credential, ts(1_000_000), unix_expiry),
+            &registry,
+        )
+        .expect_err("unix draft expiry at genesis issued_at");
+
+        assert!(
+            error
+                .to_string()
+                .contains("expires_at must be after issued_at")
+        );
+    }
+
+    #[test]
+    fn public_output_credential_denies_unix_expiry_at_genesis_issued_at() {
+        let mut credential_draft = livesafe_draft();
+        credential_draft.expires_at = Some(ts(1_577_836_800_000));
+        let credential = issue_credential(credential_draft);
+        let registry = registry_with_issuer(Some(vec![Permission::Read]));
+
+        let error = validate_livesafe_public_adapter_output_authorization(
+            &draft_at(credential, ts(1_000_000), ts(1_500_000)),
+            &registry,
+        )
+        .expect_err("unix credential expiry at genesis issued_at");
+
+        assert!(error.to_string().contains("Expired"));
+    }
+
+    #[test]
+    fn public_output_validate_avc_now_denies_unix_expiry_at_genesis() {
+        let mut credential_draft = livesafe_draft();
+        credential_draft.expires_at = Some(ts(1_577_836_800_000));
+        let credential = issue_credential(credential_draft);
+        let registry = registry_with_issuer(Some(vec![Permission::Read]));
+        let draft = draft_at(credential, ts(1_000_000), ts(1_500_000));
+
+        let error = validate_livesafe_public_adapter_output_authorization(&draft, &registry)
+            .expect_err("genesis now must not Allow a Unix credential expiry");
+
+        assert!(error.to_string().contains("Expired"));
+        assert_eq!(draft.issued_at, ts(1_000_000));
     }
 
     #[test]

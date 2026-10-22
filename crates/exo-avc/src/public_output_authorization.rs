@@ -276,6 +276,13 @@ pub fn validate_livesafe_public_adapter_output_authorization<R: AvcRegistryRead>
         });
     }
 
+    if let Some(expires_at) = draft.credential.expires_at {
+        if expires_at.is_expired(&draft.issued_at) {
+            return Err(AvcError::InvalidInput {
+                reason: "LiveSafe public adapter output authorization denied: [Expired]".into(),
+            });
+        }
+    }
     let validation = validate_avc(
         &AvcValidationRequest {
             credential: draft.credential.clone(),
@@ -452,7 +459,7 @@ fn validate_fixed_proof(
             ),
         });
     }
-    if proof.expires_at <= proof.issued_at {
+    if proof.expires_at.is_expired(&proof.issued_at) {
         return Err(AvcError::InvalidTimestamp {
             reason: "LiveSafe public adapter output proof expires_at must be after issued_at"
                 .into(),
@@ -547,14 +554,14 @@ fn validate_ceremony_evidence_hash_binding(
 fn validate_expiry_bounds(
     draft: &LivesafePublicAdapterOutputAuthorizationDraft,
 ) -> Result<(), AvcError> {
-    if draft.expires_at <= draft.issued_at {
+    if draft.expires_at.is_expired(&draft.issued_at) {
         return Err(AvcError::InvalidTimestamp {
             reason: "LiveSafe public adapter output proof expires_at must be after issued_at"
                 .into(),
         });
     }
     if let Some(credential_expiry) = draft.credential.expires_at {
-        if credential_expiry <= draft.issued_at {
+        if credential_expiry.is_expired(&draft.issued_at) {
             return Err(AvcError::InvalidInput {
                 reason: "LiveSafe public adapter output authorization denied: [Expired]".into(),
             });
