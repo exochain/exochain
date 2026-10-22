@@ -1440,7 +1440,7 @@ where
 fn configured_require_external_timestamp_from_env() -> anyhow::Result<bool> {
     let value = match std::env::var(AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV) {
         Ok(value) => value,
-        Err(std::env::VarError::NotPresent) => return Ok(false),
+        Err(std::env::VarError::NotPresent) => return Ok(true),
         Err(std::env::VarError::NotUnicode(_)) => {
             anyhow::bail!("{AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV} must be valid UTF-8");
         }
@@ -11574,6 +11574,7 @@ mod external_timestamp_requirement_default_tests {
         }
     }
 
+    #[allow(clippy::bool_assert_comparison)]
     fn assert_unset_requires_external_timestamp_authority() {
         assert!(
             std::env::var_os(AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV).is_none(),
@@ -11584,6 +11585,7 @@ mod external_timestamp_requirement_default_tests {
         assert_eq!(required, true);
     }
 
+    #[allow(clippy::bool_assert_comparison)]
     fn assert_explicit_opt_out_disables_requirement() {
         assert_eq!(
             std::env::var(AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV)
