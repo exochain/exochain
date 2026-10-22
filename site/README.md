@@ -25,6 +25,11 @@ by a single Next.js 14 app.
 The full specification is in [`SPEC.md`](./SPEC.md). This README is a quick
 operator guide.
 
+The [0.3.1 release companion](./RELEASE-0.3.1.md) records the commercial-site
+scope, publication handoff, deployment evidence requirements, and adjacent
+trust boundary. Public release labels come from the same node-packaged record
+as `/status`; rebuild the site after an approved publication-record update.
+
 > **Note:** the existing Vite SPA at `../web/` is left untouched. This new
 > presence lives at `../site/` to avoid disturbing it.
 
