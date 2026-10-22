@@ -1343,7 +1343,7 @@ where
             ca_env = AVC_RFC3161_TIMESTAMP_CA_SPKI_HEX_ENV,
             policy_env = AVC_RFC3161_TIMESTAMP_POLICY_OID_ENV,
             require_env = AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV,
-            "AVC external timestamp authority is not configured; receipt emission will use local EXOCHAIN HLC finality unless external timestamp proof is explicitly required"
+            "AVC external timestamp authority is not configured; receipt emission fails closed unless {AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV} is set to false or 0"
         );
         return Ok(AvcReceiptExternalTimestampSource::Unconfigured);
     }
