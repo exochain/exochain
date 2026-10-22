@@ -756,6 +756,17 @@ mod tests {
         }
     }
 
+    fn credential_with_parent(
+        harness: &Harness,
+        purpose: &str,
+        parent_avc_id: Option<Hash256>,
+    ) -> AutonomousVolitionCredential {
+        let mut draft = baseline_draft();
+        draft.delegated_intent.purpose = purpose.into();
+        draft.parent_avc_id = parent_avc_id;
+        harness.issue(draft)
+    }
+
     fn baseline_action(actor: Did) -> AvcActionRequest {
         AvcActionRequest {
             action_id: h256(0x55),
@@ -1076,6 +1087,73 @@ mod tests {
         let result = validate_avc(&baseline_request(cred, ts(1_500_000)), &h.registry).unwrap();
         assert_eq!(result.decision, AvcDecision::Deny);
         assert!(result.reason_codes.contains(&AvcReasonCode::Revoked));
+    }
+
+    #[test]
+    fn revoked_parent_denies_child_and_grandchild() {
+        let mut h = Harness::new();
+        let parent = credential_with_parent(&h, "parent", None);
+        let child = credential_with_parent(&h, "child", Some(parent.id().unwrap()));
+        let grandchild = credential_with_parent(&h, "grandchild", Some(child.id().unwrap()));
+        let root = h.issue(baseline_draft());
+        h.registry.put_credential(parent.clone()).unwrap();
+        h.registry.put_credential(child.clone()).unwrap();
+
+        assert_eq!(
+            validate_avc(&baseline_request(child.clone(), ts(1_500_000)), &h.registry)
+                .unwrap()
+                .decision,
+            AvcDecision::Allow
+        );
+        assert_eq!(
+            validate_avc(
+                &baseline_request(grandchild.clone(), ts(1_500_000)),
+                &h.registry
+            )
+            .unwrap()
+            .decision,
+            AvcDecision::Allow
+        );
+
+        let revocation = revoke_avc(
+            parent.id().unwrap(),
+            did("issuer"),
+            AvcRevocationReason::IssuerRevoked,
+            ts(1_250_000),
+            |bytes| issuer_keypair().sign(bytes),
+        )
+        .unwrap();
+        h.registry.put_revocation(revocation).unwrap();
+
+        assert_eq!(
+            validate_avc(&baseline_request(child, ts(1_500_000)), &h.registry)
+                .unwrap()
+                .decision,
+            AvcDecision::Deny
+        );
+        assert_eq!(
+            validate_avc(&baseline_request(grandchild, ts(1_500_000)), &h.registry)
+                .unwrap()
+                .decision,
+            AvcDecision::Deny
+        );
+        assert_eq!(
+            validate_avc(&baseline_request(root, ts(1_500_000)), &h.registry)
+                .unwrap()
+                .decision,
+            AvcDecision::Allow
+        );
+    }
+
+    #[test]
+    fn missing_parent_credential_denies_child() {
+        let h = Harness::new();
+        let parent = credential_with_parent(&h, "parent", None);
+        let child = credential_with_parent(&h, "child", Some(parent.id().unwrap()));
+
+        let result = validate_avc(&baseline_request(child, ts(1_500_000)), &h.registry).unwrap();
+
+        assert_eq!(result.decision, AvcDecision::Deny);
     }
 
     #[test]
