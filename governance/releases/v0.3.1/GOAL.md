@@ -76,9 +76,15 @@ missing release sentence. That score is an assessment. It is not the close.
 
 Bob Stewart, CEO, wrote on 2026-10-09 at 11:33 PM ET: "We have to finish 0.3.0
 or roll it up and in… the commercial lines is preparatory as we have no
-assurance partner yet." The sentence leaves both shapes open. The engineer
-recommendation in the assessment is path B. GD-031-01 stays PENDING, so this
-section is a draft structure, not an adopted plan.
+assurance partner yet." That sentence leaves both shapes open. The engineer
+recommendation in the assessment is path B.
+
+Chief Executive ruling, 2026-10-22 at 4:00 PM ET, not a signature and not an
+approval: path B. The v0.3.0 close is recorded inside this release. There is
+no separate `v0.3.0` tag. The draft of that record is
+[V030-CLOSE-RECORD.md](V030-CLOSE-RECORD.md). GD-031-01 stays PENDING. Its
+signature line stays blank. This section is still not an adopted plan, and
+it does not authorize implementation.
 
 | Milestone | Contents | Gate |
 | --- | --- | --- |

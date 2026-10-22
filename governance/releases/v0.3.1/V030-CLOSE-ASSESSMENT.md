@@ -108,3 +108,12 @@ Commercial settlement and assurance stay inside milestone 2 as interfaces and sc
 ### ISSUES.md
 
 Add two milestone-1 drafts, `V030-M1-01` (zero-hash fail-closed and canonical-CBOR payment digest, `exo-pdp` only) and `V030-M1-02` (release-record non-claim of §19.6.1, no producer). Leave the 28 market drafts in place. Point their common dependency at milestone 1 and at the GD-031 records, in place of a separate v0.3.0 tag. Do not file any of them on GitHub from this package.
+
+## Later ruling, still unsigned
+
+On 2026-10-22 at 4:00 PM ET the Chief Executive ruled path B: the v0.3.0 close
+is recorded inside the 0.3.1 release, and there is no separate `v0.3.0` tag.
+That ruling is drafted in [V030-CLOSE-RECORD.md](V030-CLOSE-RECORD.md) and on
+GD-031-01. It does not fill a signature line. GD-031-01 stays PENDING. This
+assessment is still not the close, and it still does not claim that rows 3
+and 7 hold.

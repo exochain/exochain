@@ -40,9 +40,10 @@ do not outrank a ratified council resolution.
 | [TEST-PLAN.md](TEST-PLAN.md) | Deterministic tests, conformance vectors, two-system demonstration |
 | [DEMO.md](DEMO.md) | Scripted minimum demonstration and the artifacts it must produce |
 | [RELEASE-EVIDENCE.md](RELEASE-EVIDENCE.md) | Evidence a future release would have to produce, and how to verify it |
-| [GOVERNANCE-DECISIONS.md](GOVERNANCE-DECISIONS.md) | Blank decision records. Every record is PENDING |
+| [GOVERNANCE-DECISIONS.md](GOVERNANCE-DECISIONS.md) | Decision records. Every record is PENDING, including GD-031-01 |
 | [PATH-CLASSIFICATION.md](PATH-CLASSIFICATION.md) | Classification of every file in this package |
 | [V030-CLOSE-ASSESSMENT.md](V030-CLOSE-ASSESSMENT.md) | Item-by-item score of the v0.3.0 goal against `main` at `a2667295`, and the path B recommendation. Not a close |
+| [V030-CLOSE-RECORD.md](V030-CLOSE-RECORD.md) | Draft place for the v0.3.0 close inside this release. Unsigned. Not a close. No `v0.3.0` tag |
 | [specs/](specs/) | Protocol specifications |
 | [schemas/](schemas/) | Proposed JSON Schemas |
 | [test-vectors/](test-vectors/) | Proposed fixtures for a later conformance harness |
@@ -53,7 +54,10 @@ Baseline observed while writing this package:
 - Git tag `v0.2.7` exists. The GitHub release `v0.2.7` was not a draft and not a
   prerelease when viewed on 2026-10-09 (`publishedAt` `2026-10-08T17:28:52Z`,
   <https://github.com/exochain/exochain/releases/tag/v0.2.7>).
-- No `v0.3.0` tag exists in this checkout.
+- No `v0.3.0` tag exists in this checkout. The Chief Executive ruled path B
+  on 2026-10-22 at 4:00 PM ET: the v0.3.0 close is recorded inside this
+  release, and there is no separate `v0.3.0` tag. That ruling is an unsigned
+  draft on GD-031-01. It is not an approval.
 - CEO direction of 2026-10-09 (commercial lines preparatory; no assurance
   partner yet) is recorded on GD-031-02, GD-031-03, and GD-031-10. Those
   records stay PENDING signature. `coverage_claim` stays `none`.

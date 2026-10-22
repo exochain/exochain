@@ -41,7 +41,9 @@ the evidence directory of that run. They are not generated in this package.
 - GD-031-01 and the records the script relies on are no longer PENDING.
   While they are PENDING, running this script against a deployed service is
   out of bounds.
-- `V030-CLOSE` exists.
+- `V030-CLOSE` exists as a signed close. [V030-CLOSE-RECORD.md](V030-CLOSE-RECORD.md)
+  is an unsigned draft of where that close is recorded. The draft does not
+  satisfy this precondition.
 - The market feature flag is explicitly enabled for the demo process and
   off by default everywhere else.
 - TSA configuration for the Microsoft profile is present, or the script

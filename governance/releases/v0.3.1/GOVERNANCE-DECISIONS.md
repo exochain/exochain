@@ -54,8 +54,27 @@ off, and an administrator bypass does not count.
 | Signatures | |
 
 Engineer recommendation, not a decision: do not authorize implementation in
-this pull request. Require `V030-CLOSE` first. Keep this record PENDING until
-those three humans sign.
+this pull request. Require a signed `V030-CLOSE` first. Keep this record
+PENDING until those three humans sign. Do not treat the draft below as that
+signature.
+
+Proposed decision text, awaiting signature. It has no effect while this
+record is PENDING. It does not fill Decision, Conditions, Rationale,
+Dissent, Date, or Signatures above. An agent wrote the draft. An agent did
+not sign it, did not write a name into Signatures, and did not mark this
+record approved.
+
+| Field | Proposed entry |
+| --- | --- |
+| Selected shape | Path B in [GOAL.md](GOAL.md). The v0.3.0 close is recorded inside the 0.3.1 release. There is no separate `v0.3.0` tag. |
+| Where the close record lives | [V030-CLOSE-RECORD.md](V030-CLOSE-RECORD.md), inside `governance/releases/v0.3.1/`. That file is a draft. It is not a signed close, and it does not satisfy the `V030-CLOSE` precondition in [DEMO.md](DEMO.md). |
+| What stays refused | Path A. A standalone `v0.3.0` tag is not the selected shape. |
+| What this text does not do | It does not approve this record. It does not authorize C1–C8. It does not claim that prerequisite rows P1–P8 hold. It does not close issue #810 or #813. It does not claim specification §19.6.1. |
+
+Chief Executive ruling, 2026-10-22 at 4:00 PM ET, not a signature and not a
+decision: path B. The v0.3.0 close is recorded inside the 0.3.1 release.
+There is no separate v0.3.0 tag. The Signatures field stays empty. Status
+stays PENDING. This record is not approved.
 
 ## GD-031-02 — Marketplace take-rate, a v0.3.0 non-goal
 
@@ -280,7 +299,7 @@ HTTP reachability of the TSA as a contract or as token validity.
 These are the blanks that block implementation. They are questions, not
 decisions.
 
-1. GD-031-01: choose path A (tag 0.3.0 on its own) or path B (milestone 1 inside v0.3.1), or authorize neither. The assessment recommends path B. The signature line is blank.
+1. GD-031-01: the Chief Executive ruled path B on 2026-10-22 at 4:00 PM ET. The v0.3.0 close is recorded inside the 0.3.1 release. There is no separate v0.3.0 tag. That ruling is drafted above and in [V030-CLOSE-RECORD.md](V030-CLOSE-RECORD.md). It is not signed. The signature line is blank. Status stays PENDING. The record is not approved. Release approver A and release approver B have not signed.
 2. GD-031-02: confirm that market-making does not include a take-rate. CEO direction on 2026-10-09 calls the commercial lines preparatory. The signature line is blank.
 3. GD-031-03: confirm that portable evidence is not a second product on AVC validate. CEO direction on 2026-10-09 keeps that commercial line preparatory. The signature line is blank.
 4. GD-031-04, GD-031-07, GD-031-08: define AACP, CIM fiction, and Gamma, or confirm they stay undefined and unreversed.
