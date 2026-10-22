@@ -1,0 +1,1884 @@
+diff --git a/intelwar/apps/intelwar-net/src/ai/adversarial.js b/intelwar/apps/intelwar-net/src/ai/adversarial.js
+index 5cadc259..e77f8546 100644
+--- a/intelwar/apps/intelwar-net/src/ai/adversarial.js
++++ b/intelwar/apps/intelwar-net/src/ai/adversarial.js
+@@ -3,6 +3,9 @@
+  * Structured outputs; Multi-Intelligence Transparency; never final authority.
+  */
+ 
++import { operatorHeaders, writeGuardHint } from "../lib/operator.js";
++import { passHeaders } from "../lib/join.js";
++
+ /**
+  * @typedef {'stress_test'|'cross_check'|'red_team'} AdversarialMode
+  */
+@@ -76,7 +79,7 @@ export function localStructureDryRun(input) {
+       },
+     ],
+     artifact_draft: {
+-      entry_kind: "AdversarialAnalysis",
++      entry_kind: "Analysis",
+       summary: `${mode} (dry-run): ${claim.slice(0, 100)}`,
+       voice_kind: "synthetic",
+       model_ids: ["local/structure-demo"],
+@@ -149,7 +152,7 @@ export async function runAdversarialRemote(apiBase, input) {
+   }
+   const res = await fetch(`${base}/api/adversarial/run`, {
+     method: "POST",
+-    headers: { "content-type": "application/json" },
++    headers: { "content-type": "application/json", ...passHeaders() },
+     body: JSON.stringify(input),
+   });
+   const body = await res.json().catch(() => ({}));
+@@ -209,6 +212,106 @@ export async function runAdversarial(apiBase, input, opts = {}) {
+   return remote;
+ }
+ 
++/**
++ * Delta view across cross-check runs: where models agree vs collide.
++ * Pure derivation — no scoring, no truth claim.
++ * @param {Array<Record<string, any>>} runs
++ */
++export function crosscheckDelta(runs) {
++  const list = Array.isArray(runs) ? runs : [];
++  const verdicts = { support: 0, challenge: 0, abstain: 0, other: 0 };
++  /** @type {Array<{model: string, verdict: string}>} */
++  const models = [];
++  const contradictions = new Set();
++  const assumptions = new Set();
++
++  for (const run of list) {
++    const c = run?.content && typeof run.content === "object" ? run.content : {};
++    const v = String(c.verdict_hint || "other").toLowerCase();
++    if (v === "support" || v === "challenge" || v === "abstain") {
++      verdicts[v] += 1;
++    } else {
++      verdicts.other += 1;
++    }
++    models.push({ model: String(run.model || "unknown"), verdict: v });
++    for (const x of Array.isArray(c.contradictions) ? c.contradictions : []) {
++      contradictions.add(String(x));
++    }
++    for (const x of Array.isArray(c.unstated_assumptions)
++      ? c.unstated_assumptions
++      : []) {
++      assumptions.add(String(x));
++    }
++  }
++
++  const distinct = ["support", "challenge", "abstain"].filter(
++    (k) => verdicts[k] > 0,
++  ).length;
++  return {
++    models,
++    verdicts,
++    disagreement: distinct > 1,
++    contradictions: [...contradictions],
++    assumptions: [...assumptions],
++  };
++}
++
++/**
++ * Promote an adversarial artifact into the Living Log via consent-gated
++ * Kernel append. Honest: returns the API's fail-closed errors untouched.
++ * @param {string} apiBase
++ * @param {Record<string, any>} artifact — artifact_draft from a run
++ */
++export async function promoteArtifactToLog(apiBase, artifact) {
++  const base = String(apiBase || "").replace(/\/$/, "");
++  if (!base) {
++    return { ok: false, error: "log_api_unconfigured", fail_closed: true };
++  }
++  if (!artifact || artifact.provenance?.eligible_for_log === false) {
++    return { ok: false, error: "not_log_eligible", fail_closed: true };
++  }
++  const payload = {
++    event_type: artifact.event_type || "analysis.unknown",
++    provider: artifact.provider || "openrouter",
++    model_ids: artifact.model_ids || [],
++    cost_micro_usd: artifact.cost_micro_usd || 0,
++    disclosure: artifact.disclosure || "",
++    merit_scope: artifact.provenance?.merit_scope || "provisional",
++    sections: (artifact.sections || []).map((s) => ({
++      model: s.model,
++      role: s.role || null,
++      verdict_hint: s.content?.verdict_hint || null,
++      consistency: s.content?.consistency?.rating || null,
++      evidence: s.content?.evidence_strength?.rating || null,
++    })),
++  };
++  try {
++    const res = await fetch(`${base}/api/log/append`, {
++      method: "POST",
++      headers: { "content-type": "application/json", ...operatorHeaders() },
++      body: JSON.stringify({
++        summary: `artifact ${artifact.event_type || "analysis"}: ${String(artifact.summary || "").slice(0, 130)}`,
++        entry_kind: "Analysis",
++        voice_kind: "synthetic",
++        model_id: (artifact.model_ids || []).join(",") || "openrouter",
++        tool: "intelwar-ai-promote",
++        payload: JSON.stringify(payload),
++      }),
++    });
++    const body = await res.json().catch(() => ({}));
++    if (!res.ok && !body.message) {
++      body.message = writeGuardHint(body, res.status);
++    }
++    return { ...body, http_status: res.status };
++  } catch (err) {
++    return {
++      ok: false,
++      error: "promote_fetch_failed",
++      message: err instanceof Error ? err.message : "failed",
++    };
++  }
++}
++
+ /**
+  * Normalize stress-test content for UI whether frontier or dry-run.
+  * @param {Record<string, unknown>} run
+diff --git a/intelwar/apps/intelwar-net/src/ai/adversarial.test.js b/intelwar/apps/intelwar-net/src/ai/adversarial.test.js
+index af5104a4..68e587b2 100644
+--- a/intelwar/apps/intelwar-net/src/ai/adversarial.test.js
++++ b/intelwar/apps/intelwar-net/src/ai/adversarial.test.js
+@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
+ import {
+   adversarialSessionId,
+   consumeAdversarialHandoff,
++  crosscheckDelta,
+   formatMicroUsd,
+   localStructureDryRun,
+   normalizeStressSections,
+@@ -47,6 +48,34 @@ describe("adversarial dry-run", () => {
+     assert.equal(adversarialSessionId(), adversarialSessionId());
+   });
+ 
++  it("crosscheckDelta detects convergence vs friction", () => {
++    const agree = crosscheckDelta([
++      { model: "a/x", content: { verdict_hint: "support" } },
++      { model: "b/y", content: { verdict_hint: "support" } },
++    ]);
++    assert.equal(agree.disagreement, false);
++    assert.equal(agree.verdicts.support, 2);
++
++    const split = crosscheckDelta([
++      {
++        model: "a/x",
++        content: { verdict_hint: "support", contradictions: ["c1"] },
++      },
++      {
++        model: "b/y",
++        content: {
++          verdict_hint: "challenge",
++          contradictions: ["c1", "c2"],
++          unstated_assumptions: ["u1"],
++        },
++      },
++    ]);
++    assert.equal(split.disagreement, true);
++    assert.deepEqual(split.contradictions, ["c1", "c2"]);
++    assert.deepEqual(split.assumptions, ["u1"]);
++    assert.equal(split.models.length, 2);
++  });
++
+   it("stages and consumes .tv handoff once", () => {
+     assert.equal(
+       stageAdversarialHandoff({
+diff --git a/intelwar/apps/intelwar-net/src/ai/crosscheck.js b/intelwar/apps/intelwar-net/src/ai/crosscheck.js
+index aef83db4..3b5125ee 100644
+--- a/intelwar/apps/intelwar-net/src/ai/crosscheck.js
++++ b/intelwar/apps/intelwar-net/src/ai/crosscheck.js
+@@ -2,6 +2,8 @@
+  * .ai crosscheck client — sign via API demo key, verify via core bin.
+  */
+ 
++import { operatorHeaders, writeGuardHint } from "../lib/operator.js";
++
+ /**
+  * @param {object} draft
+  */
+@@ -57,7 +59,7 @@ export async function signDemoCrossCheck(apiBase, draft) {
+   }
+   const res = await fetch(`${base}/api/crosscheck/sign-demo`, {
+     method: "POST",
+-    headers: { "content-type": "application/json" },
++    headers: { "content-type": "application/json", ...operatorHeaders() },
+     body: JSON.stringify({
+       subject_entry_hash_hex: draft.subject_entry_hash_hex,
+       verdict: draft.verdict || "abstain",
+@@ -66,6 +68,9 @@ export async function signDemoCrossCheck(apiBase, draft) {
+     }),
+   });
+   const body = await res.json().catch(() => ({}));
++  if (!res.ok && !body.message) {
++    body.message = writeGuardHint(body, res.status);
++  }
+   return { ...body, http_status: res.status };
+ }
+ 
+diff --git a/intelwar/apps/intelwar-net/src/components/ConsentDemo.jsx b/intelwar/apps/intelwar-net/src/components/ConsentDemo.jsx
+index e60b6ca0..4cd8cb67 100644
+--- a/intelwar/apps/intelwar-net/src/components/ConsentDemo.jsx
++++ b/intelwar/apps/intelwar-net/src/components/ConsentDemo.jsx
+@@ -1,4 +1,5 @@
+ import { useState } from "react";
++import { operatorHeaders, writeGuardHint } from "../lib/operator.js";
+ 
+ export default function ConsentDemo({
+   apiBase,
+@@ -17,10 +18,14 @@ export default function ConsentDemo({
+     try {
+       const res = await fetch(`${apiBase}/api/consent/grant`, {
+         method: "POST",
+-        headers: { "content-type": "application/json" },
++        headers: { "content-type": "application/json", ...operatorHeaders() },
+         body: JSON.stringify({}),
+       });
+       const data = await res.json();
++      if (!res.ok) {
++        setStatus(writeGuardHint(data, res.status));
++        return;
++      }
+       onConsentChange(data.consent);
+       setStatus("Active consent stored for Kernel bridge wire.");
+     } finally {
+@@ -31,8 +36,15 @@ export default function ConsentDemo({
+   async function revoke() {
+     setBusy(true);
+     try {
+-      const res = await fetch(`${apiBase}/api/consent/revoke`, { method: "POST" });
++      const res = await fetch(`${apiBase}/api/consent/revoke`, {
++        method: "POST",
++        headers: { ...operatorHeaders() },
++      });
+       const data = await res.json();
++      if (!res.ok) {
++        setStatus(writeGuardHint(data, res.status));
++        return;
++      }
+       onConsentChange(data.consent);
+       setStatus("Consent revoked.");
+     } finally {
+@@ -47,7 +59,7 @@ export default function ConsentDemo({
+     try {
+       const res = await fetch(`${apiBase}/api/log/append`, {
+         method: "POST",
+-        headers: { "content-type": "application/json" },
++        headers: { "content-type": "application/json", ...operatorHeaders() },
+         body: JSON.stringify({
+           summary: summary || "Consent-gated Kernel observation",
+           voice_kind: voiceKind,
+@@ -58,7 +70,7 @@ export default function ConsentDemo({
+       });
+       const data = await res.json();
+       if (!res.ok) {
+-        setStatus(data.message || data.error || "Append denied");
++        setStatus(writeGuardHint(data, res.status));
+         return;
+       }
+       setSummary("");
+diff --git a/intelwar/apps/intelwar-net/src/components/LivingLogViewer.jsx b/intelwar/apps/intelwar-net/src/components/LivingLogViewer.jsx
+index 36afbff1..9333a382 100644
+--- a/intelwar/apps/intelwar-net/src/components/LivingLogViewer.jsx
++++ b/intelwar/apps/intelwar-net/src/components/LivingLogViewer.jsx
+@@ -1,4 +1,27 @@
+-export default function LivingLogViewer({ entries, loading, error }) {
++import { useEffect, useRef, useState } from "react";
++
++/** Shareable proof-artifact permalink for a Kernel-adjudicated entry. */
++function permalinkFor(entryId) {
++  if (typeof window === "undefined") return `#log=${entryId}`;
++  const { protocol, host, pathname } = window.location;
++  return `${protocol}//${host}${pathname}#log=${encodeURIComponent(entryId)}`;
++}
++
++export default function LivingLogViewer({
++  entries,
++  loading,
++  error,
++  highlightId = null,
++}) {
++  const [copiedId, setCopiedId] = useState(null);
++  const highlightRef = useRef(null);
++
++  useEffect(() => {
++    if (highlightId && highlightRef.current) {
++      highlightRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
++    }
++  }, [highlightId, entries?.length]);
++
+   if (loading) {
+     return (
+       <div className="skeleton-stack" aria-busy="true" aria-label="Loading log">
+@@ -30,24 +53,48 @@ export default function LivingLogViewer({ entries, loading, error }) {
+     );
+   }
+ 
++  async function copyPermalink(entryId) {
++    try {
++      await navigator.clipboard.writeText(permalinkFor(entryId));
++      setCopiedId(entryId);
++      setTimeout(() => setCopiedId(null), 2000);
++    } catch {
++      /* clipboard unavailable — no-op */
++    }
++  }
++
+   return (
+     <ul className="log-list">
+-      {entries.map((entry) => (
+-        <li className="log-item" key={entry.entry_id}>
+-          <div className="log-item-head">
+-            {entry.simulated ? <span className="badge">Simulated</span> : (
+-              <span className="badge badge-real">Kernel</span>
+-            )}
+-            <strong>{entry.summary}</strong>
+-          </div>
+-          <div className="meta">
+-            <span>{entry.entry_kind}</span>
+-            <span className="mono">{entry.author_did}</span>
+-            <span>voice: {entry.voice_kind}</span>
+-            <span>scope: {entry.consent_scope}</span>
+-          </div>
+-        </li>
+-      ))}
++      {entries.map((entry) => {
++        const highlighted = highlightId && entry.entry_id === highlightId;
++        return (
++          <li
++            className={`log-item ${highlighted ? "is-highlighted" : ""}`}
++            key={entry.entry_id}
++            ref={highlighted ? highlightRef : undefined}
++          >
++            <div className="log-item-head">
++              {entry.simulated ? <span className="badge">Simulated</span> : (
++                <span className="badge badge-real">Kernel</span>
++              )}
++              <strong>{entry.summary}</strong>
++            </div>
++            <div className="meta">
++              <span>{entry.entry_kind}</span>
++              <span className="mono">{entry.author_did}</span>
++              <span>voice: {entry.voice_kind}</span>
++              <span>scope: {entry.consent_scope}</span>
++              <button
++                type="button"
++                className="inline-link log-permalink"
++                onClick={() => copyPermalink(entry.entry_id)}
++              >
++                {copiedId === entry.entry_id ? "copied ✓" : "permalink"}
++              </button>
++            </div>
++          </li>
++        );
++      })}
+     </ul>
+   );
+ }
+diff --git a/intelwar/apps/intelwar-net/src/components/SiteFooter.jsx b/intelwar/apps/intelwar-net/src/components/SiteFooter.jsx
+index 144e8e08..70452e25 100644
+--- a/intelwar/apps/intelwar-net/src/components/SiteFooter.jsx
++++ b/intelwar/apps/intelwar-net/src/components/SiteFooter.jsx
+@@ -55,7 +55,17 @@ export default function SiteFooter({ onNavigate }) {
+               </a>
+             </li>
+             <li>
+-              <button type="button" onClick={() => onNavigate("org")}>
++              <button
++                type="button"
++                onClick={() => {
++                  onNavigate("org");
++                  requestAnimationFrame(() => {
++                    document
++                      .getElementById("constitutional-engine")
++                      ?.scrollIntoView({ behavior: "smooth" });
++                  });
++                }}
++              >
+                 Review the Constitution
+               </button>
+             </li>
+diff --git a/intelwar/apps/intelwar-net/src/components/ai/MultiModelPanels.jsx b/intelwar/apps/intelwar-net/src/components/ai/MultiModelPanels.jsx
+index 818b7c41..f786aaf8 100644
+--- a/intelwar/apps/intelwar-net/src/components/ai/MultiModelPanels.jsx
++++ b/intelwar/apps/intelwar-net/src/components/ai/MultiModelPanels.jsx
+@@ -1,5 +1,5 @@
+-import { useState } from "react";
+-import { runAdversarial } from "../../ai/adversarial.js";
++import { useEffect, useState } from "react";
++import { crosscheckDelta, runAdversarial } from "../../ai/adversarial.js";
+ import RunMeta from "./RunMeta.jsx";
+ 
+ export function CrossCheckAdversarial({
+@@ -12,6 +12,12 @@ export function CrossCheckAdversarial({
+   const [busy, setBusy] = useState(false);
+   const [result, setResult] = useState(null);
+ 
++  useEffect(() => {
++    if (initialClaim) {
++      setClaim((prev) => (prev.trim() ? prev : initialClaim));
++    }
++  }, [initialClaim]);
++
+   async function onRun() {
+     setBusy(true);
+     setResult(null);
+@@ -67,6 +73,7 @@ export function CrossCheckAdversarial({
+             )}
+             <span>final_authority: false</span>
+           </div>
++          <DeltaView runs={result.runs} />
+           <div className="adv-compare-grid">
+             {(result.runs || []).map((run) => {
+               const c = run.content || {};
+@@ -131,6 +138,46 @@ export function CrossCheckAdversarial({
+   );
+ }
+ 
++/** Friction points between models — comparison, not stacked text. */
++function DeltaView({ runs }) {
++  const delta = crosscheckDelta(runs);
++  if (!delta.models.length) return null;
++  return (
++    <div className={`adv-delta ${delta.disagreement ? "is-split" : ""}`}>
++      <p className="adv-delta-verdicts">
++        {delta.disagreement
++          ? "Models disagree — friction points below."
++          : "Models converge on this claim."}{" "}
++        {delta.models.map((m) => (
++          <span key={m.model} className="adv-delta-chip">
++            <code>{m.model.split("/")[1] || m.model}</code> {m.verdict}
++          </span>
++        ))}
++      </p>
++      {delta.contradictions.length ? (
++        <div className="adv-block">
++          <h4>Contradictions raised (union)</h4>
++          <ul>
++            {delta.contradictions.slice(0, 6).map((c) => (
++              <li key={c}>{c}</li>
++            ))}
++          </ul>
++        </div>
++      ) : null}
++      {delta.assumptions.length ? (
++        <div className="adv-block">
++          <h4>Unstated assumptions flagged</h4>
++          <ul>
++            {delta.assumptions.slice(0, 6).map((a) => (
++              <li key={a}>{a}</li>
++            ))}
++          </ul>
++        </div>
++      ) : null}
++    </div>
++  );
++}
++
+ export function RedTeamPanel({
+   apiBase,
+   onPromote,
+@@ -141,6 +188,12 @@ export function RedTeamPanel({
+   const [busy, setBusy] = useState(false);
+   const [result, setResult] = useState(null);
+ 
++  useEffect(() => {
++    if (initialClaim) {
++      setClaim((prev) => (prev.trim() ? prev : initialClaim));
++    }
++  }, [initialClaim]);
++
+   async function onRun() {
+     setBusy(true);
+     setResult(null);
+@@ -213,6 +266,11 @@ export function RedTeamPanel({
+           </button>
+         </div>
+       ) : null}
++      {result && !result.ok ? (
++        <div className="adv-error">
++          <p>{result.message || result.error}</p>
++        </div>
++      ) : null}
+     </div>
+   );
+ }
+diff --git a/intelwar/apps/intelwar-net/src/components/ai/StressTestPanel.jsx b/intelwar/apps/intelwar-net/src/components/ai/StressTestPanel.jsx
+index 0538b63f..26e3582c 100644
+--- a/intelwar/apps/intelwar-net/src/components/ai/StressTestPanel.jsx
++++ b/intelwar/apps/intelwar-net/src/components/ai/StressTestPanel.jsx
+@@ -1,4 +1,4 @@
+-import { useState } from "react";
++import { useEffect, useState } from "react";
+ import {
+   normalizeStressSections,
+   runAdversarial,
+@@ -24,6 +24,16 @@ export default function StressTestPanel({
+   const [steelman, setSteelman] = useState(true);
+   const [busy, setBusy] = useState(false);
+   const [result, setResult] = useState(null);
++  const [round, setRound] = useState(0);
++  const [defense, setDefense] = useState("");
++
++  // Handoff (.tv → .ai) resolves after mount; adopt it unless the user
++  // already started typing their own claim.
++  useEffect(() => {
++    if (initialClaim) {
++      setClaim((prev) => (prev.trim() ? prev : initialClaim));
++    }
++  }, [initialClaim]);
+ 
+   const toggleFocus = (id) => {
+     setFocus((prev) =>
+@@ -31,17 +41,19 @@ export default function StressTestPanel({
+     );
+   };
+ 
+-  async function onRun() {
++  async function runRound(claimText, nextRound) {
+     setBusy(true);
+-    setResult(null);
++    if (nextRound === 1) setResult(null);
+     try {
+       const out = await runAdversarial(apiBase, {
+         mode: "stress_test",
+-        claim,
++        claim: claimText,
+         focus,
+         steelman_first: steelman,
+       });
+       setResult(out);
++      setRound(nextRound);
++      setDefense("");
+     } catch (err) {
+       setResult({
+         ok: false,
+@@ -53,6 +65,19 @@ export default function StressTestPanel({
+     }
+   }
+ 
++  function onRun() {
++    return runRound(claim, 1);
++  }
++
++  function onIterate() {
++    const combined = [
++      `ORIGINAL CLAIM (round ${round}):\n${claim}`,
++      `AUTHOR'S DEFENSE / REFINEMENT (round ${round + 1}):\n${defense.trim()}`,
++      "Re-run the stress test against the refined position. Credit fortifications that answer prior vulnerabilities; press remaining weaknesses harder.",
++    ].join("\n\n");
++    return runRound(combined, round + 1);
++  }
++
+   const section =
+     result?.ok && result.runs?.[0]
+       ? normalizeStressSections(result.runs[0])
+@@ -142,6 +167,30 @@ export default function StressTestPanel({
+           ) : null}
+           {section.notes ? <p className="social-note">{section.notes}</p> : null}
+           <RunMeta result={result} />
++          <div className="adv-iterate">
++            <label className="adv-label">
++              Defend / refine (round {round + 1} continues this session&apos;s
++              cost meter)
++              <textarea
++                rows={3}
++                value={defense}
++                onChange={(e) => setDefense(e.target.value)}
++                placeholder="Answer the strongest counters, close an evidence gap, or narrow the claim…"
++              />
++            </label>
++            <button
++              type="button"
++              className="ghost"
++              disabled={busy || defense.trim().length < 8 || result.command_review}
++              onClick={onIterate}
++            >
++              {result.command_review
++                ? "Ceiling reached — Command Review"
++                : busy
++                  ? "Re-running…"
++                  : `Iterate → round ${round + 1}`}
++            </button>
++          </div>
+           <div className="cta-row">
+             <button
+               type="button"
+@@ -151,7 +200,7 @@ export default function StressTestPanel({
+             >
+               {result.dry_run
+                 ? "Not Log-eligible (dry-run)"
+-                : "Promote artifact → Log path"}
++                : "Promote artifact → Living Log"}
+             </button>
+           </div>
+         </div>
+diff --git a/intelwar/apps/intelwar-net/src/components/net/CampaignZeroPanel.jsx b/intelwar/apps/intelwar-net/src/components/net/CampaignZeroPanel.jsx
+index dc341d0f..86205491 100644
+--- a/intelwar/apps/intelwar-net/src/components/net/CampaignZeroPanel.jsx
++++ b/intelwar/apps/intelwar-net/src/components/net/CampaignZeroPanel.jsx
+@@ -1,4 +1,5 @@
+ import { useCallback, useEffect, useState } from "react";
++import { operatorHeaders, writeGuardHint } from "../../lib/operator.js";
+ 
+ /**
+  * Campaign Zero — the founding campaign panel on intelwar.net.
+@@ -40,13 +41,14 @@ export default function CampaignZeroPanel({ apiBase, consentActive, onSeeded })
+     try {
+       const res = await fetch(`${apiBase}/api/campaign-zero/seed`, {
+         method: "POST",
++        headers: { ...operatorHeaders() },
+       });
+       const body = await res.json();
+       if (!res.ok || !body.ok) {
+         setFlash(
+           body.error === "consent_required"
+             ? "Consent required — grant Active consent in the section below, then seed."
+-            : `Seed failed: ${body.message || body.error}`,
++            : `Seed blocked: ${writeGuardHint(body, res.status)}`,
+         );
+       } else {
+         setFlash(
+diff --git a/intelwar/apps/intelwar-net/src/components/tv/FilmstripTheatre.jsx b/intelwar/apps/intelwar-net/src/components/tv/FilmstripTheatre.jsx
+index 81c46451..43a1b546 100644
+--- a/intelwar/apps/intelwar-net/src/components/tv/FilmstripTheatre.jsx
++++ b/intelwar/apps/intelwar-net/src/components/tv/FilmstripTheatre.jsx
+@@ -442,7 +442,7 @@ export default function FilmstripTheatre({ onNavigate }) {
+               <span className="critical-node">Critical node</span>
+             ) : null}
+             {active?.logBound ? (
+-              <span className="log-bound">Bound to Living Log</span>
++              <span className="log-bound">Bind proposed · pending Kernel</span>
+             ) : (
+               <span className="log-unbound">Preview · not yet bound</span>
+             )}
+@@ -527,7 +527,7 @@ export default function FilmstripTheatre({ onNavigate }) {
+               onClick={bindToLog}
+               disabled={active?.logBound}
+             >
+-              {active?.logBound ? "Already bound" : "Propose Log bind"}
++              {active?.logBound ? "Bind proposed (pending Kernel)" : "Propose Log bind"}
+             </button>
+           </div>
+           {bindFlash ? <p className="bind-flash">{bindFlash}</p> : null}
+@@ -925,7 +925,7 @@ function ForkStudio({ scene, onClose, onSubmit, liveLocked }) {
+                 challenge:
+                   challenge.trim() ||
+                   "Fork opened without prose — pressure the premise.",
+-                forkMode: forkMode === "ai" ? "ai" : "human",
++                forkMode,
+               })
+             }
+           >
+diff --git a/intelwar/apps/intelwar-net/src/lib/surface.js b/intelwar/apps/intelwar-net/src/lib/surface.js
+index 65e6a21e..95df448d 100644
+--- a/intelwar/apps/intelwar-net/src/lib/surface.js
++++ b/intelwar/apps/intelwar-net/src/lib/surface.js
+@@ -68,7 +68,9 @@ export function resolveSurface(
+   if (hash === "tv" || hash.startsWith("tv/") || hash === "provenance") {
+     return "tv";
+   }
+-  if (hash === "net" || hash === "log") return "net";
++  if (hash === "net" || hash === "log" || hash.startsWith("log=")) {
++    return "net";
++  }
+   return "org";
+ }
+ 
+diff --git a/intelwar/apps/intelwar-net/src/styles.css b/intelwar/apps/intelwar-net/src/styles.css
+index a5331fe5..343ac738 100644
+--- a/intelwar/apps/intelwar-net/src/styles.css
++++ b/intelwar/apps/intelwar-net/src/styles.css
+@@ -167,6 +167,12 @@ code {
+   --accent-wash: rgba(61, 90, 64, 0.12);
+ }
+ 
++.surface-net {
++  --accent: #345942;
++  --accent-strong: #27452f;
++  --accent-wash: rgba(52, 89, 66, 0.12);
++}
++
+ .inline-link {
+   appearance: none;
+   border: 0;
+@@ -2193,6 +2199,179 @@ textarea {
+   color: var(--ink-soft);
+ }
+ 
++/* Iteration loop */
++.adv-iterate {
++  display: grid;
++  gap: 0.5rem;
++  border-top: 1px dashed var(--panel-edge);
++  padding-top: 0.75rem;
++}
++
++/* Delta view — model friction */
++.adv-delta {
++  display: grid;
++  gap: 0.6rem;
++  padding: 0.75rem 0.9rem;
++  border: 1px solid var(--panel-edge);
++  border-radius: var(--radius);
++  background: rgba(20, 24, 22, 0.02);
++}
++
++.adv-delta.is-split {
++  border-color: rgba(138, 75, 42, 0.4);
++  background: rgba(138, 75, 42, 0.05);
++}
++
++.adv-delta-verdicts {
++  margin: 0;
++  font-size: 0.85rem;
++  color: var(--ink-soft);
++  display: flex;
++  flex-wrap: wrap;
++  gap: 0.4rem;
++  align-items: center;
++}
++
++.adv-delta-chip {
++  display: inline-flex;
++  gap: 0.3rem;
++  align-items: center;
++  padding: 0.15rem 0.5rem;
++  border: 1px solid var(--panel-edge);
++  border-radius: 999px;
++  font-size: 0.75rem;
++}
++
++.adv-delta-chip code {
++  font-size: 0.72rem;
++}
++
++/* Log signals strip */
++.log-signals {
++  display: flex;
++  flex-wrap: wrap;
++  gap: 0.45rem;
++  align-items: center;
++  margin-bottom: 0.85rem;
++}
++
++.log-signals-note {
++  font-size: 0.75rem;
++  color: var(--ink-soft);
++  font-style: italic;
++}
++
++/* Permalink + highlight */
++.log-permalink {
++  font-size: 0.78rem;
++}
++
++.log-item.is-highlighted {
++  outline: 2px solid var(--accent);
++  outline-offset: 2px;
++  border-radius: var(--radius);
++}
++
++/* Campaign Zero rail on .tv */
++.cz-rail {
++  display: grid;
++  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
++  gap: 0.75rem;
++}
++
++.cz-rail-card {
++  border: 1px solid var(--panel-edge);
++  border-radius: var(--radius);
++  padding: 0.85rem 1rem;
++  background: var(--panel);
++  display: grid;
++  gap: 0.45rem;
++}
++
++.cz-rail-card header {
++  display: flex;
++  flex-wrap: wrap;
++  gap: 0.4rem;
++  align-items: center;
++}
++
++.cz-rail-card p {
++  margin: 0;
++  font-size: 0.9rem;
++  color: var(--ink-soft);
++  line-height: 1.45;
++}
++
++.cz-rail-receipt {
++  font-size: 0.72rem;
++  color: var(--ink-soft);
++}
++
++.campaign-card-live {
++  border-color: rgba(52, 89, 66, 0.55);
++  background: rgba(52, 89, 66, 0.05);
++}
++
++/* Operator token (write-surface guard) */
++.operator-token {
++  display: grid;
++  gap: 0.5rem;
++  padding: 0.9rem 1rem;
++  margin-bottom: 0.9rem;
++  border: 1px dashed var(--panel-edge);
++  border-radius: var(--radius);
++  background: rgba(20, 24, 22, 0.02);
++}
++
++.operator-token input {
++  font: inherit;
++  padding: 0.55rem 0.7rem;
++  border: 1px solid var(--panel-edge);
++  border-radius: var(--radius);
++  background: var(--panel);
++  color: var(--ink);
++}
++
++/* Join — Frontier Pass */
++.join-panel {
++  display: grid;
++  gap: 0.75rem;
++  padding: 1.1rem 1.2rem;
++  border: 1px solid var(--panel-edge);
++  border-radius: var(--radius);
++  background: var(--panel);
++  max-width: 560px;
++}
++
++.join-price {
++  display: flex;
++  align-items: baseline;
++  gap: 0.6rem;
++}
++
++.join-price strong {
++  font-family: var(--font-display);
++  font-size: 1.8rem;
++  letter-spacing: -0.02em;
++}
++
++.join-price span {
++  color: var(--ink-soft);
++  font-size: 0.85rem;
++}
++
++.join-econ {
++  margin: 0;
++  font-size: 0.85rem;
++  color: var(--ink-soft);
++  line-height: 1.5;
++}
++
++.join-econ em {
++  font-style: italic;
++  font-size: 0.78rem;
++}
++
+ /* Reputation mechanics */
+ 
+ .rep-stance {
+diff --git a/intelwar/apps/intelwar-net/src/surfaces/AiSurface.jsx b/intelwar/apps/intelwar-net/src/surfaces/AiSurface.jsx
+index a77726e0..971b2eb3 100644
+--- a/intelwar/apps/intelwar-net/src/surfaces/AiSurface.jsx
++++ b/intelwar/apps/intelwar-net/src/surfaces/AiSurface.jsx
+@@ -1,6 +1,8 @@
+ import { useCallback, useEffect, useState } from "react";
+ import ArenaMark from "../components/ArenaMark.jsx";
+ import CrossCheckPanel from "../components/CrossCheckPanel.jsx";
++import JoinPanel from "../components/ai/JoinPanel.jsx";
++import OperatorTokenField from "../components/net/OperatorTokenField.jsx";
+ import StressTestPanel from "../components/ai/StressTestPanel.jsx";
+ import {
+   CrossCheckAdversarial,
+@@ -10,6 +12,7 @@ import {
+   consumeAdversarialHandoff,
+   fetchAdversarialCatalog,
+   formatMicroUsd,
++  promoteArtifactToLog,
+ } from "../ai/adversarial.js";
+ 
+ const MODES = [
+@@ -55,24 +58,33 @@ export default function AiSurface({ apiBase, entries, onNavigate }) {
+   }, [apiBase]);
+ 
+   const onPromote = useCallback(
+-    (artifact) => {
++    async (artifact) => {
+       if (!artifact) return;
+       try {
+         sessionStorage.setItem(
+           "intelwar_adversarial_artifact",
+-          JSON.stringify({
+-            ...artifact,
+-            promoted_at_label: "session",
+-          }),
++          JSON.stringify({ ...artifact, promoted_at_label: "session" }),
+         );
+       } catch {
+-        /* ignore */
++        /* staging is best-effort */
++      }
++      setPromoteNote("Promoting artifact through consent-gated Kernel append…");
++      const res = await promoteArtifactToLog(apiBase, artifact);
++      if (res.ok && res.entry) {
++        setPromoteNote(
++          `Artifact appended to the Living Log — entry ${String(res.entry.entry_id).slice(0, 18)}… (receipt ${String(res.entry.receipt_hash).slice(0, 12)}…). AI is not final authority.`,
++        );
++      } else if (res.error === "consent_required" || res.http_status === 403) {
++        setPromoteNote(
++          "Promote blocked: grant Active consent on .net (Consent-gated append), then promote again. Artifact staged in session.",
++        );
++      } else {
++        setPromoteNote(
++          `Promote failed closed: ${res.message || res.error || "log-api unavailable"}. Artifact staged in session — nothing was written.`,
++        );
+       }
+-      setPromoteNote(
+-        "Artifact staged in session. Deploy to Living Log on .net with consent — Kernel path required. AI is not final authority.",
+-      );
+     },
+-    [],
++    [apiBase],
+   );
+ 
+   return (
+@@ -179,7 +191,7 @@ export default function AiSurface({ apiBase, entries, onNavigate }) {
+         </div>
+       </section>
+ 
+-      {catalog?.models ? (
++      {catalog?.models && Object.keys(catalog.models).length ? (
+         <section className="section section-muted">
+           <div className="section-head">
+             <h2>Model routing (OpenRouter)</h2>
+@@ -281,8 +293,9 @@ export default function AiSurface({ apiBase, entries, onNavigate }) {
+             <p className="support">
+               Kernel attestation path — sign-demo + INTELWAR_CROSSCHECK_BIN.
+               Distinct from OpenRouter analytical pressure. Fail-closed without
+-              bins.
++              bins. Signing is operator-guarded.
+             </p>
++            <OperatorTokenField />
+             <div className="panel" data-panel="crosscheck">
+               <CrossCheckPanel apiBase={apiBase} entries={entries} />
+             </div>
+@@ -290,6 +303,8 @@ export default function AiSurface({ apiBase, entries, onNavigate }) {
+         ) : null}
+       </section>
+ 
++      <JoinPanel apiBase={apiBase} />
++
+       <section className="section section-deep">
+         <details className="engine-details">
+           <summary>Governance & boundaries</summary>
+diff --git a/intelwar/apps/intelwar-net/src/surfaces/NetSurface.jsx b/intelwar/apps/intelwar-net/src/surfaces/NetSurface.jsx
+index 7ffe2984..b207d50c 100644
+--- a/intelwar/apps/intelwar-net/src/surfaces/NetSurface.jsx
++++ b/intelwar/apps/intelwar-net/src/surfaces/NetSurface.jsx
+@@ -2,10 +2,19 @@ import ArenaMark from "../components/ArenaMark.jsx";
+ import CampaignZeroPanel from "../components/net/CampaignZeroPanel.jsx";
+ import ConsentDemo from "../components/ConsentDemo.jsx";
+ import LivingLogViewer from "../components/LivingLogViewer.jsx";
++import LogSignals from "../components/net/LogSignals.jsx";
++import OperatorTokenField from "../components/net/OperatorTokenField.jsx";
+ import SocialSurface from "./SocialSurface.jsx";
+ 
+ const apiBase = (import.meta.env.VITE_LOG_API_URL || "").replace(/\/$/, "");
+ 
++/** #log=<entry_id> permalink support (shareable proof artifacts). */
++function highlightedEntryId() {
++  if (typeof window === "undefined") return null;
++  const m = window.location.hash.match(/^#log=(.+)$/);
++  return m ? decodeURIComponent(m[1]) : null;
++}
++
+ export default function NetSurface({
+   entries,
+   loading,
+@@ -153,11 +162,18 @@ export default function NetSurface({
+             Append-only stream with multi-intelligence transparency. Rows marked
+             Simulated until Kernel adjudication via{" "}
+             <code>INTELWAR_CORE_BIN</code>. Social merit is earned here when
+-            contributions endure under reference and scrutiny.
++            contributions endure under reference and scrutiny. Every row has a
++            shareable permalink — a portable proof artifact.
+           </p>
+         </div>
++        <LogSignals apiBase={apiBase} />
+         <div className="panel" data-panel="living-log">
+-          <LivingLogViewer entries={entries} loading={loading} error={error} />
++          <LivingLogViewer
++            entries={entries}
++            loading={loading}
++            error={error}
++            highlightId={highlightedEntryId()}
++          />
+         </div>
+       </section>
+ 
+@@ -166,9 +182,12 @@ export default function NetSurface({
+           <h2>Consent-gated append</h2>
+           <p className="support">
+             Demo consent, then append. Constitutional bailment is enforced in{" "}
+-            <code>intelwar_core</code>, not in this Node fixture alone.
++            <code>intelwar_core</code>, not in this Node fixture alone. The
++            write surface is operator-guarded: reads stay public, mutations
++            require the token.
+           </p>
+         </div>
++        <OperatorTokenField />
+         <ConsentDemo
+           apiBase={apiBase}
+           consent={consent}
+diff --git a/intelwar/apps/intelwar-net/src/surfaces/OrgSurface.jsx b/intelwar/apps/intelwar-net/src/surfaces/OrgSurface.jsx
+index c71bd903..1bd72c86 100644
+--- a/intelwar/apps/intelwar-net/src/surfaces/OrgSurface.jsx
++++ b/intelwar/apps/intelwar-net/src/surfaces/OrgSurface.jsx
+@@ -68,7 +68,7 @@ const ROLES = [
+     description:
+       "Enter structured intellectual contests under the rules of the arena. Arguments must earn survival.",
+     action: "Enter contest",
+-    surface: "net",
++    surface: "press",
+   },
+   {
+     id: "crosschecker",
+@@ -186,6 +186,36 @@ export default function OrgSurface({ onNavigate }) {
+           </p>
+         </div>
+         <div className="campaign-board" role="list">
++          <article
++            key="campaign-zero"
++            className="campaign-card campaign-card-live"
++            role="listitem"
++          >
++            <div className="campaign-meta">
++              <span className="campaign-status status-active">
++                Founding · Live
++              </span>
++              <span className="campaign-terrain">
++                The arena&apos;s own design contest
++              </span>
++            </div>
++            <h3>Campaign Zero — The Founding of the Arena</h3>
++            <p>
++              The first real campaign: the architectural decisions and tensions
++              of building this system, Kernel-appended to the Living Log with
++              provenance and multi-intelligence attestation. Not a demo.
++            </p>
++            <p className="campaign-merit">
++              Founding merit sandboxed · nine entries on the record{" "}
++              <button
++                type="button"
++                className="inline-link"
++                onClick={() => onNavigate("net")}
++              >
++                view the founding record →
++              </button>
++            </p>
++          </article>
+           {CAMPAIGNS.map((c) => (
+             <article key={c.name} className="campaign-card" role="listitem">
+               <div className="campaign-meta">
+diff --git a/intelwar/apps/intelwar-net/src/surfaces/PressSurface.jsx b/intelwar/apps/intelwar-net/src/surfaces/PressSurface.jsx
+index cbf4ded4..70961b01 100644
+--- a/intelwar/apps/intelwar-net/src/surfaces/PressSurface.jsx
++++ b/intelwar/apps/intelwar-net/src/surfaces/PressSurface.jsx
+@@ -1,4 +1,5 @@
+ import ArenaMark from "../components/ArenaMark.jsx";
++import { stageAdversarialHandoff } from "../ai/adversarial.js";
+ 
+ const DISPATCHES = [
+   {
+@@ -299,7 +300,14 @@ export default function PressSurface({ onNavigate }) {
+               <button
+                 type="button"
+                 className="ghost role-cta"
+-                onClick={() => onNavigate("ai")}
++                onClick={() => {
++                  stageAdversarialHandoff({
++                    claim: `${c.claim}\n\nStakes: ${c.stakes}`,
++                    source: "press",
++                    mode: "cross",
++                  });
++                  onNavigate("ai");
++                }}
+               >
+                 Cross-check this claim →
+               </button>
+diff --git a/intelwar/apps/intelwar-net/src/surfaces/TvSurface.jsx b/intelwar/apps/intelwar-net/src/surfaces/TvSurface.jsx
+index 4a512126..c6df11e5 100644
+--- a/intelwar/apps/intelwar-net/src/surfaces/TvSurface.jsx
++++ b/intelwar/apps/intelwar-net/src/surfaces/TvSurface.jsx
+@@ -1,5 +1,6 @@
+ import ArenaMark from "../components/ArenaMark.jsx";
+ import ProvenanceViewer from "../components/ProvenanceViewer.jsx";
++import CampaignZeroRail from "../components/tv/CampaignZeroRail.jsx";
+ import FilmstripTheatre from "../components/tv/FilmstripTheatre.jsx";
+ 
+ /**
+@@ -117,6 +118,8 @@ export default function TvSurface({ entries, onNavigate }) {
+         <FilmstripTheatre onNavigate={onNavigate} />
+       </section>
+ 
++      <CampaignZeroRail onNavigate={onNavigate} />
++
+       <section
+         className="section section-muted"
+         id="tv-log-bond"
+diff --git a/intelwar/apps/intelwar-net/src/tv/filmstrip.js b/intelwar/apps/intelwar-net/src/tv/filmstrip.js
+index a9f05831..601aa217 100644
+--- a/intelwar/apps/intelwar-net/src/tv/filmstrip.js
++++ b/intelwar/apps/intelwar-net/src/tv/filmstrip.js
+@@ -424,17 +424,26 @@ export function createForkBranch({
+     meritBps: 1800,
+   });
+ 
++  const replyTitleByMode = {
++    ai: "Adversarial analysis",
++    micro: "Micro-debate reply",
++    frame: "New framing / evidence",
++    challenge: "Direct counter",
++  };
++  const replyCoreByMode = {
++    ai: "AI adversarial analysis isolates unstated assumptions and requests evidence under Log rules.",
++    micro: "Structured micro-debate reply contests the move without flooding the zone.",
++    frame: "A new framing or evidence packet enters the branch and must survive the same scrutiny.",
++    challenge: "A direct counter presses the claim's weakest premise head-on.",
++  };
+   const replyScene = makeScene({
+     id: replyId,
+     filmstripId: stripId,
+-    title: mode === "ai" ? "Adversarial analysis" : "Micro-debate reply",
+-    move: "rebuttal",
++    title: replyTitleByMode[mode] || replyTitleByMode.challenge,
++    move: mode === "frame" ? "evidence" : "rebuttal",
+     durationSec: 62,
+     openHook: "Pressure applied to the weakest premise.",
+-    core:
+-      mode === "ai"
+-        ? "AI adversarial analysis isolates unstated assumptions and requests evidence under Log rules."
+-        : "Structured micro-debate reply contests the move without flooding the zone.",
++    core: replyCoreByMode[mode] || replyCoreByMode.challenge,
+     closeHook: "Synthesis available — or escalate to the Living Log.",
+     parentSceneId: parentScene.id,
+     tags: {
+diff --git a/intelwar/apps/intelwar-net/src/tv/filmstrip.test.js b/intelwar/apps/intelwar-net/src/tv/filmstrip.test.js
+index da72b6fd..e34ce0fe 100644
+--- a/intelwar/apps/intelwar-net/src/tv/filmstrip.test.js
++++ b/intelwar/apps/intelwar-net/src/tv/filmstrip.test.js
+@@ -81,6 +81,24 @@ describe("seed campaign recursion", () => {
+ });
+ 
+ describe("fork branch atomization", () => {
++  it("fork modes produce distinct reply scenes (no silent collapse)", () => {
++    const { scenes } = buildSeedCampaign();
++    const parent = scenes.s03;
++    const titles = new Set();
++    for (const mode of ["ai", "micro", "frame", "challenge"]) {
++      const fork = createForkBranch({
++        parentScene: parent,
++        challenge: "Demand the missing receipt.",
++        mode,
++        salt: `m-${mode}`,
++      });
++      const reply = fork.scenes[1];
++      titles.add(reply.title);
++      if (mode === "frame") assert.equal(reply.move, "evidence");
++    }
++    assert.equal(titles.size, 4, "each fork mode must render honestly");
++  });
++
+   it("creates three scenes under a fork strip", () => {
+     const { scenes } = buildSeedCampaign();
+     const parent = scenes.s03;
+diff --git a/intelwar/docs/RAILWAY_DEPLOY.md b/intelwar/docs/RAILWAY_DEPLOY.md
+index f858943a..de161b9f 100644
+--- a/intelwar/docs/RAILWAY_DEPLOY.md
++++ b/intelwar/docs/RAILWAY_DEPLOY.md
+@@ -43,6 +43,22 @@ railway variable set \
+ # Optional frontier adversarial (intelwar.ai):
+ # railway variable set OPENROUTER_API_KEY="<key>" --service log-api
+ 
++# REQUIRED write guard — without it, all trust-mutating routes return 503:
++# openssl rand -hex 32 → INTELWAR_ADMIN_TOKEN
++railway variable set INTELWAR_ADMIN_TOKEN="<64-hex>" --service log-api
++# Consent grant/revoke, log append, campaign-zero seed, and crosscheck
++# sign/sign-demo require `Authorization: Bearer <token>`. Reads stay public.
++# CORS is allowlisted to intelwar.* origins; write + adversarial routes are
++# rate-limited per IP; adversarial runs carry a per-IP daily µUSD budget
++# (INTELWAR_IP_DAILY_BUDGET_MICRO_USD, default 2000000 = $2/day).
++
++# Optional Join / Frontier Pass ($3.69 — 3·6·9 — via Stripe Checkout;
++# fail-closed 503 on /api/join/* until set):
++# railway variable set STRIPE_SECRET_KEY="sk_live_…" --service log-api
++# Fee math at GET /api/join/economics: 369¢ − 41¢ Stripe ≈ 328¢ net.
++# Claims verified server-side (payment_status=paid); passes stored hashed
++# on the /data volume; pass raises the per-IP daily budget 5x for 30 days.
++
+ cd /tmp/intelwar-log-api-railway-ctx
+ railway up . --path-as-root --service log-api --ci --no-gitignore \
+   -m "Kernel-required log-api"
+diff --git a/intelwar/services/log-api/Dockerfile b/intelwar/services/log-api/Dockerfile
+index 24eb6cd4..1b66d139 100644
+--- a/intelwar/services/log-api/Dockerfile
++++ b/intelwar/services/log-api/Dockerfile
+@@ -23,7 +23,10 @@ COPY intelwar/services/log-api/server.js \
+      intelwar/services/log-api/crosscheck-verify.js \
+      intelwar/services/log-api/dagdb-persist.js \
+      intelwar/services/log-api/adversarial.js \
+-     intelwar/services/log-api/campaign-zero.js ./
++     intelwar/services/log-api/campaign-zero.js \
++     intelwar/services/log-api/odentity.js \
++     intelwar/services/log-api/security.js \
++     intelwar/services/log-api/join.js ./
+ RUN mkdir -p /app/native
+ COPY --from=rust-builder /app/target/release/intelwar-log-append /app/native/
+ COPY --from=rust-builder /app/target/release/intelwar-crosscheck-verify /app/native/
+diff --git a/intelwar/services/log-api/adversarial.js b/intelwar/services/log-api/adversarial.js
+index 7e1c343f..f02e99ec 100644
+--- a/intelwar/services/log-api/adversarial.js
++++ b/intelwar/services/log-api/adversarial.js
+@@ -470,7 +470,8 @@ function uniqueModels(list) {
+ 
+ function buildArtifactDraft(mode, claim, runs, cost) {
+   return {
+-    entry_kind: "AdversarialAnalysis",
++    // "Analysis" is a Kernel-supported entry kind (bridge parse_entry_kind).
++    entry_kind: "Analysis",
+     event_type: `analysis.${mode}`,
+     summary: `${mode}: ${claim.slice(0, 120)}`,
+     voice_kind: "synthetic",
+diff --git a/intelwar/services/log-api/package.json b/intelwar/services/log-api/package.json
+index 2c23ea4c..5ad41ed4 100644
+--- a/intelwar/services/log-api/package.json
++++ b/intelwar/services/log-api/package.json
+@@ -7,7 +7,7 @@
+   "scripts": {
+     "start": "node server.js",
+     "dev": "node --watch server.js",
+-    "test": "node --test test.js no-sim-success.test.js adversarial.test.js"
++    "test": "node --test test.js no-sim-success.test.js adversarial.test.js odentity.test.js consent-durability.test.js security.test.js join.test.js"
+   },
+   "engines": {
+     "node": ">=20"
+diff --git a/intelwar/services/log-api/server.js b/intelwar/services/log-api/server.js
+index c860a836..b7095e5d 100644
+--- a/intelwar/services/log-api/server.js
++++ b/intelwar/services/log-api/server.js
+@@ -7,9 +7,15 @@
+ import cors from "cors";
+ import express from "express";
+ import { spawn } from "node:child_process";
+-import { existsSync, readFileSync } from "node:fs";
++import {
++  existsSync,
++  mkdirSync,
++  readFileSync,
++  writeFileSync,
++} from "node:fs";
+ import { once } from "node:events";
+ import path from "node:path";
++import { buildOdentitySummary } from "./odentity.js";
+ import {
+   invokeCoreCrosscheckSign,
+   invokeCoreCrosscheckVerify,
+@@ -33,6 +39,26 @@ import {
+   foundingEntryPayload,
+   isCampaignZeroEntry,
+ } from "./campaign-zero.js";
++import {
++  DailyBudget,
++  RateBucket,
++  extractOperatorToken,
++  originAllowed,
++  tokenMatches,
++} from "./security.js";
++import {
++  JOIN_PRICE_CENTS,
++  PASS_BUDGET_MULTIPLIER,
++  PASS_VALID_DAYS,
++  createCheckoutSession,
++  feeBreakdownCents,
++  fetchCheckoutSession,
++  grossForNetCents,
++  issuePass,
++  passCount,
++  passValid,
++  stripeConfigured,
++} from "./join.js";
+ 
+ const PORT = Number(process.env.PORT || 8787);
+ const CORE_BIN = String(process.env.INTELWAR_CORE_BIN || "").trim();
+@@ -73,22 +99,128 @@ function loadMirrorEntries() {
+   }
+ }
+ 
++const CONSENT_PATH = path.join(CORE_STATE_DIR, "consent.json");
++
++/**
++ * Durable consent: volume-backed so a redeploy does not silently revoke.
++ * @returns {{ active: boolean, scope: string, bailor: string, bailee: string }}
++ */
++function loadConsent() {
++  const fallback = {
++    active: false,
++    scope: "log:append",
++    bailor: BAILOR_DID,
++    bailee: ACTOR_DID,
++  };
++  if (!existsSync(CONSENT_PATH)) return fallback;
++  try {
++    const raw = JSON.parse(readFileSync(CONSENT_PATH, "utf8"));
++    return {
++      active: raw.active === true,
++      scope: typeof raw.scope === "string" ? raw.scope : fallback.scope,
++      bailor: typeof raw.bailor === "string" ? raw.bailor : fallback.bailor,
++      bailee: typeof raw.bailee === "string" ? raw.bailee : fallback.bailee,
++    };
++  } catch {
++    return fallback;
++  }
++}
++
++function saveConsent(next) {
++  try {
++    mkdirSync(CORE_STATE_DIR, { recursive: true });
++    writeFileSync(CONSENT_PATH, JSON.stringify(next, null, 2));
++  } catch {
++    // Consent stays effective in-process; durability is best-effort and
++    // surfaced via GET /api/consent `durable` flag.
++  }
++}
++
+ /** @type {{ active: boolean, scope: string, bailor: string, bailee: string }} */
+-let consent = {
+-  active: false,
+-  scope: "log:append",
+-  bailor: BAILOR_DID,
+-  bailee: ACTOR_DID,
+-};
+-
+-app.use(cors());
++let consent = loadConsent();
++
++const ADMIN_TOKEN = String(process.env.INTELWAR_ADMIN_TOKEN || "").trim();
++const IP_DAILY_BUDGET_MICRO_USD = Number(
++  process.env.INTELWAR_IP_DAILY_BUDGET_MICRO_USD || 2_000_000,
++);
++
++app.set("trust proxy", 1);
++app.use(
++  cors({
++    origin(origin, cb) {
++      cb(null, originAllowed(origin));
++    },
++  }),
++);
+ app.use(express.json({ limit: "64kb" }));
+ 
++/**
++ * Operator write guard (interim until service-scoped auth, P-10).
++ * Fail closed: no token configured → the write surface is locked, not open.
++ */
++function requireOperator(req, res, next) {
++  if (!ADMIN_TOKEN) {
++    return res.status(503).json({
++      ok: false,
++      error: "write_guard_unconfigured",
++      fail_closed: true,
++      message:
++        "Write surface locked — set INTELWAR_ADMIN_TOKEN on log-api to enable operator writes.",
++    });
++  }
++  if (!tokenMatches(extractOperatorToken(req), ADMIN_TOKEN)) {
++    return res.status(401).json({
++      ok: false,
++      error: "operator_token_required",
++      message:
++        "Operator token required for trust-mutating routes (Authorization: Bearer …).",
++    });
++  }
++  return next();
++}
++
++const writeBucket = new RateBucket({ limit: 10, windowMs: 60_000 });
++const adversarialBucket = new RateBucket({ limit: 6, windowMs: 60_000 });
++const verifyBucket = new RateBucket({ limit: 30, windowMs: 60_000 });
++const joinBucket = new RateBucket({ limit: 6, windowMs: 60_000 });
++const ipBudget = new DailyBudget({ capMicroUsd: IP_DAILY_BUDGET_MICRO_USD });
++const passBudget = new DailyBudget({
++  capMicroUsd: IP_DAILY_BUDGET_MICRO_USD * PASS_BUDGET_MULTIPLIER,
++});
++
++/**
++ * @param {RateBucket} bucket
++ */
++function rateLimit(bucket) {
++  return (req, res, next) => {
++    const verdict = bucket.allow(String(req.ip || "unknown"), Date.now());
++    if (!verdict.allowed) {
++      res.setHeader(
++        "Retry-After",
++        String(Math.ceil(verdict.retry_after_ms / 1000)),
++      );
++      return res.status(429).json({
++        ok: false,
++        error: "rate_limited",
++        retry_after_ms: verdict.retry_after_ms,
++        message: "Rate limit — transparency, not punishment. Try again shortly.",
++      });
++    }
++    return next();
++  };
++}
++
++function utcDayKey() {
++  return new Date().toISOString().slice(0, 10);
++}
++
+ app.get("/health", (_req, res) => {
+   const ready = Boolean(CORE_BIN && CROSSCHECK_BIN);
+   res.status(ready ? 200 : 503).json({
+     status: ready ? "ok" : "kernel_required",
+     surface: "intelwar-log-api",
++    write_guard: ADMIN_TOKEN ? "operator_token" : "unconfigured_fail_closed",
++    stripe_configured: stripeConfigured(),
+     trust_claim: trustClaim(),
+     kernel_bridge_configured: Boolean(CORE_BIN),
+     crosscheck_verify_configured: Boolean(CROSSCHECK_BIN),
+@@ -173,7 +305,7 @@ async function writeAnalysisEventToLog(result) {
+  * Fail-closed without OPENROUTER_API_KEY. Never claims final authority.
+  * Cost ceilings enforced in code; analysis events written to the Living Log.
+  */
+-app.post("/api/adversarial/run", async (req, res) => {
++app.post("/api/adversarial/run", rateLimit(adversarialBucket), async (req, res) => {
+   if (!openRouterConfigured()) {
+     return res.status(503).json({
+       ok: false,
+@@ -184,13 +316,54 @@ app.post("/api/adversarial/run", async (req, res) => {
+       final_authority: false,
+     });
+   }
++  const ip = String(req.ip || "unknown");
++  const dayKey = utcDayKey();
++  const passToken = String(req.headers["x-intelwar-pass"] || "").trim();
++  const pass = passToken
++    ? passValid(CORE_STATE_DIR, passToken, Date.now())
++    : { valid: false };
++  const budget = pass.valid ? passBudget : ipBudget;
++  const budgetKey = pass.valid ? `pass:${passToken.slice(0, 16)}` : ip;
++  if (budget.remaining(budgetKey, dayKey) <= 0) {
++    return res.status(429).json({
++      ok: false,
++      error: "ip_daily_budget_exhausted",
++      tier: pass.valid ? "frontier_pass" : "free",
++      message:
++        "Daily frontier budget for this client is exhausted — resets at UTC midnight. Session transcripts remain yours.",
++      final_authority: false,
++    });
++  }
+   const body = req.body && typeof req.body === "object" ? req.body : {};
+   try {
+     const result = await runAdversarial(body);
++    const runCost = (result.runs || []).reduce(
++      (sum, r) => sum + (Number(r.cost_micro_usd) || 0),
++      0,
++    );
++    budget.add(budgetKey, dayKey, runCost);
++    if (result.cost) {
++      result.cost.tier = pass.valid ? "frontier_pass" : "free";
++    }
+     const logWrite =
+       body.skip_log_write === true
+         ? { attempted: false, ok: false, error: "skipped_by_caller" }
+         : await writeAnalysisEventToLog(result);
++    // Structured cost observability line (COST_MODEL.md enforcement evidence).
++    // eslint-disable-next-line no-console
++    console.log(
++      JSON.stringify({
++        event: "adversarial_run",
++        mode: result.mode,
++        session_id: result.cost?.session_id,
++        spent_micro_usd: result.cost?.spent_micro_usd,
++        ceiling_micro_usd: result.cost?.ceiling_micro_usd,
++        downgraded: result.cost?.downgraded,
++        hard_stopped: result.cost?.hard_stopped,
++        models_used: result.models_used,
++        log_write_ok: logWrite.ok,
++      }),
++    );
+     return res.status(200).json({ ...result, log_write: logWrite });
+   } catch (err) {
+     const status = err.code === "claim_required" || err.code === "claim_too_long"
+@@ -222,11 +395,120 @@ app.get("/api/adversarial/catalog", (_req, res) => {
+       kernel_ready: Boolean(CORE_BIN && CROSSCHECK_BIN),
+       consent_active: consent.active,
+     },
++    write_guard: ADMIN_TOKEN ? "operator_token" : "unconfigured_fail_closed",
+     final_authority: false,
+     note: "Multi-Intelligence Transparency — model identity always returned on runs.",
+   });
+ });
+ 
++/** Join economics — transparent integer-cent fee math (non-extractive charter). */
++app.get("/api/join/economics", (_req, res) => {
++  res.json({
++    ok: true,
++    provider: "stripe",
++    configured: stripeConfigured(),
++    price_cents: JOIN_PRICE_CENTS,
++    fees: feeBreakdownCents(JOIN_PRICE_CENTS),
++    gross_for_net_price_cents: grossForNetCents(JOIN_PRICE_CENTS),
++    pass: {
++      valid_days: PASS_VALID_DAYS,
++      budget_multiplier: PASS_BUDGET_MULTIPLIER,
++      free_daily_budget_micro_usd: IP_DAILY_BUDGET_MICRO_USD,
++      pass_daily_budget_micro_usd:
++        IP_DAILY_BUDGET_MICRO_USD * PASS_BUDGET_MULTIPLIER,
++    },
++    passes_issued: passCount(CORE_STATE_DIR),
++    charter:
++      "Reads, Log visibility, and rate-limited baseline access stay free. The pass buys frontier session volume only.",
++  });
++});
++
++/** Create a Stripe Checkout session for the $3.68 Frontier Pass. */
++app.post("/api/join/checkout", rateLimit(joinBucket), async (req, res) => {
++  if (!stripeConfigured()) {
++    return res.status(503).json({
++      ok: false,
++      error: "stripe_unconfigured",
++      fail_closed: true,
++      message: "Set STRIPE_SECRET_KEY on log-api to enable join checkout.",
++    });
++  }
++  const body = req.body && typeof req.body === "object" ? req.body : {};
++  const origin =
++    typeof body.return_origin === "string" &&
++    originAllowed(body.return_origin)
++      ? body.return_origin.replace(/\/$/, "")
++      : "https://intelwar.ai";
++  try {
++    const session = await createCheckoutSession({
++      successUrl: `${origin}/?join=success&session_id={CHECKOUT_SESSION_ID}`,
++      cancelUrl: `${origin}/?join=cancelled`,
++    });
++    return res.status(200).json({ ok: true, url: session.url });
++  } catch (err) {
++    return res.status(err.status && err.status < 600 ? err.status : 503).json({
++      ok: false,
++      error: err.code || "stripe_checkout_failed",
++      message: err.message || "checkout failed",
++      fail_closed: true,
++    });
++  }
++});
++
++/** Verify payment server-side with Stripe, then issue a pass (double-claim safe). */
++app.get("/api/join/claim", rateLimit(joinBucket), async (req, res) => {
++  if (!stripeConfigured()) {
++    return res.status(503).json({
++      ok: false,
++      error: "stripe_unconfigured",
++      fail_closed: true,
++    });
++  }
++  const sessionId = String(req.query.session_id || "").trim();
++  if (!sessionId || sessionId.length > 200) {
++    return res.status(400).json({ ok: false, error: "session_id_required" });
++  }
++  try {
++    const session = await fetchCheckoutSession(sessionId);
++    const paid = session.payment_status === "paid";
++    const rightProduct = session.metadata?.product === "frontier-pass";
++    const rightAmount = Number(session.amount_total) === JOIN_PRICE_CENTS;
++    if (!paid || !rightProduct || !rightAmount) {
++      return res.status(402).json({
++        ok: false,
++        error: "payment_not_verified",
++        detail: {
++          paid,
++          right_product: rightProduct,
++          right_amount: rightAmount,
++        },
++      });
++    }
++    const issued = issuePass(CORE_STATE_DIR, {
++      sessionId,
++      amountCents: Number(session.amount_total),
++      nowMs: Date.now(),
++    });
++    if (!issued.ok) {
++      return res.status(409).json({ ok: false, error: issued.error });
++    }
++    return res.status(200).json({
++      ok: true,
++      pass_token: issued.pass_token,
++      expires_at_ms: issued.expires_at_ms,
++      tier: "frontier_pass",
++      note: "Keep this token client-side; it raises your daily frontier budget 5x for 30 days.",
++    });
++  } catch (err) {
++    return res.status(err.status && err.status < 600 ? err.status : 503).json({
++      ok: false,
++      error: err.code || "claim_failed",
++      message: err.message || "claim failed",
++      fail_closed: true,
++    });
++  }
++});
++
+ /** Campaign Zero — founding campaign metadata + Kernel-mirrored entries. */
+ app.get("/api/campaign-zero", (_req, res) => {
+   const mirror = loadMirrorEntries();
+@@ -254,7 +536,7 @@ app.get("/api/campaign-zero", (_req, res) => {
+  * Seed missing Campaign Zero founding entries through the Kernel bridge.
+  * Fail-closed: requires bins + active consent; idempotent by summary.
+  */
+-app.post("/api/campaign-zero/seed", async (_req, res) => {
++app.post("/api/campaign-zero/seed", requireOperator, rateLimit(writeBucket), async (_req, res) => {
+   if (!CORE_BIN || !CROSSCHECK_BIN) {
+     return res.status(503).json({
+       ok: false,
+@@ -317,7 +599,7 @@ app.post("/api/campaign-zero/seed", async (_req, res) => {
+   });
+ });
+ 
+-app.post("/api/crosscheck/sign", async (req, res) => {
++app.post("/api/crosscheck/sign", requireOperator, async (req, res) => {
+   if (!CROSSCHECK_SIGN_BIN) {
+     return res.status(503).json({
+       ok: false,
+@@ -341,7 +623,7 @@ app.post("/api/crosscheck/sign", async (req, res) => {
+ });
+ 
+ /** Sign with server-held demo checker key (never accept client secret_key_hex). */
+-app.post("/api/crosscheck/sign-demo", async (req, res) => {
++app.post("/api/crosscheck/sign-demo", requireOperator, async (req, res) => {
+   if (!CROSSCHECK_SIGN_BIN) {
+     return res.status(503).json({
+       ok: false,
+@@ -387,7 +669,7 @@ app.post("/api/crosscheck/sign-demo", async (req, res) => {
+   }
+ });
+ 
+-app.post("/api/crosscheck/verify", async (req, res) => {
++app.post("/api/crosscheck/verify", rateLimit(verifyBucket), async (req, res) => {
+   if (!CROSSCHECK_BIN) {
+     return res.status(503).json({
+       ok: false,
+@@ -428,11 +710,12 @@ app.get("/api/log", (_req, res) => {
+ app.get("/api/consent", (_req, res) => {
+   res.json({
+     ...consent,
++    durable: existsSync(CONSENT_PATH),
+     note: "Gatekeeper-compatible consent wire for Kernel bridge (not Node demo).",
+   });
+ });
+ 
+-app.post("/api/consent/grant", (req, res) => {
++app.post("/api/consent/grant", requireOperator, rateLimit(writeBucket), (req, res) => {
+   const body = req.body && typeof req.body === "object" ? req.body : {};
+   consent = {
+     active: true,
+@@ -440,16 +723,31 @@ app.post("/api/consent/grant", (req, res) => {
+     bailor: typeof body.bailor === "string" ? body.bailor : BAILOR_DID,
+     bailee: typeof body.bailee === "string" ? body.bailee : ACTOR_DID,
+   };
++  saveConsent(consent);
+   res.json({
+     ok: true,
+     consent,
++    durable: existsSync(CONSENT_PATH),
+     note: "Active consent stored for Kernel bridge stdin wire.",
+   });
+ });
+ 
+-app.post("/api/consent/revoke", (_req, res) => {
++app.post("/api/consent/revoke", requireOperator, rateLimit(writeBucket), (_req, res) => {
+   consent = { ...consent, active: false };
+-  res.json({ ok: true, consent });
++  saveConsent(consent);
++  res.json({ ok: true, consent, durable: existsSync(CONSENT_PATH) });
++});
++
++/** 0dentity summary — signals derived from the Kernel mirror (contract §13 direction). */
++app.get("/api/0dentity/summary", (_req, res) => {
++  const entries = loadMirrorEntries();
++  res.json({
++    ok: true,
++    computed_from: "kernel_local_mirror",
++    kernel_bridge_configured: Boolean(CORE_BIN),
++    summary: buildOdentitySummary(entries),
++    final_authority: false,
++  });
+ });
+ 
+ /**
+@@ -506,7 +804,7 @@ async function invokeKernelBridge(payload) {
+   return parsed;
+ }
+ 
+-app.post("/api/log/append", async (req, res) => {
++app.post("/api/log/append", requireOperator, rateLimit(writeBucket), async (req, res) => {
+   if (!CORE_BIN) {
+     return res.status(503).json({
+       ok: false,
+diff --git a/intelwar/services/log-api/test.js b/intelwar/services/log-api/test.js
+index d4998e20..fb07bcfc 100644
+--- a/intelwar/services/log-api/test.js
++++ b/intelwar/services/log-api/test.js
+@@ -23,12 +23,15 @@ const defaultSignBin = path.join(repoRoot, "target/debug/intelwar-crosscheck-sig
+  * @param {(base: string) => Promise<void>} fn
+  * @param {Record<string, string | undefined>} [extraEnv]
+  */
++const TEST_OPERATOR_TOKEN = "test-operator-token";
++
+ async function withServer(fn, extraEnv = {}) {
+   const port = 18787 + Math.floor(Math.random() * 200);
+   const child = spawn(process.execPath, ["server.js"], {
+     cwd: root,
+     env: {
+       ...process.env,
++      INTELWAR_ADMIN_TOKEN: TEST_OPERATOR_TOKEN,
+       ...extraEnv,
+       PORT: String(port),
+     },
+@@ -64,12 +67,18 @@ test("missing CORE_BIN → health 503 and append 503 (no simulated)", async () =
+ 
+       await fetch(`${base}/api/consent/grant`, {
+         method: "POST",
+-        headers: { "content-type": "application/json" },
++        headers: {
++          "content-type": "application/json",
++          authorization: `Bearer ${TEST_OPERATOR_TOKEN}`,
++        },
+         body: JSON.stringify({}),
+       });
+       const ok = await fetch(`${base}/api/log/append`, {
+         method: "POST",
+-        headers: { "content-type": "application/json" },
++        headers: {
++          "content-type": "application/json",
++          authorization: `Bearer ${TEST_OPERATOR_TOKEN}`,
++        },
+         body: JSON.stringify({ summary: "must fail closed" }),
+       });
+       assert.equal(ok.status, 503);
+@@ -102,20 +111,29 @@ test("Kernel path append + mirror reload + crosscheck sign/verify", async (t) =>
+ 
+         const denied = await fetch(`${base}/api/log/append`, {
+           method: "POST",
+-          headers: { "content-type": "application/json" },
++          headers: {
++          "content-type": "application/json",
++          authorization: `Bearer ${TEST_OPERATOR_TOKEN}`,
++        },
+           body: JSON.stringify({ summary: "no consent" }),
+         });
+         assert.equal(denied.status, 403);
+ 
+         await fetch(`${base}/api/consent/grant`, {
+           method: "POST",
+-          headers: { "content-type": "application/json" },
++          headers: {
++          "content-type": "application/json",
++          authorization: `Bearer ${TEST_OPERATOR_TOKEN}`,
++        },
+           body: JSON.stringify({}),
+         });
+ 
+         const res = await fetch(`${base}/api/log/append`, {
+           method: "POST",
+-          headers: { "content-type": "application/json" },
++          headers: {
++          "content-type": "application/json",
++          authorization: `Bearer ${TEST_OPERATOR_TOKEN}`,
++        },
+           body: JSON.stringify({
+             summary: "kernel path integration test",
+             entry_kind: "Observation",
+@@ -137,7 +155,10 @@ test("Kernel path append + mirror reload + crosscheck sign/verify", async (t) =>
+         // Second append chains.
+         const res2 = await fetch(`${base}/api/log/append`, {
+           method: "POST",
+-          headers: { "content-type": "application/json" },
++          headers: {
++          "content-type": "application/json",
++          authorization: `Bearer ${TEST_OPERATOR_TOKEN}`,
++        },
+           body: JSON.stringify({
+             summary: "second kernel append",
+             entry_kind: "Observation",
+@@ -152,7 +173,10 @@ test("Kernel path append + mirror reload + crosscheck sign/verify", async (t) =>
+         const subject = body.entry.content_hash;
+         const signRes = await fetch(`${base}/api/crosscheck/sign`, {
+           method: "POST",
+-          headers: { "content-type": "application/json" },
++          headers: {
++          "content-type": "application/json",
++          authorization: `Bearer ${TEST_OPERATOR_TOKEN}`,
++        },
+           body: JSON.stringify({
+             checker_did: "did:exo:checker-1",
+             subject_entry_hash_hex: subject,
+@@ -172,7 +196,10 @@ test("Kernel path append + mirror reload + crosscheck sign/verify", async (t) =>
+ 
+         const verifyRes = await fetch(`${base}/api/crosscheck/verify`, {
+           method: "POST",
+-          headers: { "content-type": "application/json" },
++          headers: {
++          "content-type": "application/json",
++          authorization: `Bearer ${TEST_OPERATOR_TOKEN}`,
++        },
+           body: JSON.stringify({
+             author_did: body.entry.author_did,
+             subject_entry_hash_hex: subject,
+@@ -235,12 +262,18 @@ test("DAG DB incomplete config fail-closed", async (t) => {
+       async (base) => {
+         await fetch(`${base}/api/consent/grant`, {
+           method: "POST",
+-          headers: { "content-type": "application/json" },
++          headers: {
++          "content-type": "application/json",
++          authorization: `Bearer ${TEST_OPERATOR_TOKEN}`,
++        },
+           body: JSON.stringify({}),
+         });
+         const res = await fetch(`${base}/api/log/append`, {
+           method: "POST",
+-          headers: { "content-type": "application/json" },
++          headers: {
++          "content-type": "application/json",
++          authorization: `Bearer ${TEST_OPERATOR_TOKEN}`,
++        },
+           body: JSON.stringify({ summary: "dag incomplete" }),
+         });
+         assert.equal(res.status, 503);
+@@ -276,12 +309,18 @@ test("DAG DB intake reject → 503 with bridge detail", async (t) => {
+       async (base) => {
+         await fetch(`${base}/api/consent/grant`, {
+           method: "POST",
+-          headers: { "content-type": "application/json" },
++          headers: {
++          "content-type": "application/json",
++          authorization: `Bearer ${TEST_OPERATOR_TOKEN}`,
++        },
+           body: JSON.stringify({}),
+         });
+         const res = await fetch(`${base}/api/log/append`, {
+           method: "POST",
+-          headers: { "content-type": "application/json" },
++          headers: {
++          "content-type": "application/json",
++          authorization: `Bearer ${TEST_OPERATOR_TOKEN}`,
++        },
+           body: JSON.stringify({ summary: "gateway reject" }),
+         });
+         assert.equal(res.status, 503);
