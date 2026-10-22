@@ -111,6 +111,7 @@ pub enum AvcReasonCode {
     JurisdictionDenied,
     EmergencyStopEngaged,
     EmergencyStopUnknown,
+    EmergencyStopUnreadable,
 }
 
 // ---------------------------------------------------------------------------
@@ -633,15 +634,17 @@ fn enforce_action_bounds(
     if hits_prohibited || !hits_allowed {
         reasons.insert(AvcReasonCode::ObjectiveDenied);
     }
-    if let Some(jurisdiction) = claim.jurisdiction {
-        if jurisdiction.is_empty()
-            || !credential
-                .authority_scope
-                .jurisdictions
-                .iter()
-                .any(|listed| listed == jurisdiction)
-        {
-            reasons.insert(AvcReasonCode::JurisdictionDenied);
+    let limits = &credential.authority_scope.jurisdictions;
+    match claim.jurisdiction {
+        Some(jurisdiction) => {
+            if jurisdiction.is_empty() || !limits.iter().any(|listed| listed == jurisdiction) {
+                reasons.insert(AvcReasonCode::JurisdictionDenied);
+            }
+        }
+        None => {
+            if !limits.is_empty() {
+                reasons.insert(AvcReasonCode::JurisdictionDenied);
+            }
         }
     }
 }
@@ -709,6 +712,10 @@ fn enforce_emergency_stops<R: AvcRegistryRead>(
     registry: &R,
     reasons: &mut BTreeSet<AvcReasonCode>,
 ) {
+    if !registry.emergency_stop_store_readable() {
+        reasons.insert(AvcReasonCode::EmergencyStopUnreadable);
+        return;
+    }
     for stop_ref in &credential.constraints.emergency_stop_refs {
         match registry.emergency_stop_standing(stop_ref) {
             None => {
@@ -854,9 +861,25 @@ fn enforce_forbidden_action(
     let Some(name) = &action.action_name else {
         return;
     };
-    if constraints.forbidden_actions.iter().any(|a| a == name) {
+    let presented = canonical_action_name(name);
+    if constraints
+        .forbidden_actions
+        .iter()
+        .any(|entry| canonical_action_name(entry) == presented)
+    {
         reasons.insert(AvcReasonCode::ForbiddenAction);
     }
+}
+
+fn canonical_action_name(name: &str) -> String {
+    let mut canonical = String::with_capacity(name.len());
+    for ch in name.chars() {
+        if ch.is_ascii_whitespace() {
+            continue;
+        }
+        canonical.push(ch.to_ascii_lowercase());
+    }
+    canonical
 }
 
 #[cfg(test)]
@@ -870,7 +893,9 @@ mod tests {
             AvcSubjectKind, ConsentRef, PolicyRef, TimeWindow, issue_avc, test_support::*,
         },
         llm_usage_receipt::{EncryptedPayloadRef, ProviderUsageMetrics},
-        registry::{AvcRegistryWrite, EmergencyStopStanding, InMemoryAvcRegistry},
+        registry::{
+            AvcRegistryDurableState, AvcRegistryWrite, EmergencyStopStanding, InMemoryAvcRegistry,
+        },
         revocation::{AvcRevocationReason, revoke_avc},
     };
 
@@ -2364,7 +2389,7 @@ mod tests {
         );
 
         let mut allowed = baseline_action(actor);
-        allowed.action_name = Some("primary".into());
+        allowed.action_name = Some("primary@US".into());
         let allowed_result = validate_named_action(&h, cred, allowed);
         assert_eq!(allowed_result.decision, AvcDecision::Allow);
     }
@@ -2386,7 +2411,7 @@ mod tests {
         assert!(denied.reason_codes.contains(&AvcReasonCode::AutonomyDenied));
 
         let mut read = baseline_action(actor);
-        read.action_name = Some("primary".into());
+        read.action_name = Some("primary@US".into());
         let allowed = validate_named_action(&h, cred, read);
         assert_eq!(allowed.decision, AvcDecision::Allow);
     }
@@ -2486,25 +2511,104 @@ mod tests {
 
         let prefix = actor_for(&["a"], &["b"]);
         let mut prefix_action = baseline_action(prefix.subject_did.clone());
-        prefix_action.action_name = Some("a:b:c".into());
+        prefix_action.action_name = Some("a:b:c@US".into());
         let prefix_result = validate_named_action(&h, prefix, prefix_action);
         assert_eq!(prefix_result.decision, AvcDecision::Allow);
 
         let equal = actor_for(&["a:b:c"], &[]);
         let mut equal_action = baseline_action(equal.subject_did.clone());
-        equal_action.action_name = Some("a:b:c".into());
+        equal_action.action_name = Some("a:b:c@US".into());
         let equal_result = validate_named_action(&h, equal, equal_action);
         assert_eq!(equal_result.decision, AvcDecision::Allow);
 
         let prohibited_prefix = actor_for(&["a:b"], &["a"]);
         let mut prohibited_action = baseline_action(prohibited_prefix.subject_did.clone());
-        prohibited_action.action_name = Some("a:b:c".into());
+        prohibited_action.action_name = Some("a:b:c@US".into());
         let prohibited_result = validate_named_action(&h, prohibited_prefix, prohibited_action);
         assert_eq!(prohibited_result.decision, AvcDecision::Deny);
         assert!(
             prohibited_result
                 .reason_codes
                 .contains(&AvcReasonCode::ObjectiveDenied)
+        );
+    }
+
+    #[test]
+    fn denies_named_action_without_jurisdiction_when_credential_lists_limits() {
+        let h = Harness::new();
+        let cred = h.issue(baseline_draft());
+        assert!(!cred.authority_scope.jurisdictions.is_empty());
+        let mut action = baseline_action(cred.subject_did.clone());
+        action.action_name = Some("primary".into());
+        let result = validate_named_action(&h, cred, action);
+        assert_eq!(result.decision, AvcDecision::Deny);
+        assert!(
+            result
+                .reason_codes
+                .contains(&AvcReasonCode::JurisdictionDenied)
+        );
+    }
+
+    #[test]
+    fn denies_forbidden_action_name_that_differs_only_by_case_and_spacing() {
+        let h = Harness::new();
+        let mut draft = baseline_draft();
+        draft.authority_scope.jurisdictions.clear();
+        draft.constraints.forbidden_actions = vec!["payment.execute".into()];
+        let cred = h.issue(draft);
+        let mut action = baseline_action(cred.subject_did.clone());
+        action.action_name = Some("Payment . Execute".into());
+        let result = validate_named_action(&h, cred, action);
+        assert_eq!(result.decision, AvcDecision::Deny);
+        assert!(
+            result
+                .reason_codes
+                .contains(&AvcReasonCode::ForbiddenAction)
+        );
+    }
+
+    #[test]
+    fn denies_engaged_emergency_stop_after_store_reopen() {
+        let mut h = Harness::new();
+        let mut draft = baseline_draft();
+        draft.constraints.emergency_stop_refs = vec!["halt".into()];
+        let cred = h.issue(draft);
+        h.registry
+            .set_emergency_stop("halt", EmergencyStopStanding::Engaged);
+        let mut bytes = Vec::new();
+        ciborium::ser::into_writer(&h.registry.durable_state(), &mut bytes).unwrap();
+        let loaded: AvcRegistryDurableState = ciborium::de::from_reader(bytes.as_slice()).unwrap();
+        let mut reopened = InMemoryAvcRegistry::from_durable_state(loaded).unwrap();
+        reopened.put_public_key(did("issuer"), issuer_keypair().public);
+        let result = validate_avc(&baseline_request(cred, ts(1_500_000)), &reopened).unwrap();
+        assert_eq!(result.decision, AvcDecision::Deny);
+        assert!(
+            result
+                .reason_codes
+                .contains(&AvcReasonCode::EmergencyStopEngaged)
+        );
+    }
+
+    #[test]
+    fn denies_when_emergency_stop_store_cannot_be_read() {
+        let mut h = Harness::new();
+        let mut draft = baseline_draft();
+        draft.constraints.emergency_stop_refs = vec!["halt".into()];
+        let cred = h.issue(draft);
+        h.registry
+            .set_emergency_stop("halt", EmergencyStopStanding::Clear);
+        h.registry.mark_emergency_stop_store_unreadable();
+        let result = validate_avc(&baseline_request(cred, ts(1_500_000)), &h.registry).unwrap();
+        assert_eq!(result.decision, AvcDecision::Deny);
+        assert!(
+            result
+                .reason_codes
+                .contains(&AvcReasonCode::EmergencyStopUnreadable)
+        );
+        assert!(
+            !result
+                .reason_codes
+                .contains(&AvcReasonCode::EmergencyStopUnknown)
         );
     }
 }

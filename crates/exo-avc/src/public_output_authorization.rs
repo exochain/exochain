@@ -155,6 +155,18 @@ pub fn livesafe_public_adapter_output_authorization_idempotency_hash(
     .map_err(AvcError::from)
 }
 
+fn livesafe_public_adapter_output_authorization_action_name(
+    credential: &AutonomousVolitionCredential,
+    action_name_hash: &Hash256,
+) -> String {
+    let objective =
+        format!("{LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_DOMAIN}:{action_name_hash}");
+    match credential.authority_scope.jurisdictions.first() {
+        Some(jurisdiction) => format!("{objective}@{jurisdiction}"),
+        None => objective,
+    }
+}
+
 /// Build the deterministic AVC action represented by a public-output proof.
 ///
 /// # Errors
@@ -187,8 +199,9 @@ pub fn livesafe_public_adapter_output_authorization_action_request(
         estimated_risk_bp: None,
         human_approval: None,
         requires_human_approval: false,
-        action_name: Some(format!(
-            "{LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_DOMAIN}:{action_name_hash}"
+        action_name: Some(livesafe_public_adapter_output_authorization_action_name(
+            credential,
+            &action_name_hash,
         )),
     })
 }
