@@ -783,10 +783,13 @@ impl Timestamp {
     };
 
     /// Check if this timestamp is expired relative to `now`.
-    /// Returns true if `self <= now`.
+    ///
+    /// Returns true when `self <= now`. Also returns true when `now` is still
+    /// the deterministic HLC genesis physical time and `self` is a Unix
+    /// wall-clock timestamp.
     #[must_use]
     pub fn is_expired(&self, now: &Timestamp) -> bool {
-        self <= now
+        crate::hlc::unix_expiry_untrusted_at_genesis(self, now) || self <= now
     }
 }
 

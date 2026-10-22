@@ -18,7 +18,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use exo_core::{Did, Hash256, PublicKey, Signature, Timestamp, crypto, hash::hash_structured};
+use exo_core::{
+    Did, Hash256, PublicKey, Signature, Timestamp, crypto, hash::hash_structured,
+    hlc::unix_expiry_untrusted_at_genesis,
+};
 
 use crate::{
     chain::{self, AuthorityChain, AuthorityLink, DEFAULT_MAX_DEPTH, DelegateeKind},
@@ -455,6 +458,13 @@ impl DelegationRegistry {
         if *now == Timestamp::ZERO {
             return Err(AuthorityError::InvalidDelegation {
                 reason: "created timestamp must be non-zero".into(),
+            });
+        }
+        if unix_expiry_untrusted_at_genesis(&expires, now) {
+            return Err(AuthorityError::InvalidDelegation {
+                reason: "Unix expiration cannot be accepted while the clock is still at the \
+                         deterministic genesis physical time"
+                    .into(),
             });
         }
         if expires <= *now {

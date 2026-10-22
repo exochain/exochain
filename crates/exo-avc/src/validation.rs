@@ -259,7 +259,7 @@ pub fn validate_avc<R: AvcRegistryRead>(
         reasons.insert(AvcReasonCode::NotYetValid);
     }
     if let Some(expires) = credential.expires_at {
-        if expires <= request.now {
+        if expires.is_expired(&request.now) {
             reasons.insert(AvcReasonCode::Expired);
         }
     }
@@ -698,7 +698,7 @@ fn verify_human_approval<R: AvcRegistryRead>(
         if expires_at <= approval.approved_at {
             return Ok(Err(AvcReasonCode::HumanApprovalInvalid));
         }
-        if expires_at <= *now {
+        if expires_at.is_expired(now) {
             return Ok(Err(AvcReasonCode::HumanApprovalExpired));
         }
     }
@@ -1085,11 +1085,8 @@ mod tests {
         let mut draft = baseline_draft();
         draft.expires_at = Some(ts(1_577_836_800_000));
         let cred = h.issue(draft);
-        let result = validate_avc(
-            &baseline_request(cred, ts(1_700_000_000_000)),
-            &h.registry,
-        )
-        .unwrap();
+        let result =
+            validate_avc(&baseline_request(cred, ts(1_700_000_000_000)), &h.registry).unwrap();
         assert_eq!(result.decision, AvcDecision::Deny);
         assert!(result.reason_codes.contains(&AvcReasonCode::Expired));
     }

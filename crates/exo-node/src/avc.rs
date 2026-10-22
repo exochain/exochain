@@ -8080,12 +8080,12 @@ mod tests {
             .await
             .unwrap();
 
-        assert_ne!(response.status(), StatusCode::OK);
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
         let response_body = read_body(response).await;
         let response_text = String::from_utf8_lossy(&response_body);
         assert!(
-            !response_text.contains("\"decision\":\"Allow\""),
-            "a 2020 Unix expiry must not be Allowed under the default clock: {response_text}"
+            response_text.contains("Expired"),
+            "a 2020 Unix expiry must be denied under the default clock: {response_text}"
         );
         assert_eq!(state.registry.lock().unwrap().receipt_count(), 0);
     }
