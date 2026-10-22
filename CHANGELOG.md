@@ -75,6 +75,18 @@ publication, or deployment.
   receipt, and does not advance finality. Allow anchoring is unchanged. LYNK
   receipt emit uses the same deny store-then-anchor path. LYNK response
   attestation still requires Allow. (#885)
+- Locks `quinn` `0.11.12`, `quinn-proto` `0.11.19`, `rustls` `0.23.46`,
+  `rustls-webpki` `0.103.16`, and `webpki-roots` `1.0.10` in the workspace
+  lock. The guest lock moves `rustls`, `rustls-webpki`, and `webpki-roots` to
+  those same releases. These are the patched floors for the eleven Gate 6 and
+  Gate 7 advisories. `webpki-roots` `0.26.11` stays as the unaffected
+  compatibility crate beside `1.0.10`. `exochain-node` and the `exochain-sdk`
+  `http-client` feature publish exact floors `=0.23.46`, `=0.103.16`,
+  `=1.0.10`, and `=0.11.19` so a crates.io user does not inherit only this
+  workspace lock. The pin guard rejects `rustls` from `0.21.0` below
+  `0.23.46`, `rustls-webpki` below `0.103.16`, and `webpki-roots` `1.x` below
+  `1.0.10`, including the guest lock. The audit ignore list is unchanged.
+  (#888)
 
 ### Release / CI
 
