@@ -4095,6 +4095,22 @@ mod tests {
         Arc::new(state)
     }
 
+    async fn fresh_unconfigured_durable_state(data_dir: &FsPath) -> Arc<AvcApiState> {
+        let signer: AvcReceiptSigner = Arc::new(|payload: &[u8]| validator_keypair().sign(payload));
+        let state = AvcApiState::with_durable_registry(
+            data_dir,
+            validator_did(),
+            signer,
+            None,
+            None,
+            false,
+        )
+        .await
+        .expect("durable AVC state");
+        seed_avc_trust_keys(&state);
+        Arc::new(state)
+    }
+
     async fn fresh_durable_state(data_dir: &FsPath) -> Arc<AvcApiState> {
         let signer: AvcReceiptSigner = Arc::new(|payload: &[u8]| validator_keypair().sign(payload));
         let mut state = AvcApiState::with_durable_registry(
@@ -7978,7 +7994,14 @@ mod tests {
         );
 
         let dir = tempfile::tempdir().expect("temp data dir");
-        let state = fresh_durable_state(dir.path()).await;
+        let state = fresh_unconfigured_durable_state(dir.path()).await;
+        assert!(
+            matches!(
+                state.external_timestamp_source,
+                AvcReceiptExternalTimestampSource::Unconfigured
+            ),
+            "unset probe must leave the timestamp authority unconfigured"
+        );
         assert!(
             state.require_external_timestamp,
             "unset {AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV} must require an external timestamp authority on the public-output route"
@@ -8015,7 +8038,13 @@ mod tests {
         command
             .args(["--exact", PUBLIC_OUTPUT_TIMESTAMP_TEST_NAME, "--nocapture"])
             .env(PUBLIC_OUTPUT_TIMESTAMP_PROBE_ENV, "unset")
-            .env_remove(AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV);
+            .env_remove(AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV)
+            .env_remove(AVC_EXTERNAL_TIMESTAMP_AUTHORITY_URL_ENV)
+            .env_remove(AVC_EXTERNAL_TIMESTAMP_AUTHORITY_KIND_ENV)
+            .env_remove(AVC_EXTERNAL_TIMESTAMP_AUTHORITY_DID_ENV)
+            .env_remove(AVC_EXTERNAL_TIMESTAMP_AUTHORITY_PUBLIC_KEY_HEX_ENV)
+            .env_remove(AVC_RFC3161_TIMESTAMP_CA_SPKI_HEX_ENV)
+            .env_remove(AVC_RFC3161_TIMESTAMP_POLICY_OID_ENV);
         let output = command
             .output()
             .expect("public output timestamp requirement probe");
@@ -8028,6 +8057,139 @@ mod tests {
             output.status.success() && combined.contains("test result: ok. 1 passed;"),
             "unset public-output probe failed\n{combined}"
         );
+    }
+
+    #[tokio::test]
+    async fn public_output_authorization_stores_external_timestamp_proof_when_authority_configured()
+    {
+        let signer: AvcReceiptSigner = Arc::new(|payload: &[u8]| validator_keypair().sign(payload));
+        let mut state = AvcApiState::new_with_external_timestamp_source(
+            validator_did(),
+            signer,
+            fixed_external_timestamp_source(Timestamp::new(1_600_000, 0)),
+        );
+        state.require_external_timestamp = true;
+        seed_avc_trust_keys(&state);
+        let state = Arc::new(state);
+        let evidence_hash = Hash256::from_bytes([0xA8; 32]);
+        let credential_id =
+            store_livesafe_public_output_credential_for_evidence(&state, evidence_hash);
+        let app = avc_router_with_bearer_gate(Arc::clone(&state));
+        let request = public_output_authorization_request(
+            credential_id,
+            "public-output-idem-configured-tsa",
+            evidence_hash,
+            exo_avc::LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_AUDIENCE,
+        );
+
+        let response = post_public_output_authorization(
+            app.clone(),
+            request.clone(),
+            Some("vcg-006a-admin-token"),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let envelope: exo_avc::LivesafePublicAdapterOutputAuthorizationEnvelope =
+            serde_json::from_slice(&read_body(response).await).expect("configured proof envelope");
+        let receipt = state
+            .registry
+            .lock()
+            .unwrap()
+            .get_receipt(&envelope.proof.receipt_id)
+            .expect("stored configured receipt");
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 1);
+        assert_eq!(
+            receipt.timestamp_provenance,
+            Some(AvcReceiptTimestampProvenance::ExternalTimestampAuthority)
+        );
+        assert!(receipt.external_timestamp_proof.is_some());
+        assert_eq!(receipt.created_at, Timestamp::new(1_600_000, 0));
+        assert_eq!(envelope.proof.issued_at, Timestamp::new(1_600_000, 0));
+
+        let replay =
+            post_public_output_authorization(app, request, Some("vcg-006a-admin-token")).await;
+        assert_eq!(replay.status(), StatusCode::OK);
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 1);
+        let replayed = state
+            .registry
+            .lock()
+            .unwrap()
+            .get_receipt(&envelope.proof.receipt_id)
+            .expect("replayed configured receipt");
+        assert_eq!(
+            replayed.timestamp_provenance,
+            Some(AvcReceiptTimestampProvenance::ExternalTimestampAuthority)
+        );
+        assert!(replayed.external_timestamp_proof.is_some());
+    }
+
+    #[tokio::test]
+    async fn public_output_authorization_denies_replay_of_local_clock_receipt_when_external_timestamp_required()
+     {
+        let state = fresh_state();
+        let evidence_hash = Hash256::from_bytes([0xA9; 32]);
+        let credential_id =
+            store_livesafe_public_output_credential_for_evidence(&state, evidence_hash);
+        let app = avc_router_with_bearer_gate(Arc::clone(&state));
+        let request = public_output_authorization_request(
+            credential_id,
+            "public-output-idem-replay-local-clock",
+            evidence_hash,
+            exo_avc::LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_AUDIENCE,
+        );
+
+        let stored =
+            post_public_output_authorization(app, request.clone(), Some("vcg-006a-admin-token"))
+                .await;
+        assert_eq!(stored.status(), StatusCode::OK);
+        let envelope: exo_avc::LivesafePublicAdapterOutputAuthorizationEnvelope =
+            serde_json::from_slice(&read_body(stored).await).expect("local-clock proof envelope");
+        let stored_receipt = state
+            .registry
+            .lock()
+            .unwrap()
+            .get_receipt(&envelope.proof.receipt_id)
+            .expect("stored local-clock receipt");
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 1);
+        assert_eq!(
+            stored_receipt.timestamp_provenance,
+            Some(AvcReceiptTimestampProvenance::LocalHybridLogicalClock)
+        );
+        assert!(stored_receipt.external_timestamp_proof.is_none());
+
+        let mut required_state = (*state).clone();
+        required_state.require_external_timestamp = true;
+        let required_state = Arc::new(required_state);
+        let required_app = avc_router_with_bearer_gate(required_state);
+        let replay =
+            post_public_output_authorization(required_app, request, Some("vcg-006a-admin-token"))
+                .await;
+
+        assert_eq!(replay.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = String::from_utf8(read_body(replay).await).expect("replay denial is utf-8");
+        assert!(
+            body.contains("stored receipt with no external timestamp proof"),
+            "replay denial must name the stored receipt, got {body}"
+        );
+        assert!(
+            serde_json::from_str::<exo_avc::LivesafePublicAdapterOutputAuthorizationEnvelope>(&body)
+                .is_err(),
+            "replay denial must not return the stored local-clock proof, got {body}"
+        );
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 1);
+        let receipt_after_replay = state
+            .registry
+            .lock()
+            .unwrap()
+            .get_receipt(&envelope.proof.receipt_id)
+            .expect("original local-clock receipt remains");
+        assert_eq!(
+            receipt_after_replay.timestamp_provenance,
+            Some(AvcReceiptTimestampProvenance::LocalHybridLogicalClock)
+        );
+        assert!(receipt_after_replay.external_timestamp_proof.is_none());
+        assert_eq!(receipt_after_replay, stored_receipt);
     }
 
     #[tokio::test]
