@@ -36,7 +36,7 @@
 //! | `GET`  | `/api/v1/avc/receipts/:hash` | Fetch a stored AVC trust receipt by hash. |
 //! | `GET`  | `/api/v1/avc/receipts?actor=<did>&limit=N` | List stored AVC trust receipts for a subject DID. |
 //! | `GET`  | `/api/v1/avc/protocol` | Discover node AVC protocol compatibility metadata. |
-//! | `POST` | `/api/v1/avc/delegate` | Register a signed child credential. |
+//! | `POST` | `/api/v1/avc/delegate` | Register a signed child narrowed to a live parent. |
 //! | `POST` | `/api/v1/avc/revoke` | Register a signed revocation. |
 //! | `POST` | `/api/v1/avc/issuers` | Register/rotate an issuer DID+public key at runtime; requires a DelegationRegistry-backed authority chain granting `Permission::Govern` (D3), not just the bearer token. |
 //! | `GET`  | `/api/v1/avc/:id` | Fetch a registered credential by hex ID. |
@@ -68,7 +68,7 @@ use exo_authority::permission::Permission;
 use exo_avc::{
     AVC_MAX_SUPPORTED_PROTOCOL_VERSION, AVC_MIN_SUPPORTED_PROTOCOL_VERSION,
     AVC_PROTOCOL_DEPRECATION_WINDOW_DAYS, AVC_PROTOCOL_VERSION, AVC_SCHEMA_VERSION,
-    AutonomousVolitionCredential, AvcActionDescriptor, AvcActionRequest, AvcDecision,
+    AutonomousVolitionCredential, AvcActionDescriptor, AvcActionRequest, AvcDecision, AvcDraft,
     AvcReceiptEvidenceSubject, AvcReceiptExternalTimestampProof, AvcReceiptRfc3161TimestampProof,
     AvcReceiptRfc3161TrustAnchorKind, AvcReceiptTimestampProvenance, AvcRegistryDurableState,
     AvcRegistryRead, AvcRegistryWrite, AvcRevocation, AvcTrustReceipt, AvcTrustReceiptEvidence,
@@ -76,7 +76,7 @@ use exo_avc::{
     LivesafePublicAdapterOutputAuthorizationDraft,
     LivesafePublicAdapterOutputAuthorizationEnvelope, LlmUsageEvidenceEnvelope,
     avc_action_commitment_hash, avc_action_descriptor_hash, avc_action_signature_payload,
-    avc_llm_usage_action_request, create_trust_receipt_with_evidence,
+    avc_llm_usage_action_request, create_trust_receipt_with_evidence, delegate_avc,
     livesafe_public_adapter_output_authorization_action_commitment_hash,
     livesafe_public_adapter_output_authorization_action_request,
     livesafe_public_adapter_output_authorization_idempotency_hash, llm_usage_evidence_hash,
@@ -2151,6 +2151,7 @@ pub struct IssueResponse {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DelegateRequest {
+    pub parent_credential_id: String,
     pub child_credential: AutonomousVolitionCredential,
 }
 
@@ -3814,19 +3815,84 @@ async fn handle_protocol_info(
     Ok(Json(avc_protocol_info()))
 }
 
+fn draft_from_credential(credential: &AutonomousVolitionCredential) -> AvcDraft {
+    AvcDraft {
+        schema_version: credential.schema_version,
+        issuer_did: credential.issuer_did.clone(),
+        principal_did: credential.principal_did.clone(),
+        subject_did: credential.subject_did.clone(),
+        holder_did: credential.holder_did.clone(),
+        subject_kind: credential.subject_kind.clone(),
+        created_at: credential.created_at,
+        expires_at: credential.expires_at,
+        delegated_intent: credential.delegated_intent.clone(),
+        authority_scope: credential.authority_scope.clone(),
+        constraints: credential.constraints.clone(),
+        authority_chain: credential.authority_chain.clone(),
+        consent_refs: credential.consent_refs.clone(),
+        policy_refs: credential.policy_refs.clone(),
+        parent_avc_id: credential.parent_avc_id,
+    }
+}
+
+fn delegation_rejected(reason: String) -> ApiError {
+    map_avc_error(exo_avc::AvcError::DelegationRejected { reason })
+}
+
+fn register_delegated_child(
+    registry: &mut InMemoryAvcRegistry,
+    parent_id: Hash256,
+    child: AutonomousVolitionCredential,
+    now: Timestamp,
+) -> ApiResult<Hash256> {
+    let Some(parent) = registry.get_credential(&parent_id) else {
+        return Err(delegation_rejected(format!(
+            "parent credential {parent_id} is not registered"
+        )));
+    };
+    if registry.is_revoked(&parent_id) {
+        return Err(delegation_rejected(format!(
+            "parent credential {parent_id} is revoked"
+        )));
+    }
+    if let Some(expires_at) = parent.expires_at {
+        if expires_at <= now {
+            return Err(delegation_rejected(format!(
+                "parent credential {parent_id} is expired"
+            )));
+        }
+    }
+    if child.parent_avc_id != Some(parent_id) {
+        return Err(delegation_rejected(
+            "child parent_avc_id does not match parent_credential_id".into(),
+        ));
+    }
+    let child_signature = child.signature.clone();
+    let draft = draft_from_credential(&child);
+    let issued = delegate_avc(&parent, draft, |_| child_signature).map_err(map_avc_error)?;
+    if issued != child {
+        return Err(delegation_rejected(
+            "submitted child does not match the narrowed credential".into(),
+        ));
+    }
+    registry.put_credential(issued).map_err(map_avc_error)
+}
+
 async fn handle_delegate(
     State(state): State<Arc<AvcApiState>>,
     Json(payload): Json<DelegateRequest>,
 ) -> ApiResult<Json<DelegateResponse>> {
-    let credential = payload.child_credential;
-    let parent_avc_id = credential.parent_avc_id.map(|h| format!("{h}"));
+    let parent_id = parse_hash(&payload.parent_credential_id)?;
+    let child = payload.child_credential;
+    let now = trusted_local_hlc_timestamp(&state).map_err(local_hlc_timestamp_error)?;
+    let parent_label = format!("{parent_id}");
     let id = with_registry_blocking(state, true, move |registry| {
-        registry.put_credential(credential).map_err(map_avc_error)
+        register_delegated_child(registry, parent_id, child, now)
     })
     .await?;
     Ok(Json(DelegateResponse {
         credential_id: format!("{id}"),
-        parent_avc_id,
+        parent_avc_id: Some(parent_label),
         status: "registered".into(),
     }))
 }
@@ -6043,45 +6109,81 @@ mod tests {
     #[tokio::test]
     async fn delegate_rejects_invalid_child_signature_without_storing_credential() {
         let state = fresh_state();
-        let app = avc_router(Arc::clone(&state));
-        let mut credential = baseline_credential();
-        credential.parent_avc_id = Some(Hash256::from_bytes([0x42; 32]));
+        let parent = delegating_parent();
+        let parent_id = parent.id().unwrap();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(parent.clone())
+            .unwrap();
+        let mut credential = delegated_child(&parent, AutonomyLevel::Draft, vec![Permission::Read]);
         credential.delegated_intent.purpose = "tampered delegated purpose".into();
         let forged_id = credential.id().unwrap();
-        let body = serde_json::to_vec(&DelegateRequest {
-            child_credential: credential,
-        })
-        .unwrap();
 
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/api/v1/avc/delegate")
-                    .header("content-type", "application/json")
-                    .body(Body::from(body))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let response = post_delegate(&state, &parent_id, credential).await;
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let registry = state.registry.lock().unwrap();
-        assert_eq!(
-            registry.credential_count(),
-            0,
-            "invalid delegated credentials must not be stored"
-        );
         assert!(
             registry.get_credential(&forged_id).is_none(),
             "forged delegated credential id must remain absent"
         );
+        assert!(registry.get_credential(&parent_id).is_some());
+        assert_eq!(registry.credential_count(), 1);
+    }
+
+    fn delegating_parent() -> AutonomousVolitionCredential {
+        let mut draft = baseline_draft();
+        draft.delegated_intent.delegation_allowed = true;
+        draft.delegated_intent.autonomy_level = AutonomyLevel::ExecuteWithinBounds;
+        draft.constraints.max_delegation_depth = 1;
+        let kp = issuer_keypair();
+        issue_avc(draft, |bytes| kp.sign(bytes)).unwrap()
+    }
+
+    fn delegated_child(
+        parent: &AutonomousVolitionCredential,
+        autonomy_level: AutonomyLevel,
+        permissions: Vec<Permission>,
+    ) -> AutonomousVolitionCredential {
+        let mut draft = baseline_draft();
+        draft.created_at = parent.created_at;
+        draft.expires_at = parent.expires_at;
+        draft.parent_avc_id = Some(parent.id().unwrap());
+        draft.delegated_intent.autonomy_level = autonomy_level;
+        draft.authority_scope.permissions = permissions;
+        draft.constraints.max_delegation_depth = 0;
+        let kp = issuer_keypair();
+        issue_avc(draft, |bytes| kp.sign(bytes)).unwrap()
+    }
+
+    async fn post_delegate(
+        state: &Arc<AvcApiState>,
+        parent_credential_id: &Hash256,
+        child_credential: AutonomousVolitionCredential,
+    ) -> axum::http::Response<Body> {
+        let app = avc_router(Arc::clone(state));
+        let body = serde_json::to_vec(&DelegateRequest {
+            parent_credential_id: format!("{parent_credential_id}"),
+            child_credential,
+        })
+        .unwrap();
+        app.oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/v1/avc/delegate")
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
     }
 
     #[tokio::test]
-    async fn delegate_registers_valid_child_credential() {
+    async fn delegate_rejects_missing_parent_without_storing_child() {
         let state = fresh_state();
-        let app = avc_router(Arc::clone(&state));
         let mut draft = baseline_draft();
         let parent_id = Hash256::from_bytes([0x42; 32]);
         draft.parent_avc_id = Some(parent_id);
@@ -6090,59 +6192,198 @@ mod tests {
             issue_avc(draft, |bytes| kp.sign(bytes)).unwrap()
         };
         let credential_id = credential.id().unwrap();
-        let body = serde_json::to_vec(&DelegateRequest {
-            child_credential: credential,
-        })
-        .unwrap();
 
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/api/v1/avc/delegate")
-                    .header("content-type", "application/json")
-                    .body(Body::from(body))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let response = post_delegate(&state, &parent_id, credential).await;
 
-        assert_eq!(response.status(), StatusCode::OK);
-        let parsed: DelegateResponse = serde_json::from_slice(&read_body(response).await).unwrap();
-        assert_eq!(parsed.credential_id, format!("{credential_id}"));
-        assert_eq!(parsed.parent_avc_id, Some(format!("{parent_id}")));
-        assert_eq!(parsed.status, "registered");
-        assert_eq!(state.registry.lock().unwrap().credential_count(), 1);
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let registry = state.registry.lock().unwrap();
+        assert!(
+            registry.get_credential(&credential_id).is_none(),
+            "missing parent must not store the child"
+        );
+        assert_eq!(registry.credential_count(), 0);
     }
 
     #[tokio::test]
-    async fn delegate_response_omits_parent_when_credential_is_root() {
+    async fn delegate_rejects_broader_child_without_storing_it() {
         let state = fresh_state();
-        let app = avc_router(Arc::clone(&state));
-        let credential = baseline_credential();
-        let credential_id = credential.id().unwrap();
-        let body = serde_json::to_vec(&DelegateRequest {
-            child_credential: credential,
-        })
-        .unwrap();
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/api/v1/avc/delegate")
-                    .header("content-type", "application/json")
-                    .body(Body::from(body))
-                    .unwrap(),
-            )
-            .await
+        let parent = delegating_parent();
+        let parent_id = parent.id().unwrap();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(parent.clone())
             .unwrap();
+        let child = delegated_child(
+            &parent,
+            AutonomyLevel::DelegateWithinBounds,
+            vec![Permission::Read, Permission::Write],
+        );
+        let child_id = child.id().unwrap();
+
+        let response = post_delegate(&state, &parent_id, child).await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let registry = state.registry.lock().unwrap();
+        assert!(
+            registry.get_credential(&child_id).is_none(),
+            "broader child must not be stored"
+        );
+        assert!(registry.get_credential(&parent_id).is_some());
+        assert_eq!(registry.credential_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn delegate_rejects_objective_outside_parent_without_storing_child() {
+        let state = fresh_state();
+        let parent = delegating_parent();
+        let parent_id = parent.id().unwrap();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(parent.clone())
+            .unwrap();
+        let mut draft = baseline_draft();
+        draft.created_at = parent.created_at;
+        draft.expires_at = parent.expires_at;
+        draft.parent_avc_id = Some(parent_id);
+        draft.delegated_intent.autonomy_level = AutonomyLevel::Draft;
+        draft.delegated_intent.allowed_objectives = vec!["extra".into(), "primary".into()];
+        draft.authority_scope.permissions = vec![Permission::Read];
+        draft.constraints.max_delegation_depth = 0;
+        let child = {
+            let kp = issuer_keypair();
+            issue_avc(draft, |bytes| kp.sign(bytes)).unwrap()
+        };
+        let child_id = child.id().unwrap();
+
+        let response = post_delegate(&state, &parent_id, child).await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let registry = state.registry.lock().unwrap();
+        assert!(registry.get_credential(&child_id).is_none());
+        assert!(registry.get_credential(&parent_id).is_some());
+        assert_eq!(registry.credential_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn delegate_rejects_dropped_parent_prohibition_without_storing_child() {
+        let state = fresh_state();
+        let mut draft = baseline_draft();
+        draft.delegated_intent.delegation_allowed = true;
+        draft.delegated_intent.autonomy_level = AutonomyLevel::ExecuteWithinBounds;
+        draft.delegated_intent.prohibited_objectives = vec!["harm".into()];
+        draft.constraints.max_delegation_depth = 1;
+        let parent = {
+            let kp = issuer_keypair();
+            issue_avc(draft, |bytes| kp.sign(bytes)).unwrap()
+        };
+        let parent_id = parent.id().unwrap();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(parent.clone())
+            .unwrap();
+        let child = delegated_child(&parent, AutonomyLevel::Draft, vec![Permission::Read]);
+        let child_id = child.id().unwrap();
+
+        let response = post_delegate(&state, &parent_id, child).await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let registry = state.registry.lock().unwrap();
+        assert!(registry.get_credential(&child_id).is_none());
+        assert!(registry.get_credential(&parent_id).is_some());
+        assert_eq!(registry.credential_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn delegate_rejects_revoked_parent_without_storing_child() {
+        let state = fresh_state();
+        let parent = delegating_parent();
+        let parent_id = parent.id().unwrap();
+        let child = delegated_child(&parent, AutonomyLevel::Draft, vec![Permission::Read]);
+        let child_id = child.id().unwrap();
+        let revocation = revoke_avc(
+            parent_id,
+            parent.issuer_did.clone(),
+            AvcRevocationReason::IssuerRevoked,
+            Timestamp::new(1_500_000, 0),
+            |bytes| issuer_keypair().sign(bytes),
+        )
+        .unwrap();
+        {
+            let mut registry = state.registry.lock().unwrap();
+            registry.put_credential(parent).unwrap();
+            registry.put_revocation(revocation).unwrap();
+        }
+
+        let response = post_delegate(&state, &parent_id, child).await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let registry = state.registry.lock().unwrap();
+        assert!(registry.get_credential(&child_id).is_none());
+        assert_eq!(registry.credential_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn delegate_rejects_expired_parent_without_storing_child() {
+        let state = fresh_state();
+        let mut draft = baseline_draft();
+        draft.created_at = Timestamp::new(999_999, 0);
+        draft.expires_at = Some(Timestamp::new(1_000_000, 0));
+        draft.delegated_intent.delegation_allowed = true;
+        draft.delegated_intent.autonomy_level = AutonomyLevel::ExecuteWithinBounds;
+        draft.constraints.max_delegation_depth = 1;
+        let parent = {
+            let kp = issuer_keypair();
+            issue_avc(draft, |bytes| kp.sign(bytes)).unwrap()
+        };
+        let parent_id = parent.id().unwrap();
+        let child = delegated_child(&parent, AutonomyLevel::Draft, vec![Permission::Read]);
+        let child_id = child.id().unwrap();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(parent)
+            .unwrap();
+
+        let response = post_delegate(&state, &parent_id, child).await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let registry = state.registry.lock().unwrap();
+        assert!(registry.get_credential(&child_id).is_none());
+        assert!(registry.get_credential(&parent_id).is_some());
+    }
+
+    #[tokio::test]
+    async fn delegate_registers_narrower_child() {
+        let state = fresh_state();
+        let parent = delegating_parent();
+        let parent_id = parent.id().unwrap();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(parent.clone())
+            .unwrap();
+        let child = delegated_child(&parent, AutonomyLevel::Draft, vec![Permission::Read]);
+        let child_id = child.id().unwrap();
+
+        let response = post_delegate(&state, &parent_id, child).await;
 
         assert_eq!(response.status(), StatusCode::OK);
         let parsed: DelegateResponse = serde_json::from_slice(&read_body(response).await).unwrap();
-        assert_eq!(parsed.credential_id, format!("{credential_id}"));
-        assert_eq!(parsed.parent_avc_id, None);
+        assert_eq!(parsed.credential_id, format!("{child_id}"));
+        assert_eq!(parsed.parent_avc_id, Some(format!("{parent_id}")));
         assert_eq!(parsed.status, "registered");
+        let registry = state.registry.lock().unwrap();
+        assert!(registry.get_credential(&child_id).is_some());
+        assert!(registry.get_credential(&parent_id).is_some());
+        assert_eq!(registry.credential_count(), 2);
     }
 
     #[tokio::test]

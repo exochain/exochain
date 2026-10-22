@@ -130,6 +130,22 @@ fn enforce_narrowing(
             dimension: "jurisdictions",
         });
     }
+    if !is_subset(
+        &child.delegated_intent.allowed_objectives,
+        &parent.delegated_intent.allowed_objectives,
+    ) {
+        return Err(AvcError::DelegationWidens {
+            dimension: "allowed_objectives",
+        });
+    }
+    if !is_subset(
+        &parent.delegated_intent.prohibited_objectives,
+        &child.delegated_intent.prohibited_objectives,
+    ) {
+        return Err(AvcError::DelegationWidens {
+            dimension: "prohibited_objectives",
+        });
+    }
 
     if !narrows_optional_u64(
         parent.constraints.max_budget_minor_units,
@@ -244,9 +260,9 @@ mod tests {
             delegated_intent: crate::credential::DelegatedIntent {
                 intent_id: parent.delegated_intent.intent_id,
                 purpose: "narrow scope".into(),
-                allowed_objectives: vec!["narrow".into()],
+                allowed_objectives: vec!["primary".into()],
                 prohibited_objectives: vec![],
-                autonomy_level: AutonomyLevel::Draft, // strictly narrower
+                autonomy_level: AutonomyLevel::Draft,
                 delegation_allowed: false,
             },
             authority_scope: crate::credential::AuthorityScope {
@@ -350,6 +366,29 @@ mod tests {
         let err = delegate_avc(&parent, child, |_| fixed_signature()).unwrap_err();
         assert!(
             matches!(err, AvcError::DelegationWidens { dimension } if dimension == "counterparties")
+        );
+    }
+
+    #[test]
+    fn delegate_rejects_objective_outside_parent() {
+        let parent = parent_credential();
+        let mut child = narrower_child(&parent);
+        child.delegated_intent.allowed_objectives = vec!["primary".into(), "extra".into()];
+        let err = delegate_avc(&parent, child, |_| fixed_signature()).unwrap_err();
+        assert!(
+            matches!(err, AvcError::DelegationWidens { dimension } if dimension == "allowed_objectives")
+        );
+    }
+
+    #[test]
+    fn delegate_rejects_dropped_parent_prohibition() {
+        let mut parent = parent_credential();
+        parent.delegated_intent.prohibited_objectives = vec!["harm".into()];
+        let mut child = narrower_child(&parent);
+        child.delegated_intent.prohibited_objectives = vec![];
+        let err = delegate_avc(&parent, child, |_| fixed_signature()).unwrap_err();
+        assert!(
+            matches!(err, AvcError::DelegationWidens { dimension } if dimension == "prohibited_objectives")
         );
     }
 
