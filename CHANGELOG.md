@@ -25,6 +25,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1]
+
+Workspace, pins, locks, SDKs, WASM, LYNK, and protocol constants move from
+`0.2.7` to `0.3.1`. This source state is not a tag, GitHub Release, registry
+publication, or deployment.
+
+### Security / Correctness
+
+- `validate_avc` follows `parent_avc_id` up to `AVC_PARENT_REVOCATION_WALK_LIMIT`
+  (32) and denies when an ancestor is revoked, when an ancestor credential
+  cannot be loaded, or when the walk hits that bound. A credential with no
+  `parent_avc_id` stays a root. The walk does not apply ancestor expiry,
+  suspension, or quarantine. (#875)
+- `POST` delegate requires `parent_credential_id`, loads that parent, and issues
+  the child through `delegate_avc`. A missing, revoked, or expired parent is
+  rejected and the child is not stored. `enforce_narrowing` rejects a child
+  whose `allowed_objectives` are outside the parent and a child that drops a
+  parent `prohibited_objectives` entry. (#878)
+- An unset `EXO_AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY` requires an external
+  timestamp authority. The unconfigured-authority warning says receipt emission
+  fails closed unless that variable is `false` or `0`. (#876)
+- Public-output authorization, when that requirement is on, refuses a stored
+  receipt that has no external timestamp proof and stores the proof when an
+  authority is configured. (#881)
+- A DID insert that hits `RegistryCapacityExceeded` rolls the transaction back
+  before returning the error. (#883)
+- `Timestamp::is_expired` is true when `now.physical_ms` is the genesis value
+  `1_000_000` and the expiry is at least `1_000_000_000_000`. `validate_avc`
+  denies a Unix `expires_at` and a Unix `allowed_time_window.not_after` under
+  that clock. `AuthorityRevocation` structure validation compares
+  `expires <= revoked_at` with ordinary ordering, so a genesis `revoked_at`
+  does not reject an already-signed Unix link as expired. Authorization still
+  denies through `is_expired`. (#882)
+- `validate_avc` denies an action outside the credential's allowed objectives,
+  autonomy level, or jurisdictions, and denies when an `emergency_stop_refs`
+  entry is engaged, unknown, or unreadable. A named action with no `@` is
+  denied when jurisdictions are non-empty. `forbidden_actions` compares the
+  canonical name. Emergency-stop standing is durable. (#879)
+
+### Release / CI
+
+- Aligns the 32 publishable Rust crates, standalone CGR packages, 158 exact
+  first-party dependency pins, Rust locks, SDKs, WASM, and LLM proxy at
+  `0.3.1`, without upgrading third-party dependencies.
+
 ## [0.2.7] - 2026-10-08
 
 Published GitHub Release `v0.2.7` (release id `400420101`, published
