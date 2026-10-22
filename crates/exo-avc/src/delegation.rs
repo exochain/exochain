@@ -130,6 +130,22 @@ fn enforce_narrowing(
             dimension: "jurisdictions",
         });
     }
+    if !is_subset(
+        &child.delegated_intent.allowed_objectives,
+        &parent.delegated_intent.allowed_objectives,
+    ) {
+        return Err(AvcError::DelegationWidens {
+            dimension: "allowed_objectives",
+        });
+    }
+    if !is_subset(
+        &parent.delegated_intent.prohibited_objectives,
+        &child.delegated_intent.prohibited_objectives,
+    ) {
+        return Err(AvcError::DelegationWidens {
+            dimension: "prohibited_objectives",
+        });
+    }
 
     if !narrows_optional_u64(
         parent.constraints.max_budget_minor_units,
