@@ -3928,6 +3928,7 @@ mod tests {
     use std::{
         collections::{BTreeMap, VecDeque},
         convert::Infallible,
+        process::Command,
         sync::atomic::{AtomicUsize, Ordering},
     };
 
@@ -7934,6 +7935,90 @@ mod tests {
         )
         .await
         .unwrap()
+    }
+
+    const PUBLIC_OUTPUT_TIMESTAMP_PROBE_ENV: &str =
+        "EXO_AVC_PUBLIC_OUTPUT_TIMESTAMP_REQUIREMENT_PROBE";
+    const PUBLIC_OUTPUT_TIMESTAMP_TEST_NAME: &str = "avc::tests::public_output_authorization_stores_no_local_clock_receipt_when_external_timestamp_required";
+
+    #[tokio::test]
+    async fn public_output_authorization_stores_no_local_clock_receipt_when_external_timestamp_required()
+     {
+        match std::env::var(PUBLIC_OUTPUT_TIMESTAMP_PROBE_ENV) {
+            Err(std::env::VarError::NotPresent) => {
+                assert_public_output_timestamp_probe_passed();
+            }
+            Ok(mode) if mode == "unset" => {
+                assert_public_output_refuses_local_clock_receipt_when_requirement_unset().await;
+            }
+            Ok(mode) => panic!("unknown public output timestamp probe mode {mode}"),
+            Err(std::env::VarError::NotUnicode(_)) => {
+                panic!("{PUBLIC_OUTPUT_TIMESTAMP_PROBE_ENV} must be valid UTF-8")
+            }
+        }
+    }
+
+    async fn assert_public_output_refuses_local_clock_receipt_when_requirement_unset() {
+        assert!(
+            std::env::var_os(AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV).is_none(),
+            "{AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV} must be unset"
+        );
+        assert!(
+            configured_require_external_timestamp_from_env()
+                .expect("unset external timestamp authority requirement")
+        );
+
+        let dir = tempfile::tempdir().expect("temp data dir");
+        let state = fresh_durable_state(dir.path()).await;
+        assert!(
+            state.require_external_timestamp,
+            "unset {AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV} must require an external timestamp authority on the public-output route"
+        );
+        let evidence_hash = Hash256::from_bytes([0xA7; 32]);
+        let credential_id =
+            store_livesafe_public_output_credential_for_evidence(&state, evidence_hash);
+        let app = avc_router_with_bearer_gate(Arc::clone(&state));
+        let request = public_output_authorization_request(
+            credential_id,
+            "public-output-idem-require-tsa",
+            evidence_hash,
+            exo_avc::LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_AUDIENCE,
+        );
+
+        let response =
+            post_public_output_authorization(app, request, Some("vcg-006a-admin-token")).await;
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = String::from_utf8(read_body(response).await).expect("denial body is utf-8");
+        assert!(
+            body.contains(AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV),
+            "denial must name the timestamp authority requirement, got {body}"
+        );
+        assert_eq!(
+            state.registry.lock().unwrap().receipt_count(),
+            0,
+            "public output must store no signed receipt when the timestamp authority requirement is on"
+        );
+    }
+
+    fn assert_public_output_timestamp_probe_passed() {
+        let mut command = Command::new(std::env::current_exe().expect("test executable"));
+        command
+            .args(["--exact", PUBLIC_OUTPUT_TIMESTAMP_TEST_NAME, "--nocapture"])
+            .env(PUBLIC_OUTPUT_TIMESTAMP_PROBE_ENV, "unset")
+            .env_remove(AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV);
+        let output = command
+            .output()
+            .expect("public output timestamp requirement probe");
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            output.status.success() && combined.contains("test result: ok. 1 passed;"),
+            "unset public-output probe failed\n{combined}"
+        );
     }
 
     #[tokio::test]
