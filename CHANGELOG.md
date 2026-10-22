@@ -63,6 +63,18 @@ publication, or deployment.
   entry is engaged, unknown, or unreadable. A named action with no `@` is
   denied when jurisdictions are non-empty. `forbidden_actions` compares the
   canonical name. Emergency-stop standing is durable. (#879)
+- A denied receipt emit that has a finality store signs the trust receipt,
+  links it to the previous receipt, stores it, and anchors EXOCHAIN finality
+  with outcome `Denied`. The HTTP response is 200. A registry persist failure
+  returns 500, stores no receipt, and writes no finality node. A finality
+  failure after the registry write returns 500, rolls that write back, and
+  does not claim a receipt. A denial with no finality store stays HTTP 403
+  and stores no receipt. When an external timestamp authority is required and
+  unconfigured, emit returns 503 before signing. Replaying a stored Allow
+  commitment after revocation or expiry stays HTTP 403, keeps that Allow
+  receipt, and does not advance finality. Allow anchoring is unchanged. LYNK
+  receipt emit uses the same deny store-then-anchor path. LYNK response
+  attestation still requires Allow. (#885)
 
 ### Release / CI
 
