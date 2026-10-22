@@ -21,6 +21,7 @@ import { Pill } from '@/components/ui/Pill';
 import { Disclaimer } from '@/components/ui/Disclaimer';
 import { ZeroPriceBanner } from '@/components/ui/ZeroPriceBanner';
 import { SurfaceMapDiagram } from '@/components/diagrams/SurfaceMap';
+import { loadPublicStatus } from '@/lib/public-status';
 import { publicMetadata } from '@/lib/public-site';
 
 export const metadata = publicMetadata({
@@ -30,6 +31,7 @@ export const metadata = publicMetadata({
 });
 
 export default function Page() {
+  const publicStatus = loadPublicStatus();
   return (
     <>
       <Section className="pt-16 pb-8">
@@ -126,14 +128,20 @@ export default function Page() {
 
       <Section className="py-8">
         <ZeroPriceBanner />
+        <p className="mt-3 text-sm max-w-prose">
+          This policy applies to internal ledger settlement. Third-party x402
+          payment amounts and commercial licensing are separate.
+        </p>
       </Section>
 
       <Section className="py-8">
         <Disclaimer>
-          EXOCHAIN is in beta (0.x, published v0.2.7), not general availability.
-          Nothing on this page should be read as a claim of completed
-          third-party audit, regulatory approval, or a deployed production
-          network unless a linked artifact says otherwise.
+          {publicStatus.maturity_summary}{' '}
+          See <Link href="/status" className="underline">public status</Link> for
+          the publication record for v{publicStatus.publication.version} and
+          current capability boundaries. Nothing on this page should be read as
+          a claim of completed third-party audit, regulatory approval, or a
+          deployed production network unless a linked artifact says otherwise.
         </Disclaimer>
       </Section>
     </>

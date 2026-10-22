@@ -45,27 +45,25 @@ const publicCopy = [
   'src/app/(internet)/contact/page.tsx',
   'src/components/chrome/PublicFooter.tsx',
   'src/components/chrome/PublicNav.tsx',
-  'src/components/commercial/IllustrativeCalls.tsx',
+  'src/components/commercial/PilotBanner.tsx',
   'src/lib/public-site.ts',
   'public/llms.txt',
 ].map((relative) => [relative, readFileSync(path.join(siteRoot, relative), 'utf8')]);
 
-const joined = publicCopy.map(([, source]) => source).join('\n');
+const joined = publicCopy.map(([, source]) => source).join('\n').replace(/\s+/g, ' ');
 
 for (const needle of [
   'Proven Agentic Action Authority',
-  'Every agent action carries proof of who authorized it, the limits it ran under, and AI guarding with an E-STOP that fails closed.',
-  "When an agent acts on your behalf, don't get left holding the bag.",
-  'E-STOP is a current platform capability. Revocation, policy deny, and fail-closed gates stop an action that is outside authority.',
+  'Make autonomous commerce accountable.',
+  'Explore enterprise deployment',
+  'E-STOP',
   'Proof of Authority',
   'working category concept',
   'not a new cryptographic primitive',
   'not an industry standard',
-  'Illustrative API design — not the current EXOCHAIN SDK',
   'Payment authorization is not legitimate decision-making authority',
-  'design-partner pilot',
-  'v0.2.7',
-  'v2.2',
+  'Agree and entrust',
+  'payment evidence',
   'Apache-2.0',
   'MCP',
   'A2A',
@@ -78,7 +76,7 @@ for (const needle of [
   'https://exochain.com',
   'exochain.ai',
   'exochain.net',
-  'Pilot or implementation',
+  'Enterprise deployment',
   'Platform licensing',
   'Managed governance services',
 ]) {
@@ -100,11 +98,48 @@ for (const [relative, source] of publicCopy) {
   }
 }
 
-assert.match(
-  readFileSync(path.join(siteRoot, 'src/app/(internet)/engagement/page.tsx'), 'utf8'),
-  /does not include insurance, bonding, or assurance coverage/,
-  'engagement page must refuse coverage claims',
-);
+const engagement = readFileSync(
+  path.join(siteRoot, 'src/app/(internet)/engagement/page.tsx'), 'utf8',
+).replace(/\s+/g, ' ');
+assert.match(engagement, /EXOCHAIN is not the insurer, surety, or reinsurer/);
+assert.match(engagement, /Coverage requires a separately issued provider instrument/);
+assert.match(engagement, /never automatic/);
+assert.match(engagement, /does not move funds/);
+assert.match(engagement, /id="assurance"/, 'assurance links must resolve');
+
+// Release facts must follow the canonical publication record, including a
+// future approved GA record. A site-copy edit cannot grant release readiness.
+for (const relative of [
+  'src/app/(internet)/page.tsx',
+  'src/app/(internet)/developers/page.tsx',
+  'src/app/(internet)/docs/faq/page.tsx',
+  'src/app/(internet)/status/page.tsx',
+  'src/app/(internet)/trust-center/page.tsx',
+  'src/app/(internet)/legal/terms/page.tsx',
+  'src/components/chrome/PublicFooter.tsx',
+]) {
+  const source = readFileSync(path.join(siteRoot, relative), 'utf8');
+  assert.match(source, /loadPublicStatus\(/, `${relative} must use canonical release facts`);
+}
+
+const publicSurfaces = [
+  ...walk(path.join(siteRoot, 'src/app/(internet)')),
+  path.join(siteRoot, 'src/components/chrome/PublicFooter.tsx'),
+  path.join(siteRoot, 'src/lib/public-site.ts'),
+  path.join(siteRoot, 'public/llms.txt'),
+];
+for (const file of publicSurfaces) {
+  const source = readFileSync(file, 'utf8');
+  assert.doesNotMatch(source, /\bv?0\.2\.7\b/, `${file} must not freeze the old release in copy`);
+  assert.doesNotMatch(source, /EXOCHAIN is in beta/, `${file} must not assign maturity outside the release record`);
+  assert.doesNotMatch(source, /exochain\.(verify|attest)\(/, `${file} must not advertise fictional SDK calls`);
+}
+
+const contact = readFileSync(path.join(siteRoot, 'src/app/(internet)/contact/page.tsx'), 'utf8');
+assert.match(contact, /id="deployment"/, 'enterprise CTAs must resolve');
+assert.match(contact, /id="pilot"/, 'existing inbound pilot links must keep resolving');
+const banner = readFileSync(path.join(siteRoot, 'src/components/commercial/PilotBanner.tsx'), 'utf8');
+assert.match(banner, /id="pilot"/, 'existing page-level pilot links must keep resolving');
 
 for (const file of srcFiles) {
   const relative = path.relative(siteRoot, file);

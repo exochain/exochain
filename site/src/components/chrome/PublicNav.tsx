@@ -76,8 +76,8 @@ export function PublicNav() {
               </ul>
             </nav>
           </details>
-          <LinkButton href="/contact#pilot" variant="primary" size="sm">
-            Design-partner pilot
+          <LinkButton href="/contact#deployment" variant="primary" size="sm">
+            Enterprise deployment
           </LinkButton>
           <Link
             href="/app"
