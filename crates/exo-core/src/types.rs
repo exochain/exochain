@@ -783,10 +783,13 @@ impl Timestamp {
     };
 
     /// Check if this timestamp is expired relative to `now`.
-    /// Returns true if `self <= now`.
+    ///
+    /// Returns true when `self <= now`. Also returns true when `now` is still
+    /// the deterministic HLC genesis physical time and `self` is a Unix
+    /// wall-clock timestamp.
     #[must_use]
     pub fn is_expired(&self, now: &Timestamp) -> bool {
-        self <= now
+        crate::hlc::unix_expiry_untrusted_at_genesis(self, now) || self <= now
     }
 }
 
@@ -1921,6 +1924,30 @@ mod tests {
         let mut h = std::hash::DefaultHasher::new();
         t.hash(&mut h);
         let _ = h.finish();
+    }
+
+    #[test]
+    fn unix_expiry_in_2020_is_expired_at_the_deterministic_genesis_clock() {
+        let expires_at = Timestamp::new(1_577_836_800_000, 0);
+        let now = Timestamp::new(1_000_000, 0);
+        assert!(
+            expires_at.is_expired(&now),
+            "2020-01-01 must not stay open when now is the genesis physical time"
+        );
+    }
+
+    #[test]
+    fn explicit_now_after_a_unix_expiry_is_expired() {
+        let expires_at = Timestamp::new(1_577_836_800_000, 0);
+        let now = Timestamp::new(1_700_000_000_000, 0);
+        assert!(expires_at.is_expired(&now));
+    }
+
+    #[test]
+    fn deterministic_expiry_after_the_genesis_physical_time_stays_open() {
+        let expires_at = Timestamp::new(2_000_000, 0);
+        let now = Timestamp::new(1_000_000, 0);
+        assert!(!expires_at.is_expired(&now));
     }
 
     // -- Version -----------------------------------------------------------

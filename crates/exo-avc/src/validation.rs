@@ -32,7 +32,10 @@
 use std::collections::BTreeSet;
 
 use exo_authority::permission::Permission;
-use exo_core::{Did, Hash256, PublicKey, Signature, Timestamp, crypto, hash::hash_structured};
+use exo_core::{
+    Did, Hash256, PublicKey, Signature, Timestamp, crypto, hash::hash_structured,
+    hlc::unix_expiry_untrusted_at_genesis,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -259,12 +262,14 @@ pub fn validate_avc<R: AvcRegistryRead>(
         reasons.insert(AvcReasonCode::NotYetValid);
     }
     if let Some(expires) = credential.expires_at {
-        if expires <= request.now {
+        if expires.is_expired(&request.now) {
             reasons.insert(AvcReasonCode::Expired);
         }
     }
     if let Some(window) = &credential.constraints.allowed_time_window {
-        if !window.contains(&request.now) {
+        if unix_expiry_untrusted_at_genesis(&window.not_after, &request.now)
+            || !window.contains(&request.now)
+        {
             reasons.insert(AvcReasonCode::OutsideTimeWindow);
         }
     }
@@ -698,7 +703,7 @@ fn verify_human_approval<R: AvcRegistryRead>(
         if expires_at <= approval.approved_at {
             return Ok(Err(AvcReasonCode::HumanApprovalInvalid));
         }
-        if expires_at <= *now {
+        if expires_at.is_expired(now) {
             return Ok(Err(AvcReasonCode::HumanApprovalExpired));
         }
     }
@@ -1069,6 +1074,29 @@ mod tests {
     }
 
     #[test]
+    fn denies_unix_expiry_when_caller_now_is_the_genesis_physical_time() {
+        let h = Harness::new();
+        let mut draft = baseline_draft();
+        draft.expires_at = Some(ts(1_577_836_800_000));
+        let cred = h.issue(draft);
+        let result = validate_avc(&baseline_request(cred, ts(1_000_000)), &h.registry).unwrap();
+        assert_eq!(result.decision, AvcDecision::Deny);
+        assert!(result.reason_codes.contains(&AvcReasonCode::Expired));
+    }
+
+    #[test]
+    fn denies_unix_expiry_when_injected_now_is_after_it() {
+        let h = Harness::new();
+        let mut draft = baseline_draft();
+        draft.expires_at = Some(ts(1_577_836_800_000));
+        let cred = h.issue(draft);
+        let result =
+            validate_avc(&baseline_request(cred, ts(1_700_000_000_000)), &h.registry).unwrap();
+        assert_eq!(result.decision, AvcDecision::Deny);
+        assert!(result.reason_codes.contains(&AvcReasonCode::Expired));
+    }
+
+    #[test]
     fn denies_not_yet_valid_credential() {
         let h = Harness::new();
         let cred = h.issue(baseline_draft());
@@ -1092,6 +1120,25 @@ mod tests {
                 .reason_codes
                 .contains(&AvcReasonCode::OutsideTimeWindow)
         );
+    }
+
+    #[test]
+    fn denies_unix_not_after_when_caller_now_is_the_genesis_physical_time() {
+        let h = Harness::new();
+        let mut draft = baseline_draft();
+        draft.constraints.allowed_time_window = Some(TimeWindow {
+            not_before: ts(1_000_000),
+            not_after: ts(1_577_836_800_000),
+        });
+        let cred = h.issue(draft);
+        let result = validate_avc(&baseline_request(cred, ts(1_000_000)), &h.registry).unwrap();
+        assert_eq!(result.decision, AvcDecision::Deny);
+        assert!(
+            result
+                .reason_codes
+                .contains(&AvcReasonCode::OutsideTimeWindow)
+        );
+        assert!(!result.reason_codes.contains(&AvcReasonCode::Expired));
     }
 
     #[test]

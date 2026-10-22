@@ -36,6 +36,13 @@ const MAX_DRIFT_MS: u64 = 5_000; // 5 seconds
 /// Deterministic non-zero epoch for default clocks. This intentionally keeps
 /// zero-epoch records stale without reading host wall-clock time.
 const DEFAULT_DETERMINISTIC_PHYSICAL_MS: u64 = 1_000_000;
+const UNIX_WALL_CLOCK_PHYSICAL_MS_MIN: u64 = 1_000_000_000_000;
+
+#[must_use]
+pub fn unix_expiry_untrusted_at_genesis(expires_at: &Timestamp, now: &Timestamp) -> bool {
+    now.physical_ms == DEFAULT_DETERMINISTIC_PHYSICAL_MS
+        && expires_at.physical_ms >= UNIX_WALL_CLOCK_PHYSICAL_MS_MIN
+}
 
 /// A Hybrid Logical Clock instance.
 ///

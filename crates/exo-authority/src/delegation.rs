@@ -18,7 +18,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use exo_core::{Did, Hash256, PublicKey, Signature, Timestamp, crypto, hash::hash_structured};
+use exo_core::{
+    Did, Hash256, PublicKey, Signature, Timestamp, crypto, hash::hash_structured,
+    hlc::unix_expiry_untrusted_at_genesis,
+};
 
 use crate::{
     chain::{self, AuthorityChain, AuthorityLink, DEFAULT_MAX_DEPTH, DelegateeKind},
@@ -250,7 +253,7 @@ impl AuthorityRevocation {
             });
         }
         if let Some(expires) = &self.revoked_link.expires {
-            if expires.is_expired(&self.revoked_at) {
+            if *expires <= self.revoked_at {
                 return Err(AuthorityError::ExpiredLink {
                     index: self.revoked_link.depth,
                 });
@@ -455,6 +458,13 @@ impl DelegationRegistry {
         if *now == Timestamp::ZERO {
             return Err(AuthorityError::InvalidDelegation {
                 reason: "created timestamp must be non-zero".into(),
+            });
+        }
+        if unix_expiry_untrusted_at_genesis(&expires, now) {
+            return Err(AuthorityError::InvalidDelegation {
+                reason: "Unix expiration cannot be accepted while the clock is still at the \
+                         deterministic genesis physical time"
+                    .into(),
             });
         }
         if expires <= *now {
@@ -889,6 +899,76 @@ mod tests {
             .or_default()
             .push(id);
         reg.links.insert(id, link);
+    }
+
+    #[test]
+    fn unix_expiration_is_rejected_while_now_is_the_genesis_physical_time() {
+        let mut reg = DelegationRegistry::new();
+        let keypair = KeyPair::generate();
+        let public_key = public_key(&keypair);
+        let from = did("alice");
+        let to = did("bob");
+        let now = ts(1_000_000);
+        let err = reg
+            .delegate(
+                DelegationGrant {
+                    from: &from,
+                    to: &to,
+                    scope: &[Permission::Read],
+                    expires: ts(1_577_836_800_000),
+                    now: &now,
+                    parent_link_id: None,
+                    delegatee_kind: DelegateeKind::Human,
+                    delegator_public_key: &public_key,
+                },
+                |payload| keypair.sign(payload),
+            )
+            .expect_err("a 2020 Unix expiration must not be accepted at the genesis clock");
+        assert!(
+            matches!(err, AuthorityError::InvalidDelegation { .. }),
+            "unexpected error: {err}"
+        );
+        assert!(reg.audit_events().is_empty());
+    }
+
+    #[test]
+    fn genesis_revoked_at_keeps_a_signed_unix_link_while_authorization_denies_it() {
+        let keypair = KeyPair::generate();
+        let public_key = public_key(&keypair);
+        let from = did("alice");
+        let to = did("bob");
+        let genesis = ts(1_000_000);
+        let mut link = AuthorityLink {
+            delegator_did: from.clone(),
+            delegate_did: to,
+            scope: vec![Permission::Read],
+            created: genesis,
+            expires: Some(ts(1_577_836_800_000)),
+            signature: Signature::empty(),
+            depth: 0,
+            delegatee_kind: DelegateeKind::Human,
+        };
+        let payload = link.signing_payload().expect("link payload");
+        link.signature = keypair.sign(&payload);
+
+        let chain = AuthorityChain {
+            links: vec![link.clone()],
+            max_depth: DEFAULT_MAX_DEPTH,
+        };
+        let authorization = chain::verify_chain(&chain, &genesis, |_| Some(public_key));
+        assert!(
+            matches!(authorization, Err(AuthorityError::ExpiredLink { index: 0 })),
+            "authorization must still deny a Unix expiry at genesis, got {authorization:?}"
+        );
+
+        let revocation =
+            AuthorityRevocation::for_link(link, &from, &genesis, &public_key, |payload| {
+                keypair.sign(payload)
+            })
+            .expect("genesis revoked_at must not expire an already-signed Unix link");
+        revocation
+            .verify(|_| Some(public_key))
+            .expect("verify must accept the signed revocation");
     }
 
     #[test]
