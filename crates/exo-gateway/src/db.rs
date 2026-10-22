@@ -348,6 +348,9 @@ async fn insert_did_document_with_capacity(
         Err(_) => max_documents,
     };
     if existing_documents >= max_documents {
+        tx.rollback()
+            .await
+            .map_err(|source| DidDocumentPersistenceError::Query { source })?;
         return Err(DidDocumentPersistenceError::RegistryCapacityExceeded {
             max_documents,
             attempted_documents: existing_documents.saturating_add(1),
