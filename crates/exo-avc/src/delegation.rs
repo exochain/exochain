@@ -262,7 +262,7 @@ mod tests {
                 purpose: "narrow scope".into(),
                 allowed_objectives: vec!["primary".into()],
                 prohibited_objectives: vec![],
-                autonomy_level: AutonomyLevel::Draft, // strictly narrower
+                autonomy_level: AutonomyLevel::Draft,
                 delegation_allowed: false,
             },
             authority_scope: crate::credential::AuthorityScope {
