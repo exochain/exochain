@@ -50,11 +50,14 @@
 //! workers are not held under the registry lock.
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs::{self, File},
     io::Write,
     path::{Path as FsPath, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 
@@ -894,9 +897,24 @@ fn avc_receipt_finality_payload_hash(receipt: &AvcTrustReceipt) -> anyhow::Resul
     .map_err(|error| anyhow::anyhow!("AVC EXOCHAIN finality payload hash failed: {error}"))
 }
 
+fn exochain_finality_node_hash(receipt: &AvcTrustReceipt) -> anyhow::Result<Hash256> {
+    let payload_hash = avc_receipt_finality_payload_hash(receipt)?;
+    let parents = receipt
+        .previous_receipt_hash
+        .iter()
+        .copied()
+        .collect::<Vec<_>>();
+    compute_node_hash(
+        &parents,
+        &payload_hash,
+        &receipt.validator_did,
+        &receipt.created_at,
+    )
+    .map_err(|error| anyhow::anyhow!("AVC EXOCHAIN finality node hash failed: {error}"))
+}
+
 fn build_exochain_finality_node_and_receipt(
     receipt: &AvcTrustReceipt,
-    validator_did: &Did,
     receipt_signer: &AvcReceiptSigner,
 ) -> anyhow::Result<(DagNode, TrustReceipt)> {
     let payload_hash = avc_receipt_finality_payload_hash(receipt)?;
@@ -905,8 +923,8 @@ fn build_exochain_finality_node_and_receipt(
         .iter()
         .copied()
         .collect::<Vec<_>>();
-    let node_hash = compute_node_hash(&parents, &payload_hash, validator_did, &receipt.created_at)
-        .map_err(|error| anyhow::anyhow!("AVC EXOCHAIN finality node hash failed: {error}"))?;
+    let validator_did = &receipt.validator_did;
+    let node_hash = exochain_finality_node_hash(receipt)?;
     let node = DagNode {
         hash: node_hash,
         parents,
@@ -939,14 +957,13 @@ fn build_exochain_finality_node_and_receipt(
 fn commit_exochain_finality(
     finality_store: &Option<Arc<Mutex<crate::store::SqliteDagStore>>>,
     receipt: &AvcTrustReceipt,
-    validator_did: &Did,
     receipt_signer: &AvcReceiptSigner,
 ) -> anyhow::Result<Option<AvcExochainFinalityCommitment>> {
     let Some(finality_store) = finality_store else {
         return Ok(None);
     };
     let (node, finality_receipt) =
-        build_exochain_finality_node_and_receipt(receipt, validator_did, receipt_signer)?;
+        build_exochain_finality_node_and_receipt(receipt, receipt_signer)?;
     let mut store = finality_store
         .lock()
         .map_err(|_| anyhow::anyhow!("AVC EXOCHAIN finality store mutex poisoned"))?;
@@ -969,19 +986,14 @@ fn commit_exochain_finality(
 
 fn anchor_persisted_deny_receipt(
     finality_store: &Option<Arc<Mutex<crate::store::SqliteDagStore>>>,
-    validator_did: &Did,
     receipt_signer: &AvcReceiptSigner,
     response: &mut EmitReceiptResponse,
 ) -> ApiResult<()> {
     if response.receipt.decision != AvcDecision::Deny {
         return Ok(());
     }
-    let finality = commit_exochain_finality(
-        finality_store,
-        &response.receipt,
-        validator_did,
-        receipt_signer,
-    )
+    let finality =
+        commit_exochain_finality(finality_store, &response.receipt, receipt_signer)
     .map_err(exochain_finality_error)?;
     let Some(finality) = finality else {
         return Err((
@@ -1014,6 +1026,8 @@ pub struct AvcApiState {
     receipt_clock: Arc<Mutex<HybridClock>>,
     require_external_timestamp: bool,
     finality_store: Option<Arc<Mutex<crate::store::SqliteDagStore>>>,
+    require_exochain_finality: bool,
+    finality_anchor_faults_remaining: Arc<AtomicUsize>,
     durability: AvcRegistryDurability,
     /// `exo-authority` DelegationRegistry backing runtime issuer-registration
     /// authority (VCG-006b / #736, D3 one-authority-model rule). This is the
@@ -1064,6 +1078,8 @@ impl AvcApiState {
             receipt_clock: Arc::new(Mutex::new(HybridClock::new())),
             require_external_timestamp: false,
             finality_store,
+            require_exochain_finality: false,
+            finality_anchor_faults_remaining: Arc::new(AtomicUsize::new(0)),
             durability: AvcRegistryDurability::None,
             authority: Arc::new(Mutex::new(
                 exo_authority::delegation::DelegationRegistry::new(),
@@ -1124,6 +1140,8 @@ impl AvcApiState {
             receipt_clock: Arc::new(Mutex::new(HybridClock::new())),
             require_external_timestamp: configured_require_external_timestamp_from_env()?,
             finality_store,
+            require_exochain_finality: true,
+            finality_anchor_faults_remaining: Arc::new(AtomicUsize::new(0)),
             durability,
             authority: Arc::new(Mutex::new(
                 exo_authority::delegation::DelegationRegistry::new(),
@@ -2846,6 +2864,605 @@ where
     })?
 }
 
+#[derive(Default)]
+struct AllowAnchorSession {
+    noted: Vec<NotedAllowReceipt>,
+    staged: Vec<StagedAllowAnchor>,
+    commitments: BTreeMap<Hash256, AvcExochainFinalityCommitment>,
+    persist_removal: bool,
+    postgres_pending: bool,
+}
+
+#[derive(Clone)]
+struct NotedAllowReceipt {
+    receipt: AvcTrustReceipt,
+    already_stored: bool,
+}
+
+struct StagedAllowAnchor {
+    node: DagNode,
+    height: u64,
+    finality_receipt: TrustReceipt,
+}
+
+impl AllowAnchorSession {
+    fn note_allow(&mut self, receipt: AvcTrustReceipt, already_stored: bool) {
+        if receipt.decision == AvcDecision::Allow {
+            self.noted.push(NotedAllowReceipt {
+                receipt,
+                already_stored,
+            });
+        }
+    }
+}
+
+fn allow_anchor_required(state: &AvcApiState) -> bool {
+    state.finality_store.is_some() || state.require_exochain_finality
+}
+
+fn finality_store_missing_error() -> ApiError {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "AVC EXOCHAIN finality store is not configured".into(),
+    )
+}
+
+fn finality_store_lock_error() -> ApiError {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "AVC EXOCHAIN finality persistence failed".into(),
+    )
+}
+
+fn clear_failed_allow_residue(
+    registry: &mut InMemoryAvcRegistry,
+    session: &mut AllowAnchorSession,
+) {
+    let mut removed_terminal = false;
+    for noted in &session.noted {
+        if !noted.already_stored {
+            continue;
+        }
+        if registry
+            .remove_terminal_extended_receipt(&noted.receipt.receipt_id)
+            .is_ok()
+        {
+            removed_terminal = true;
+        }
+    }
+    session.staged.clear();
+    session.commitments.clear();
+    session.postgres_pending = false;
+    if removed_terminal {
+        session.persist_removal = true;
+    }
+}
+
+fn record_allow_commitment(
+    session: &mut AllowAnchorSession,
+    receipt_id: Hash256,
+    node: &DagNode,
+    height: u64,
+    finality_receipt: &TrustReceipt,
+) {
+    session.commitments.insert(
+        receipt_id,
+        AvcExochainFinalityCommitment {
+            finality_hash: node.hash,
+            finality_height: height,
+            finality_receipt_hash: finality_receipt.receipt_hash,
+        },
+    );
+}
+
+fn allow_anchor_height(base: u64, staged_len: usize, node_hash: Hash256) -> ApiResult<u64> {
+    let staged_len = u64::try_from(staged_len).map_err(|_| {
+        exochain_finality_error(anyhow::anyhow!(
+            "AVC EXOCHAIN finality height overflow for {node_hash}"
+        ))
+    })?;
+    base.checked_add(staged_len)
+        .and_then(|height| height.checked_add(1))
+        .ok_or_else(|| {
+            exochain_finality_error(anyhow::anyhow!(
+                "AVC EXOCHAIN finality height overflow for {node_hash}"
+            ))
+        })
+}
+
+fn consume_allow_anchor_fault(state: &AvcApiState) -> bool {
+    state
+        .finality_anchor_faults_remaining
+        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
+            current.checked_sub(1)
+        })
+        .is_ok()
+}
+
+fn reject_missing_allow_anchor(
+    registry: &mut InMemoryAvcRegistry,
+    session: &mut AllowAnchorSession,
+    receipt: &AvcTrustReceipt,
+) -> ApiError {
+    clear_failed_allow_residue(registry, session);
+    exochain_finality_error(anyhow::anyhow!(
+        "AVC Allow anchor is missing for receipt validator {}",
+        receipt.validator_did
+    ))
+}
+
+fn stage_sqlite_allow_anchors(
+    state: &AvcApiState,
+    registry: &mut InMemoryAvcRegistry,
+    session: &mut AllowAnchorSession,
+    store: &crate::store::SqliteDagStore,
+) -> ApiResult<()> {
+    let base = store
+        .committed_height_value()
+        .map_err(|error| exochain_finality_error(anyhow::anyhow!(error)))?;
+    let noted_receipts = session.noted.clone();
+    for noted in &noted_receipts {
+        let (node, finality_receipt) =
+            build_exochain_finality_node_and_receipt(&noted.receipt, &state.receipt_signer)
+                .map_err(exochain_finality_error)?;
+        let existing = store
+            .committed_height_for(&node.hash)
+            .map_err(|error| exochain_finality_error(anyhow::anyhow!(error)))?;
+        if let Some(height) = existing {
+            record_allow_commitment(
+                session,
+                noted.receipt.receipt_id,
+                &node,
+                height,
+                &finality_receipt,
+            );
+            continue;
+        }
+        if noted.receipt.validator_did != state.validator_did || consume_allow_anchor_fault(state) {
+            return Err(reject_missing_allow_anchor(registry, session, &noted.receipt));
+        }
+        let height = allow_anchor_height(base, session.staged.len(), node.hash)?;
+        record_allow_commitment(
+            session,
+            noted.receipt.receipt_id,
+            &node,
+            height,
+            &finality_receipt,
+        );
+        session.staged.push(StagedAllowAnchor {
+            node,
+            height,
+            finality_receipt,
+        });
+    }
+    Ok(())
+}
+
+fn stage_allow_anchor_plans(
+    state: &AvcApiState,
+    registry: &mut InMemoryAvcRegistry,
+    session: &mut AllowAnchorSession,
+) -> ApiResult<()> {
+    if session.noted.is_empty() || !allow_anchor_required(state) {
+        return Ok(());
+    }
+    let Some(store) = state.finality_store.clone() else {
+        clear_failed_allow_residue(registry, session);
+        return Err(finality_store_missing_error());
+    };
+    let store = store.lock().map_err(|_| finality_store_lock_error())?;
+    if store.is_postgres_backed() {
+        session.postgres_pending = true;
+        return Ok(());
+    }
+    stage_sqlite_allow_anchors(state, registry, session, &store)
+}
+
+async fn stage_postgres_allow_anchors(
+    state: &AvcApiState,
+    registry: &mut InMemoryAvcRegistry,
+    session: &mut AllowAnchorSession,
+    tx: &mut Transaction<'_, Postgres>,
+) -> ApiResult<()> {
+    let Some(store) = state.finality_store.clone() else {
+        clear_failed_allow_residue(registry, session);
+        return Err(finality_store_missing_error());
+    };
+    let store = store.lock().map_err(|_| finality_store_lock_error())?;
+    let base = store
+        .committed_height_on_transaction(tx)
+        .await
+        .map_err(|error| exochain_finality_error(anyhow::anyhow!(error)))?;
+    let noted = session.noted.clone();
+    for noted in &noted {
+        let (node, finality_receipt) =
+            build_exochain_finality_node_and_receipt(&noted.receipt, &state.receipt_signer)
+                .map_err(exochain_finality_error)?;
+        let existing = store
+            .committed_height_for_on_transaction(tx, &node.hash)
+            .await
+            .map_err(|error| exochain_finality_error(anyhow::anyhow!(error)))?;
+        if let Some(height) = existing {
+            record_allow_commitment(
+                session,
+                noted.receipt.receipt_id,
+                &node,
+                height,
+                &finality_receipt,
+            );
+            continue;
+        }
+        if noted.receipt.validator_did != state.validator_did || consume_allow_anchor_fault(state) {
+            return Err(reject_missing_allow_anchor(registry, session, &noted.receipt));
+        }
+        let height = allow_anchor_height(base, session.staged.len(), node.hash)?;
+        record_allow_commitment(
+            session,
+            noted.receipt.receipt_id,
+            &node,
+            height,
+            &finality_receipt,
+        );
+        session.staged.push(StagedAllowAnchor {
+            node,
+            height,
+            finality_receipt,
+        });
+    }
+    for staged in &session.staged {
+        store
+            .put_committed_node_with_receipt_on_transaction(
+                tx,
+                &staged.node,
+                staged.height,
+                &staged.finality_receipt,
+            )
+            .await
+            .map_err(|error| exochain_finality_error(anyhow::anyhow!(error)))?;
+    }
+    session.postgres_pending = false;
+    Ok(())
+}
+
+fn rollback_postgres_transaction(transaction: Transaction<'_, Postgres>) {
+    let handle = tokio::runtime::Handle::current();
+    if let Err(error) = handle.block_on(transaction.rollback()) {
+        tracing::error!(
+            err = %error,
+            "failed to roll back AVC Postgres registry transaction after rejected operation"
+        );
+    }
+}
+
+fn commit_sqlite_anchor_batch_then_registry(
+    state: &AvcApiState,
+    guard: &mut InMemoryAvcRegistry,
+    session: &AllowAnchorSession,
+    rollback: &InMemoryAvcRegistry,
+) -> ApiResult<()> {
+    let Some(store) = state.finality_store.clone() else {
+        return Err(finality_store_missing_error());
+    };
+    let mut store = store.lock().map_err(|_| finality_store_lock_error())?;
+    store
+        .begin_anchor_batch()
+        .map_err(|error| exochain_finality_error(anyhow::anyhow!(error)))?;
+    for staged in &session.staged {
+        if let Err(error) = store.insert_anchor_in_open_batch(
+            &staged.node,
+            staged.height,
+            &staged.finality_receipt,
+        ) {
+            let _ = store.rollback_anchor_batch();
+            *guard = rollback.clone();
+            return Err(exochain_finality_error(anyhow::anyhow!(error)));
+        }
+    }
+    if let Err(error) = persist_durable_registry(guard, &state.durability) {
+        let _ = store.rollback_anchor_batch();
+        *guard = rollback.clone();
+        return Err(persistence_error(error));
+    }
+    if let Err(error) = store.commit_anchor_batch() {
+        let _ = store.rollback_anchor_batch();
+        drop(store);
+        let mutated = guard.clone();
+        roll_back_registry_mutation(
+            guard,
+            rollback.clone(),
+            mutated,
+            &state.durability,
+            true,
+        )?;
+        return Err(exochain_finality_error(anyhow::anyhow!(error)));
+    }
+    Ok(())
+}
+
+fn commit_registry_with_allow_anchors(
+    state: &AvcApiState,
+    guard: &mut InMemoryAvcRegistry,
+    session: &mut AllowAnchorSession,
+    transaction: Option<Transaction<'_, Postgres>>,
+    rollback: &InMemoryAvcRegistry,
+) -> ApiResult<()> {
+    if let Some(mut transaction) = transaction {
+        let handle = tokio::runtime::Handle::current();
+        let sqlite_staged = !session.staged.is_empty();
+        if sqlite_staged {
+            let Some(store) = state.finality_store.clone() else {
+                rollback_postgres_transaction(transaction);
+                *guard = rollback.clone();
+                return Err(finality_store_missing_error());
+            };
+            let mut store = store.lock().map_err(|_| finality_store_lock_error())?;
+            if let Err(error) = store.begin_anchor_batch() {
+                drop(store);
+                rollback_postgres_transaction(transaction);
+                *guard = rollback.clone();
+                return Err(exochain_finality_error(anyhow::anyhow!(error)));
+            }
+            for staged in &session.staged {
+                if let Err(error) = store.insert_anchor_in_open_batch(
+                    &staged.node,
+                    staged.height,
+                    &staged.finality_receipt,
+                ) {
+                    let _ = store.rollback_anchor_batch();
+                    drop(store);
+                    rollback_postgres_transaction(transaction);
+                    *guard = rollback.clone();
+                    return Err(exochain_finality_error(anyhow::anyhow!(error)));
+                }
+            }
+            let outcome = handle.block_on(async {
+                if session.postgres_pending {
+                    stage_postgres_allow_anchors(state, guard, session, &mut transaction).await?;
+                }
+                let durable = guard.durable_state();
+                persist_postgres_durable_registry_state_in_transaction(&durable, &mut transaction)
+                    .await
+                    .map_err(persistence_error)?;
+                transaction.commit().await.map_err(|error| {
+                    persistence_error(anyhow::anyhow!(
+                        "failed to commit AVC Postgres registry state: {error}"
+                    ))
+                })?;
+                Ok::<(), ApiError>(())
+            });
+            match outcome {
+                Ok(()) => {
+                    if let Err(error) = store.commit_anchor_batch() {
+                        let _ = store.rollback_anchor_batch();
+                        drop(store);
+                        let mutated = guard.clone();
+                        roll_back_registry_mutation(
+                            guard,
+                            rollback.clone(),
+                            mutated,
+                            &state.durability,
+                            true,
+                        )?;
+                        return Err(exochain_finality_error(anyhow::anyhow!(error)));
+                    }
+                    Ok(())
+                }
+                Err(error) => {
+                    let _ = store.rollback_anchor_batch();
+                    if !session.persist_removal {
+                        *guard = rollback.clone();
+                    }
+                    Err(error)
+                }
+            }
+        } else {
+            let outcome = handle.block_on(async {
+                if session.postgres_pending {
+                    if let Err(error) =
+                        stage_postgres_allow_anchors(state, guard, session, &mut transaction).await
+                    {
+                        if session.persist_removal {
+                            let durable = guard.durable_state();
+                            persist_postgres_durable_registry_state_in_transaction(
+                                &durable,
+                                &mut transaction,
+                            )
+                            .await
+                            .map_err(persistence_error)?;
+                            transaction.commit().await.map_err(|commit_error| {
+                                persistence_error(anyhow::anyhow!(
+                                    "failed to commit AVC Postgres registry state: {commit_error}"
+                                ))
+                            })?;
+                            return Err(error);
+                        }
+                        let _ = transaction.rollback().await;
+                        return Err(error);
+                    }
+                }
+                let durable = guard.durable_state();
+                persist_postgres_durable_registry_state_in_transaction(&durable, &mut transaction)
+                    .await
+                    .map_err(persistence_error)?;
+                transaction.commit().await.map_err(|error| {
+                    persistence_error(anyhow::anyhow!(
+                        "failed to commit AVC Postgres registry state: {error}"
+                    ))
+                })?;
+                Ok(())
+            });
+            if let Err(error) = outcome {
+                if !session.persist_removal {
+                    *guard = rollback.clone();
+                }
+                return Err(error);
+            }
+            Ok(())
+        }
+    } else if !session.staged.is_empty() {
+        commit_sqlite_anchor_batch_then_registry(state, guard, session, rollback)
+    } else {
+        persist_durable_registry(guard, &state.durability).map_err(|error| {
+            *guard = rollback.clone();
+            persistence_error(error)
+        })
+    }
+}
+
+fn mutate_registry_with_allow_anchor<T, F, Finish, A>(
+    state: &AvcApiState,
+    guard: &mut InMemoryAvcRegistry,
+    op: F,
+    finish: Finish,
+    after_persist: A,
+) -> ApiResult<T>
+where
+    F: FnOnce(&mut InMemoryAvcRegistry, &mut AllowAnchorSession) -> ApiResult<T>,
+    Finish: FnOnce(&AllowAnchorSession, T) -> T,
+    A: FnOnce(T) -> ApiResult<T>,
+{
+    let mut transaction = if let AvcRegistryDurability::Postgres(pool) = &state.durability {
+        let handle = tokio::runtime::Handle::current();
+        let mut transaction = handle
+            .block_on(begin_postgres_registry_transaction(pool))
+            .map_err(persistence_error)?;
+        if let Some(fresh_registry) = handle
+            .block_on(load_postgres_durable_registry_in_transaction(
+                &mut transaction,
+            ))
+            .map_err(persistence_error)?
+        {
+            guard
+                .apply_durable_state(fresh_registry.durable_state())
+                .map_err(|error| {
+                    persistence_error(anyhow::anyhow!(
+                        "failed to apply AVC Postgres registry state: {error}"
+                    ))
+                })?;
+        }
+        Some(transaction)
+    } else {
+        None
+    };
+    let rollback = guard.clone();
+    let mut session = AllowAnchorSession::default();
+    let result = match op(guard, &mut session) {
+        Ok(result) => result,
+        Err(error) => {
+            *guard = rollback;
+            if let Some(transaction) = transaction.take() {
+                rollback_postgres_transaction(transaction);
+            }
+            return Err(error);
+        }
+    };
+    let mut anchor_error = None;
+    if let Err(error) = stage_allow_anchor_plans(state, guard, &mut session) {
+        if !session.persist_removal {
+            *guard = rollback;
+            if let Some(transaction) = transaction.take() {
+                rollback_postgres_transaction(transaction);
+            }
+            return Err(error);
+        }
+        anchor_error = Some(error);
+    }
+    commit_registry_with_allow_anchors(
+        state,
+        guard,
+        &mut session,
+        transaction,
+        &rollback,
+    )?;
+    if let Some(error) = anchor_error {
+        return Err(error);
+    }
+    let result = finish(&session, result);
+    let mutated = guard.clone();
+    match after_persist(result) {
+        Ok(value) => Ok(value),
+        Err(error) => {
+            roll_back_registry_mutation(
+                guard,
+                rollback,
+                mutated,
+                &state.durability,
+                true,
+            )?;
+            Err(error)
+        }
+    }
+}
+
+async fn with_registry_allow_anchor_then<T, F, Finish, A>(
+    state: Arc<AvcApiState>,
+    op: F,
+    finish: Finish,
+    after_persist: A,
+) -> ApiResult<T>
+where
+    T: Send + 'static,
+    F: FnOnce(&mut InMemoryAvcRegistry, &mut AllowAnchorSession) -> ApiResult<T> + Send + 'static,
+    Finish: FnOnce(&AllowAnchorSession, T) -> T + Send + 'static,
+    A: FnOnce(T) -> ApiResult<T> + Send + 'static,
+{
+    tokio::task::spawn_blocking(move || {
+        let mut guard = state.registry.lock().map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "AVC registry unavailable".into(),
+            )
+        })?;
+        mutate_registry_with_allow_anchor(&state, &mut guard, op, finish, after_persist)
+    })
+    .await
+    .map_err(|err| {
+        tracing::error!(err = %err, "AVC registry task failed");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "AVC registry task failed".into(),
+        )
+    })?
+}
+
+fn attach_allow_anchor_commitment(
+    session: &AllowAnchorSession,
+    mut response: EmitReceiptResponse,
+) -> EmitReceiptResponse {
+    if let Some(commitment) = session.commitments.get(&response.receipt.receipt_id) {
+        attach_exochain_finality(&mut response, Some(commitment.clone()));
+    }
+    response
+}
+
+fn allow_receipt_is_anchored(state: &AvcApiState, receipt: &AvcTrustReceipt) -> ApiResult<bool> {
+    if receipt.decision != AvcDecision::Allow || !allow_anchor_required(state) {
+        return Ok(true);
+    }
+    let Some(store) = &state.finality_store else {
+        return Ok(false);
+    };
+    let node_hash = exochain_finality_node_hash(receipt).map_err(exochain_finality_error)?;
+    let store = store.lock().map_err(|_| finality_store_lock_error())?;
+    store
+        .committed_height_for(&node_hash)
+        .map(|height| height.is_some())
+        .map_err(|error| exochain_finality_error(anyhow::anyhow!(error)))
+}
+
+fn reject_unanchored_allow_receipt(
+    state: &AvcApiState,
+    receipt: &AvcTrustReceipt,
+) -> ApiResult<()> {
+    if allow_receipt_is_anchored(state, receipt)? {
+        return Ok(());
+    }
+    Err((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "AVC Allow receipt is not anchored".into(),
+    ))
+}
+
 fn map_avc_error(err: exo_avc::AvcError) -> ApiError {
     tracing::warn!(?err, "AVC operation rejected");
     match err {
@@ -3219,13 +3836,11 @@ async fn handle_emit_receipt(
     let trusted_now = timestamp_evidence.trusted_now;
     let finality_store = state.finality_store.clone();
     let anchor_store = finality_store.clone();
-    let anchor_validator = validator_did.clone();
     let anchor_signer = Arc::clone(&receipt_signer);
     let state_for_registry = Arc::clone(&state);
-    let mut response = with_registry_blocking_then(
+    let response = with_registry_allow_anchor_then(
         state_for_registry,
-        true,
-        move |registry| {
+        move |registry, allow_anchors| {
             let credential_id = require_registered_credential(registry, &submitted_request)?;
             verify_subject_action_signature(
                 registry,
@@ -3268,6 +3883,7 @@ async fn handle_emit_receipt(
                     None,
                     &validation,
                 )?;
+                allow_anchors.note_allow(receipt.clone(), true);
                 return Ok(emit_receipt_response(receipt, validation));
             }
             if registry.receipt_chain_head() != previous_receipt_hash {
@@ -3294,28 +3910,24 @@ async fn handle_emit_receipt(
             )
             .map_err(map_avc_error)?;
             store_receipt_idempotent(registry, receipt.clone())?;
+            allow_anchors.note_allow(receipt.clone(), false);
             Ok(emit_receipt_response(receipt, validation))
         },
+        attach_allow_anchor_commitment,
         move |mut response| {
-            anchor_persisted_deny_receipt(
-                &anchor_store,
-                &anchor_validator,
-                &anchor_signer,
-                &mut response,
-            )?;
+            anchor_persisted_deny_receipt(&anchor_store, &anchor_signer, &mut response)?;
             Ok(response)
         },
     )
     .await?;
-    if response.exochain_finality_hash.is_none() {
-        let finality = commit_exochain_finality(
-            &state.finality_store,
-            &response.receipt,
-            &state.validator_did,
-            &state.receipt_signer,
-        )
-        .map_err(exochain_finality_error)?;
-        attach_exochain_finality(&mut response, finality);
+    if response.receipt.decision == AvcDecision::Allow
+        && response.exochain_finality_hash.is_none()
+        && allow_anchor_required(&state)
+    {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "AVC Allow receipt is not anchored".into(),
+        ));
     }
     Ok(Json(response))
 }
@@ -3400,13 +4012,14 @@ async fn handle_llm_usage_emit_receipt(
     let trusted_now = timestamp_evidence.trusted_now;
     let finality_store = state.finality_store.clone();
     let anchor_store = finality_store.clone();
-    let anchor_validator = validator_did.clone();
     let anchor_signer = Arc::clone(&receipt_signer);
+    let lynk_request = submitted_receipt_request.clone();
+    let lynk_validator = validator_did.clone();
+    let lynk_signer = Arc::clone(&receipt_signer);
     let state_for_registry = Arc::clone(&state);
-    let mut response = with_registry_blocking_then(
+    let response = with_registry_allow_anchor_then(
         state_for_registry,
-        true,
-        move |registry| {
+        move |registry, allow_anchors| {
             let credential_id = require_registered_credential(registry, &submitted_request)?;
             verify_llm_usage_evidence_signature(
                 registry,
@@ -3455,7 +4068,18 @@ async fn handle_llm_usage_emit_receipt(
                     Some(llm_evidence_hash),
                     &validation,
                 )?;
-                return Ok(emit_receipt_response(receipt, validation));
+                allow_anchors.note_allow(receipt.clone(), true);
+                let mut response = emit_receipt_response(receipt, validation);
+                if response.receipt.decision == AvcDecision::Allow {
+                    attach_lynk_receipt_response_attestation(
+                        &mut response,
+                        &lynk_request,
+                        &lynk_validator,
+                        &lynk_signer,
+                    )
+                    .map_err(exochain_finality_error)?;
+                }
+                return Ok(response);
             }
             if registry.receipt_chain_head() != previous_receipt_hash {
                 return Err((
@@ -3481,37 +4105,34 @@ async fn handle_llm_usage_emit_receipt(
             )
             .map_err(map_avc_error)?;
             store_receipt_idempotent(registry, receipt.clone())?;
-            Ok(emit_receipt_response(receipt, validation))
+            allow_anchors.note_allow(receipt.clone(), false);
+            let mut response = emit_receipt_response(receipt, validation);
+            if response.receipt.decision == AvcDecision::Allow {
+                attach_lynk_receipt_response_attestation(
+                    &mut response,
+                    &lynk_request,
+                    &lynk_validator,
+                    &lynk_signer,
+                )
+                .map_err(exochain_finality_error)?;
+            }
+            Ok(response)
         },
+        attach_allow_anchor_commitment,
         move |mut response| {
-            anchor_persisted_deny_receipt(
-                &anchor_store,
-                &anchor_validator,
-                &anchor_signer,
-                &mut response,
-            )?;
+            anchor_persisted_deny_receipt(&anchor_store, &anchor_signer, &mut response)?;
             Ok(response)
         },
     )
     .await?;
-    if response.exochain_finality_hash.is_none() {
-        let finality = commit_exochain_finality(
-            &state.finality_store,
-            &response.receipt,
-            &state.validator_did,
-            &state.receipt_signer,
-        )
-        .map_err(exochain_finality_error)?;
-        attach_exochain_finality(&mut response, finality);
-    }
-    if response.receipt.decision == AvcDecision::Allow {
-        attach_lynk_receipt_response_attestation(
-            &mut response,
-            &submitted_receipt_request,
-            &state.validator_did,
-            &state.receipt_signer,
-        )
-        .map_err(exochain_finality_error)?;
+    if response.receipt.decision == AvcDecision::Allow
+        && response.exochain_finality_hash.is_none()
+        && allow_anchor_required(&state)
+    {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "AVC Allow receipt is not anchored".into(),
+        ));
     }
     Ok(Json(response))
 }
@@ -3897,7 +4518,9 @@ async fn store_public_output_with_external_timestamp(
     let timestamped_credential = plan.credential;
     let action = plan.action;
     let provenance = evidence.provenance;
-    with_registry_blocking(state, true, move |registry| {
+    with_registry_allow_anchor_then(
+        state,
+        move |registry, allow_anchors| {
         let credential = load_public_output_credential(registry, &parts.credential_id)?;
         if credential != timestamped_credential {
             return Err(public_output_credential_changed_during_timestamp_attestation());
@@ -3905,6 +4528,12 @@ async fn store_public_output_with_external_timestamp(
         if let Some(envelope) =
             replay_stored_public_output_authorization(registry, true, &credential, &parts)?
         {
+            note_stored_public_output_allow(
+                registry,
+                allow_anchors,
+                &parts.idempotency_key_hash,
+                true,
+            );
             return Ok(envelope);
         }
         if registry.receipt_chain_head() != previous_receipt_hash {
@@ -3918,7 +4547,7 @@ async fn store_public_output_with_external_timestamp(
         if action_commitment_hash != timestamped_commitment {
             return Err(public_output_credential_changed_during_timestamp_attestation());
         }
-        mint_stored_public_output_authorization(
+        let envelope = mint_stored_public_output_authorization(
             registry,
             &parts,
             PublicOutputStoredReceipt {
@@ -3930,8 +4559,59 @@ async fn store_public_output_with_external_timestamp(
                 provenance,
                 external_timestamp_proof: Some(proof),
             },
-        )
-    })
+        )?;
+        note_stored_public_output_allow(
+            registry,
+            allow_anchors,
+            &parts.idempotency_key_hash,
+            false,
+        );
+        Ok(envelope)
+    },
+        |_session, envelope| envelope,
+        Ok,
+    )
+    .await
+}
+
+fn note_stored_public_output_allow(
+    registry: &InMemoryAvcRegistry,
+    session: &mut AllowAnchorSession,
+    idempotency_key_hash: &Hash256,
+    already_stored: bool,
+) {
+    if let Some(receipt) = registry.get_receipt_by_action_id(idempotency_key_hash) {
+        session.note_allow(receipt, already_stored);
+    }
+}
+
+async fn republish_anchored_public_output(
+    state: Arc<AvcApiState>,
+    parts: PublicOutputAuthorizationRequestParts,
+) -> ApiResult<LivesafePublicAdapterOutputAuthorizationEnvelope> {
+    with_registry_allow_anchor_then(
+        state,
+        move |registry, allow_anchors| {
+            let credential = load_public_output_credential(registry, &parts.credential_id)?;
+            let Some(envelope) =
+                replay_stored_public_output_authorization(registry, true, &credential, &parts)?
+            else {
+                return Err((
+                    StatusCode::CONFLICT,
+                    "public output authorization idempotency key conflict".into(),
+                ));
+            };
+            note_stored_public_output_allow(
+                registry,
+                allow_anchors,
+                &parts.idempotency_key_hash,
+                true,
+            );
+            Ok(envelope)
+        },
+        |_session, envelope| envelope,
+        Ok,
+    )
     .await
 }
 
@@ -3942,7 +4622,10 @@ async fn authorize_public_output_with_required_external_timestamp(
     let gate =
         prepare_public_output_external_timestamp_gate(Arc::clone(&state), parts.clone()).await?;
     let plan = match gate {
-        PublicOutputExternalTimestampGate::Replayed(envelope) => return Ok(*envelope),
+        PublicOutputExternalTimestampGate::Replayed(prepared) => {
+            drop(prepared);
+            return republish_anchored_public_output(state, parts).await;
+        }
         PublicOutputExternalTimestampGate::Mint(plan) => *plan,
     };
     let evidence = public_output_required_timestamp_evidence(&state, &parts, &plan).await?;
@@ -3954,12 +4637,20 @@ async fn authorize_public_output_from_local_clock(
     parts: PublicOutputAuthorizationRequestParts,
 ) -> ApiResult<LivesafePublicAdapterOutputAuthorizationEnvelope> {
     let state_for_clock = Arc::clone(&state);
-    with_registry_blocking(state, true, move |registry| {
+    with_registry_allow_anchor_then(
+        state,
+        move |registry, allow_anchors| {
         let credential = load_public_output_credential(registry, &parts.credential_id)?;
         let action = public_output_action(&credential, &parts)?;
         if let Some(envelope) =
             replay_stored_public_output_authorization(registry, false, &credential, &parts)?
         {
+            note_stored_public_output_allow(
+                registry,
+                allow_anchors,
+                &parts.idempotency_key_hash,
+                true,
+            );
             return Ok(envelope);
         }
         let issued_at =
@@ -3967,7 +4658,7 @@ async fn authorize_public_output_from_local_clock(
         let action_commitment_hash =
             public_output_action_commitment(&credential, &parts, &issued_at)?;
         let previous_receipt_hash = registry.receipt_chain_head();
-        mint_stored_public_output_authorization(
+        let envelope = mint_stored_public_output_authorization(
             registry,
             &parts,
             PublicOutputStoredReceipt {
@@ -3979,8 +4670,18 @@ async fn authorize_public_output_from_local_clock(
                 provenance: AvcReceiptTimestampProvenance::LocalHybridLogicalClock,
                 external_timestamp_proof: None,
             },
-        )
-    })
+        )?;
+        note_stored_public_output_allow(
+            registry,
+            allow_anchors,
+            &parts.idempotency_key_hash,
+            false,
+        );
+        Ok(envelope)
+    },
+        |_session, envelope| envelope,
+        Ok,
+    )
     .await
 }
 
@@ -4014,12 +4715,13 @@ async fn handle_get_receipt(
     Path(id): Path<String>,
 ) -> ApiResult<Json<AvcTrustReceipt>> {
     let hash = parse_hash(&id)?;
-    let receipt = with_registry_blocking(state, false, move |registry| {
+    let receipt = with_registry_blocking(Arc::clone(&state), false, move |registry| {
         registry
             .get_receipt(&hash)
             .ok_or((StatusCode::NOT_FOUND, "receipt not found".into()))
     })
     .await?;
+    reject_unanchored_allow_receipt(&state, &receipt)?;
     Ok(Json(receipt))
 }
 
@@ -4035,13 +4737,22 @@ async fn handle_list_receipts(
     let did_for_response = did.to_string();
     let did_for_lookup = did.clone();
     let limit = avc_receipt_list_limit(query.limit);
-    let receipts = with_registry_blocking(state, false, move |registry| {
-        Ok(registry.list_receipts_for_subject(&did_for_lookup, limit))
+    let receipts = with_registry_blocking(Arc::clone(&state), false, move |registry| {
+        Ok(registry.list_receipts_for_subject(&did_for_lookup, usize::MAX))
     })
     .await?;
+    let mut anchored = Vec::new();
+    for receipt in receipts {
+        if allow_receipt_is_anchored(&state, &receipt)? {
+            anchored.push(receipt);
+            if anchored.len() == limit {
+                break;
+            }
+        }
+    }
     Ok(Json(ListAvcReceiptsResponse {
         did: did_for_response,
-        receipts,
+        receipts: anchored,
     }))
 }
 
@@ -6098,6 +6809,8 @@ mod tests {
             receipt_clock: Arc::new(Mutex::new(HybridClock::new())),
             require_external_timestamp: false,
             finality_store: None,
+            require_exochain_finality: false,
+            finality_anchor_faults_remaining: Arc::new(AtomicUsize::new(0)),
             durability: AvcRegistryDurability::Postgres(pool.clone()),
             authority: Arc::new(Mutex::new(
                 exo_authority::delegation::DelegationRegistry::new(),
@@ -8031,6 +8744,8 @@ mod tests {
             receipt_clock: Arc::new(Mutex::new(HybridClock::new())),
             require_external_timestamp: false,
             finality_store: Some(Arc::clone(&finality_store)),
+            require_exochain_finality: false,
+            finality_anchor_faults_remaining: Arc::new(AtomicUsize::new(0)),
             durability: AvcRegistryDurability::None,
             authority: Arc::new(Mutex::new(
                 exo_authority::delegation::DelegationRegistry::new(),
@@ -8534,6 +9249,8 @@ mod tests {
             receipt_clock: Arc::new(Mutex::new(HybridClock::new())),
             require_external_timestamp: false,
             finality_store: None,
+            require_exochain_finality: false,
+            finality_anchor_faults_remaining: Arc::new(AtomicUsize::new(0)),
             durability: AvcRegistryDurability::None,
             authority: Arc::new(Mutex::new(
                 exo_authority::delegation::DelegationRegistry::new(),
@@ -8850,6 +9567,8 @@ mod tests {
             receipt_clock: Arc::new(Mutex::new(HybridClock::new())),
             require_external_timestamp: true,
             finality_store: None,
+            require_exochain_finality: false,
+            finality_anchor_faults_remaining: Arc::new(AtomicUsize::new(0)),
             durability: AvcRegistryDurability::None,
             authority: Arc::new(Mutex::new(
                 exo_authority::delegation::DelegationRegistry::new(),
@@ -12261,6 +12980,8 @@ mod avc_root_trust_tests {
             receipt_clock: Arc::new(Mutex::new(HybridClock::new())),
             require_external_timestamp: false,
             finality_store: None,
+            require_exochain_finality: false,
+            finality_anchor_faults_remaining: Arc::new(AtomicUsize::new(0)),
             durability: AvcRegistryDurability::None,
             authority: Arc::new(Mutex::new(
                 exo_authority::delegation::DelegationRegistry::new(),
@@ -12283,6 +13004,8 @@ mod avc_root_trust_tests {
             receipt_clock: Arc::new(Mutex::new(HybridClock::new())),
             require_external_timestamp: false,
             finality_store: None,
+            require_exochain_finality: false,
+            finality_anchor_faults_remaining: Arc::new(AtomicUsize::new(0)),
             durability: AvcRegistryDurability::Postgres(pool),
             authority: Arc::new(Mutex::new(
                 exo_authority::delegation::DelegationRegistry::new(),

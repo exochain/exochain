@@ -542,6 +542,32 @@ impl InMemoryAvcRegistry {
         self.receipt_chain_head
     }
 
+    /// Drop a stored receipt that is still the extended-chain head.
+    ///
+    /// A non-terminal extended receipt stays in place: removing it would break
+    /// the durable chain. The head rewinds to that receipt's
+    /// `previous_receipt_hash`.
+    pub fn remove_terminal_extended_receipt(
+        &mut self,
+        receipt_id: &Hash256,
+    ) -> Result<(), AvcError> {
+        let Some(receipt) = self.receipts.get(receipt_id).cloned() else {
+            return Err(AvcError::Registry {
+                reason: format!("AVC receipt {receipt_id} is not stored"),
+            });
+        };
+        if receipt.has_extended_evidence() && self.receipt_chain_head != Some(*receipt_id) {
+            return Err(AvcError::Registry {
+                reason: format!("AVC receipt {receipt_id} is not the terminal extended receipt"),
+            });
+        }
+        self.receipts.remove(receipt_id);
+        if receipt.has_extended_evidence() {
+            self.receipt_chain_head = receipt.previous_receipt_hash;
+        }
+        Ok(())
+    }
+
     fn validate_unique_action_commitment(&self, receipt: &AvcTrustReceipt) -> Result<(), AvcError> {
         let Some(action_commitment_hash) = receipt.action_commitment_hash else {
             return Ok(());
