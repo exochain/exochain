@@ -140,6 +140,13 @@ uuid = { workspace = true }
 
 # HTTP client for Telegram bot API
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# Published floors. A downstream library user of exochain-node does not inherit
+# this workspace lock, and libp2p-quic 0.13 / reqwest 0.12 still allow the
+# vulnerable rustls, webpki, and quinn-proto releases.
+rustls = { workspace = true }
+rustls-webpki = { workspace = true }
+webpki-roots = { workspace = true }
+quinn-proto = { workspace = true }
 
 # JSON Schema validation for MCP tool input params (A-020). default-features
 # disabled to drop the built-in HTTP retriever — we never resolve $ref over
@@ -159,7 +166,19 @@ tempfile = "3"
 # Pre-existing workspace deps used via re-exports or conditional compilation.
 # exo-consent is genuinely used: crates/exo-node/src/zerodentity/store.rs
 # gates device/behavioral sample persistence on exo_consent::gatekeeper::ConsentGate.
-ignored = ["ed25519-dalek", "exo-governance", "exo-identity", "zeroize", "exochain-sdk"]
+# quinn-proto, rustls, rustls-webpki, and webpki-roots are published advisory
+# floors for library consumers; the pin guard checks their requirements.
+ignored = [
+    "ed25519-dalek",
+    "exo-governance",
+    "exo-identity",
+    "zeroize",
+    "exochain-sdk",
+    "quinn-proto",
+    "rustls",
+    "rustls-webpki",
+    "webpki-roots",
+]
 
 [features]
 # Default node builds compile the gateway production DB-backed DAG DB path and
