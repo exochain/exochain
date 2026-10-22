@@ -3290,147 +3290,478 @@ async fn handle_llm_usage_emit_receipt(
     Ok(Json(response))
 }
 
+#[derive(Clone)]
+struct PublicOutputAuthorizationRequestParts {
+    credential_id: Hash256,
+    subject: String,
+    audience: String,
+    evidence_hash: Hash256,
+    idempotency_key_hash: Hash256,
+    expires_at: Timestamp,
+    validator_did: Did,
+    receipt_signer: AvcReceiptSigner,
+}
+
+struct PublicOutputExternalMintPlan {
+    credential: AutonomousVolitionCredential,
+    action: AvcActionRequest,
+    previous_receipt_hash: Option<Hash256>,
+}
+
+struct PublicOutputStoredReceipt {
+    credential: AutonomousVolitionCredential,
+    action: AvcActionRequest,
+    action_commitment_hash: Hash256,
+    previous_receipt_hash: Option<Hash256>,
+    issued_at: Timestamp,
+    provenance: AvcReceiptTimestampProvenance,
+    external_timestamp_proof: Option<AvcReceiptExternalTimestampProof>,
+}
+
+enum PublicOutputExternalTimestampGate {
+    Replayed(Box<LivesafePublicAdapterOutputAuthorizationEnvelope>),
+    Mint(Box<PublicOutputExternalMintPlan>),
+}
+
+fn public_output_local_clock_refusal() -> ApiError {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        format!(
+            "public output authorization refused a local-clock receipt because {AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV} requires an external timestamp authority"
+        ),
+    )
+}
+
+fn public_output_stored_receipt_without_external_proof_refusal() -> ApiError {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        format!(
+            "public output authorization refused a stored receipt with no external timestamp proof because {AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV} requires an external timestamp authority"
+        ),
+    )
+}
+
+fn public_output_external_timestamp_mismatch_refusal() -> ApiError {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        format!(
+            "public output authorization refused to store a receipt because the external timestamp authority did not repeat the issued time required by {AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV}"
+        ),
+    )
+}
+
+fn public_output_credential_changed_during_timestamp_attestation() -> ApiError {
+    (
+        StatusCode::CONFLICT,
+        "public output authorization credential changed during external timestamp attestation"
+            .into(),
+    )
+}
+
+fn predetermined_external_timestamp_issued_at(
+    source: &AvcReceiptExternalTimestampSource,
+) -> Option<Timestamp> {
+    match source {
+        AvcReceiptExternalTimestampSource::Unconfigured
+        | AvcReceiptExternalTimestampSource::HttpJson { .. }
+        | AvcReceiptExternalTimestampSource::Rfc3161 { .. } => None,
+        #[cfg(test)]
+        AvcReceiptExternalTimestampSource::Fixed { issued_at, .. } => Some(*issued_at),
+        #[cfg(test)]
+        AvcReceiptExternalTimestampSource::FixedRfc3161 { issued_at, .. } => Some(*issued_at),
+    }
+}
+
+fn load_public_output_credential(
+    registry: &InMemoryAvcRegistry,
+    credential_id: &Hash256,
+) -> ApiResult<AutonomousVolitionCredential> {
+    registry.get_credential(credential_id).ok_or((
+        StatusCode::NOT_FOUND,
+        "public output authorization credential is not registered".into(),
+    ))
+}
+
+fn public_output_action(
+    credential: &AutonomousVolitionCredential,
+    parts: &PublicOutputAuthorizationRequestParts,
+) -> ApiResult<AvcActionRequest> {
+    livesafe_public_adapter_output_authorization_action_request(
+        credential,
+        &parts.subject,
+        &parts.audience,
+        parts.evidence_hash,
+        parts.idempotency_key_hash,
+        &parts.expires_at,
+    )
+    .map_err(map_avc_error)
+}
+
+fn public_output_action_commitment(
+    credential: &AutonomousVolitionCredential,
+    parts: &PublicOutputAuthorizationRequestParts,
+    issued_at: &Timestamp,
+) -> ApiResult<Hash256> {
+    livesafe_public_adapter_output_authorization_action_commitment_hash(
+        credential,
+        &parts.subject,
+        &parts.audience,
+        parts.evidence_hash,
+        parts.idempotency_key_hash,
+        issued_at,
+        &parts.expires_at,
+    )
+    .map_err(map_avc_error)
+}
+
+fn public_output_evidence_subject(
+    credential_id: Hash256,
+    action: &AvcActionRequest,
+    action_commitment_hash: Hash256,
+    previous_receipt_hash: Option<Hash256>,
+) -> ApiResult<AvcReceiptEvidenceSubject> {
+    let action_descriptor = AvcActionDescriptor::from_action(action);
+    let action_descriptor_hash =
+        avc_action_descriptor_hash(&action_descriptor).map_err(map_avc_error)?;
+    Ok(AvcReceiptEvidenceSubject {
+        credential_id,
+        action_id: action.action_id,
+        action_commitment_hash,
+        action_descriptor_hash,
+        previous_receipt_hash,
+    })
+}
+
+fn replay_stored_public_output_authorization(
+    registry: &InMemoryAvcRegistry,
+    require_external_timestamp: bool,
+    credential: &AutonomousVolitionCredential,
+    parts: &PublicOutputAuthorizationRequestParts,
+) -> ApiResult<Option<LivesafePublicAdapterOutputAuthorizationEnvelope>> {
+    let Some(existing) = registry.get_receipt_by_action_id(&parts.idempotency_key_hash) else {
+        return Ok(None);
+    };
+    let action_commitment_hash =
+        public_output_action_commitment(credential, parts, &existing.created_at)?;
+    if existing.credential_id != parts.credential_id
+        || existing.action_commitment_hash != Some(action_commitment_hash)
+    {
+        return Err((
+            StatusCode::CONFLICT,
+            "public output authorization idempotency key conflict".into(),
+        ));
+    }
+    if require_external_timestamp && existing.external_timestamp_proof.is_none() {
+        return Err(public_output_stored_receipt_without_external_proof_refusal());
+    }
+    let draft = LivesafePublicAdapterOutputAuthorizationDraft {
+        credential: credential.clone(),
+        subject: parts.subject.clone(),
+        audience: parts.audience.clone(),
+        evidence_hash: parts.evidence_hash,
+        credential_id: Some(parts.credential_id),
+        receipt_id: existing.receipt_id,
+        action_commitment_hash,
+        idempotency_key_hash: parts.idempotency_key_hash,
+        issued_at: existing.created_at,
+        expires_at: parts.expires_at,
+        signer_did: parts.validator_did.clone(),
+    };
+    mint_livesafe_public_adapter_output_authorization_proof(draft, registry, |bytes| {
+        (parts.receipt_signer)(bytes)
+    })
+    .map(Some)
+    .map_err(map_avc_error)
+}
+
+fn mint_stored_public_output_authorization(
+    registry: &mut InMemoryAvcRegistry,
+    parts: &PublicOutputAuthorizationRequestParts,
+    stored: PublicOutputStoredReceipt,
+) -> ApiResult<LivesafePublicAdapterOutputAuthorizationEnvelope> {
+    let action_descriptor = AvcActionDescriptor::from_action(&stored.action);
+    let pre_receipt_draft = LivesafePublicAdapterOutputAuthorizationDraft {
+        credential: stored.credential,
+        subject: parts.subject.clone(),
+        audience: parts.audience.clone(),
+        evidence_hash: parts.evidence_hash,
+        credential_id: Some(parts.credential_id),
+        receipt_id: Hash256::ZERO,
+        action_commitment_hash: stored.action_commitment_hash,
+        idempotency_key_hash: parts.idempotency_key_hash,
+        issued_at: stored.issued_at,
+        expires_at: parts.expires_at,
+        signer_did: parts.validator_did.clone(),
+    };
+    let validation =
+        validate_livesafe_public_adapter_output_authorization(&pre_receipt_draft, registry)
+            .map_err(map_avc_error)?;
+    let receipt = create_trust_receipt_with_evidence(
+        &validation,
+        Some(stored.action.action_id),
+        AvcTrustReceiptEvidence {
+            action_commitment_hash: Some(stored.action_commitment_hash),
+            action_descriptor: Some(action_descriptor),
+            llm_usage_evidence_hash: None,
+            payment_evidence_hash: None,
+            previous_receipt_hash: stored.previous_receipt_hash,
+            timestamp_provenance: Some(stored.provenance),
+            external_timestamp_proof: stored.external_timestamp_proof,
+        },
+        parts.validator_did.clone(),
+        stored.issued_at,
+        |bytes| (parts.receipt_signer)(bytes),
+    )
+    .map_err(map_avc_error)?;
+    store_receipt_idempotent(registry, receipt.clone())?;
+    let draft = LivesafePublicAdapterOutputAuthorizationDraft {
+        receipt_id: receipt.receipt_id,
+        ..pre_receipt_draft
+    };
+    mint_livesafe_public_adapter_output_authorization_proof(draft, registry, |bytes| {
+        (parts.receipt_signer)(bytes)
+    })
+    .map_err(map_avc_error)
+}
+
+async fn public_output_timestamp_evidence_for_issued_at(
+    state: &AvcApiState,
+    parts: &PublicOutputAuthorizationRequestParts,
+    plan: &PublicOutputExternalMintPlan,
+    issued_at: Timestamp,
+) -> ApiResult<AvcReceiptTimestampEvidence> {
+    let action_commitment_hash =
+        public_output_action_commitment(&plan.credential, parts, &issued_at)?;
+    let evidence_subject = public_output_evidence_subject(
+        parts.credential_id,
+        &plan.action,
+        action_commitment_hash,
+        plan.previous_receipt_hash,
+    )?;
+    trusted_receipt_timestamp_evidence(state, &evidence_subject).await
+}
+
+async fn public_output_required_timestamp_evidence(
+    state: &AvcApiState,
+    parts: &PublicOutputAuthorizationRequestParts,
+    plan: &PublicOutputExternalMintPlan,
+) -> ApiResult<AvcReceiptTimestampEvidence> {
+    if matches!(
+        state.external_timestamp_source,
+        AvcReceiptExternalTimestampSource::Unconfigured
+    ) {
+        return Err(public_output_local_clock_refusal());
+    }
+    let issued_at =
+        match predetermined_external_timestamp_issued_at(&state.external_timestamp_source) {
+            Some(issued_at) => issued_at,
+            None => {
+                public_output_timestamp_evidence_for_issued_at(
+                    state,
+                    parts,
+                    plan,
+                    Timestamp::new(0, 0),
+                )
+                .await?
+                .trusted_now
+            }
+        };
+    let evidence =
+        public_output_timestamp_evidence_for_issued_at(state, parts, plan, issued_at).await?;
+    let action_commitment_hash =
+        public_output_action_commitment(&plan.credential, parts, &issued_at)?;
+    let evidence_subject = public_output_evidence_subject(
+        parts.credential_id,
+        &plan.action,
+        action_commitment_hash,
+        plan.previous_receipt_hash,
+    )?;
+    let evidence_subject_hash = evidence_subject.hash().map_err(map_avc_error)?;
+    let proof_covers_commitment = evidence
+        .external_timestamp_proof
+        .as_ref()
+        .is_some_and(|proof| {
+            evidence.trusted_now == issued_at
+                && evidence.provenance == AvcReceiptTimestampProvenance::ExternalTimestampAuthority
+                && proof.issued_at == issued_at
+                && proof.subject_hash == evidence_subject_hash
+        });
+    if !proof_covers_commitment {
+        return Err(public_output_external_timestamp_mismatch_refusal());
+    }
+    Ok(evidence)
+}
+
+async fn prepare_public_output_external_timestamp_gate(
+    state: Arc<AvcApiState>,
+    parts: PublicOutputAuthorizationRequestParts,
+) -> ApiResult<PublicOutputExternalTimestampGate> {
+    let source_unconfigured = matches!(
+        state.external_timestamp_source,
+        AvcReceiptExternalTimestampSource::Unconfigured
+    );
+    with_registry_blocking(state, false, move |registry| {
+        let credential = load_public_output_credential(registry, &parts.credential_id)?;
+        let action = public_output_action(&credential, &parts)?;
+        if let Some(envelope) =
+            replay_stored_public_output_authorization(registry, true, &credential, &parts)?
+        {
+            return Ok(PublicOutputExternalTimestampGate::Replayed(Box::new(
+                envelope,
+            )));
+        }
+        if source_unconfigured {
+            return Err(public_output_local_clock_refusal());
+        }
+        Ok(PublicOutputExternalTimestampGate::Mint(Box::new(
+            PublicOutputExternalMintPlan {
+                credential,
+                action,
+                previous_receipt_hash: registry.receipt_chain_head(),
+            },
+        )))
+    })
+    .await
+}
+
+async fn store_public_output_with_external_timestamp(
+    state: Arc<AvcApiState>,
+    parts: PublicOutputAuthorizationRequestParts,
+    plan: PublicOutputExternalMintPlan,
+    evidence: AvcReceiptTimestampEvidence,
+) -> ApiResult<LivesafePublicAdapterOutputAuthorizationEnvelope> {
+    let issued_at = evidence.trusted_now;
+    let timestamped_commitment =
+        public_output_action_commitment(&plan.credential, &parts, &issued_at)?;
+    let evidence_subject = public_output_evidence_subject(
+        parts.credential_id,
+        &plan.action,
+        timestamped_commitment,
+        plan.previous_receipt_hash,
+    )?;
+    let evidence_subject_hash = evidence_subject.hash().map_err(map_avc_error)?;
+    let Some(proof) = evidence.external_timestamp_proof else {
+        return Err(public_output_external_timestamp_mismatch_refusal());
+    };
+    if evidence.provenance != AvcReceiptTimestampProvenance::ExternalTimestampAuthority
+        || proof.issued_at != issued_at
+        || proof.subject_hash != evidence_subject_hash
+    {
+        return Err(public_output_external_timestamp_mismatch_refusal());
+    }
+    let previous_receipt_hash = plan.previous_receipt_hash;
+    let timestamped_credential = plan.credential;
+    let action = plan.action;
+    let provenance = evidence.provenance;
+    with_registry_blocking(state, true, move |registry| {
+        let credential = load_public_output_credential(registry, &parts.credential_id)?;
+        if credential != timestamped_credential {
+            return Err(public_output_credential_changed_during_timestamp_attestation());
+        }
+        if let Some(envelope) =
+            replay_stored_public_output_authorization(registry, true, &credential, &parts)?
+        {
+            return Ok(envelope);
+        }
+        if registry.receipt_chain_head() != previous_receipt_hash {
+            return Err((
+                StatusCode::CONFLICT,
+                "AVC receipt chain advanced during external timestamp attestation".into(),
+            ));
+        }
+        let action_commitment_hash =
+            public_output_action_commitment(&credential, &parts, &issued_at)?;
+        if action_commitment_hash != timestamped_commitment {
+            return Err(public_output_credential_changed_during_timestamp_attestation());
+        }
+        mint_stored_public_output_authorization(
+            registry,
+            &parts,
+            PublicOutputStoredReceipt {
+                credential,
+                action,
+                action_commitment_hash,
+                previous_receipt_hash,
+                issued_at,
+                provenance,
+                external_timestamp_proof: Some(proof),
+            },
+        )
+    })
+    .await
+}
+
+async fn authorize_public_output_with_required_external_timestamp(
+    state: Arc<AvcApiState>,
+    parts: PublicOutputAuthorizationRequestParts,
+) -> ApiResult<LivesafePublicAdapterOutputAuthorizationEnvelope> {
+    let gate =
+        prepare_public_output_external_timestamp_gate(Arc::clone(&state), parts.clone()).await?;
+    let plan = match gate {
+        PublicOutputExternalTimestampGate::Replayed(envelope) => return Ok(*envelope),
+        PublicOutputExternalTimestampGate::Mint(plan) => *plan,
+    };
+    let evidence = public_output_required_timestamp_evidence(&state, &parts, &plan).await?;
+    store_public_output_with_external_timestamp(state, parts, plan, evidence).await
+}
+
+async fn authorize_public_output_from_local_clock(
+    state: Arc<AvcApiState>,
+    parts: PublicOutputAuthorizationRequestParts,
+) -> ApiResult<LivesafePublicAdapterOutputAuthorizationEnvelope> {
+    let state_for_clock = Arc::clone(&state);
+    with_registry_blocking(state, true, move |registry| {
+        let credential = load_public_output_credential(registry, &parts.credential_id)?;
+        let action = public_output_action(&credential, &parts)?;
+        if let Some(envelope) =
+            replay_stored_public_output_authorization(registry, false, &credential, &parts)?
+        {
+            return Ok(envelope);
+        }
+        let issued_at =
+            trusted_local_hlc_timestamp(&state_for_clock).map_err(local_hlc_timestamp_error)?;
+        let action_commitment_hash =
+            public_output_action_commitment(&credential, &parts, &issued_at)?;
+        let previous_receipt_hash = registry.receipt_chain_head();
+        mint_stored_public_output_authorization(
+            registry,
+            &parts,
+            PublicOutputStoredReceipt {
+                credential,
+                action,
+                action_commitment_hash,
+                previous_receipt_hash,
+                issued_at,
+                provenance: AvcReceiptTimestampProvenance::LocalHybridLogicalClock,
+                external_timestamp_proof: None,
+            },
+        )
+    })
+    .await
+}
+
 async fn handle_public_output_authorization(
     State(state): State<Arc<AvcApiState>>,
     Json(payload): Json<PublicOutputAuthorizationRequest>,
 ) -> ApiResult<Json<LivesafePublicAdapterOutputAuthorizationEnvelope>> {
-    let validator_did = state.validator_did.clone();
-    let receipt_signer = Arc::clone(&state.receipt_signer);
-    let idempotency_key_hash =
-        livesafe_public_adapter_output_authorization_idempotency_hash(&payload.idempotency_key)
-            .map_err(map_avc_error)?;
-    let credential_id = payload.credential_id;
-    let subject = payload.subject;
-    let audience = payload.audience;
-    let evidence_hash = payload.evidence_hash;
-    let expires_at = payload.expires_at;
-    let state_for_clock = Arc::clone(&state);
-
-    let envelope = with_registry_blocking(state, true, move |registry| {
-        let credential = registry.get_credential(&credential_id).ok_or((
-            StatusCode::NOT_FOUND,
-            "public output authorization credential is not registered".into(),
-        ))?;
-        let action = livesafe_public_adapter_output_authorization_action_request(
-            &credential,
-            &subject,
-            &audience,
-            evidence_hash,
-            idempotency_key_hash,
-            &expires_at,
+    let parts = PublicOutputAuthorizationRequestParts {
+        credential_id: payload.credential_id,
+        subject: payload.subject,
+        audience: payload.audience,
+        evidence_hash: payload.evidence_hash,
+        idempotency_key_hash: livesafe_public_adapter_output_authorization_idempotency_hash(
+            &payload.idempotency_key,
         )
-        .map_err(map_avc_error)?;
-
-        if let Some(existing) = registry.get_receipt_by_action_id(&idempotency_key_hash) {
-            let action_commitment_hash =
-                livesafe_public_adapter_output_authorization_action_commitment_hash(
-                    &credential,
-                    &subject,
-                    &audience,
-                    evidence_hash,
-                    idempotency_key_hash,
-                    &existing.created_at,
-                    &expires_at,
-                )
-                .map_err(map_avc_error)?;
-            if existing.credential_id != credential_id
-                || existing.action_commitment_hash != Some(action_commitment_hash)
-            {
-                return Err((
-                    StatusCode::CONFLICT,
-                    "public output authorization idempotency key conflict".into(),
-                ));
-            }
-            let draft = LivesafePublicAdapterOutputAuthorizationDraft {
-                credential,
-                subject,
-                audience,
-                evidence_hash,
-                credential_id: Some(credential_id),
-                receipt_id: existing.receipt_id,
-                action_commitment_hash,
-                idempotency_key_hash,
-                issued_at: existing.created_at,
-                expires_at,
-                signer_did: validator_did,
-            };
-            return mint_livesafe_public_adapter_output_authorization_proof(
-                draft,
-                registry,
-                |bytes| (receipt_signer)(bytes),
-            )
-            .map_err(map_avc_error);
-        }
-
-        let issued_at =
-            trusted_local_hlc_timestamp(&state_for_clock).map_err(local_hlc_timestamp_error)?;
-        let action_commitment_hash =
-            livesafe_public_adapter_output_authorization_action_commitment_hash(
-                &credential,
-                &subject,
-                &audience,
-                evidence_hash,
-                idempotency_key_hash,
-                &issued_at,
-                &expires_at,
-            )
-            .map_err(map_avc_error)?;
-        let action_descriptor = AvcActionDescriptor::from_action(&action);
-        let previous_receipt_hash = registry.receipt_chain_head();
-        let pre_receipt_draft = LivesafePublicAdapterOutputAuthorizationDraft {
-            credential: credential.clone(),
-            subject: subject.clone(),
-            audience: audience.clone(),
-            evidence_hash,
-            credential_id: Some(credential_id),
-            receipt_id: Hash256::ZERO,
-            action_commitment_hash,
-            idempotency_key_hash,
-            issued_at,
-            expires_at,
-            signer_did: validator_did.clone(),
-        };
-        let validation =
-            validate_livesafe_public_adapter_output_authorization(&pre_receipt_draft, registry)
-                .map_err(map_avc_error)?;
-        let receipt = create_trust_receipt_with_evidence(
-            &validation,
-            Some(action.action_id),
-            AvcTrustReceiptEvidence {
-                action_commitment_hash: Some(action_commitment_hash),
-                action_descriptor: Some(action_descriptor),
-                llm_usage_evidence_hash: None,
-                payment_evidence_hash: None,
-                previous_receipt_hash,
-                timestamp_provenance: Some(AvcReceiptTimestampProvenance::LocalHybridLogicalClock),
-                external_timestamp_proof: None,
-            },
-            validator_did.clone(),
-            issued_at,
-            |bytes| (receipt_signer)(bytes),
-        )
-        .map_err(map_avc_error)?;
-        store_receipt_idempotent(registry, receipt.clone())?;
-
-        let draft = LivesafePublicAdapterOutputAuthorizationDraft {
-            credential,
-            subject,
-            audience,
-            evidence_hash,
-            credential_id: Some(credential_id),
-            receipt_id: receipt.receipt_id,
-            action_commitment_hash,
-            idempotency_key_hash,
-            issued_at,
-            expires_at,
-            signer_did: validator_did,
-        };
-        mint_livesafe_public_adapter_output_authorization_proof(draft, registry, |bytes| {
-            (receipt_signer)(bytes)
-        })
-        .map_err(map_avc_error)
-    })
-    .await?;
+        .map_err(map_avc_error)?,
+        expires_at: payload.expires_at,
+        validator_did: state.validator_did.clone(),
+        receipt_signer: Arc::clone(&state.receipt_signer),
+    };
+    let envelope = if state.require_external_timestamp {
+        authorize_public_output_with_required_external_timestamp(state, parts).await?
+    } else {
+        authorize_public_output_from_local_clock(state, parts).await?
+    };
     Ok(Json(envelope))
 }
 
@@ -3928,6 +4259,7 @@ mod tests {
     use std::{
         collections::{BTreeMap, VecDeque},
         convert::Infallible,
+        process::Command,
         sync::atomic::{AtomicUsize, Ordering},
     };
 
@@ -4081,6 +4413,22 @@ mod tests {
             fixed_external_timestamp_source(Timestamp::new(1_600_000, 0)),
             Some(finality_store),
         );
+        seed_avc_trust_keys(&state);
+        Arc::new(state)
+    }
+
+    async fn fresh_unconfigured_durable_state(data_dir: &FsPath) -> Arc<AvcApiState> {
+        let signer: AvcReceiptSigner = Arc::new(|payload: &[u8]| validator_keypair().sign(payload));
+        let state = AvcApiState::with_durable_registry(
+            data_dir,
+            validator_did(),
+            signer,
+            None,
+            None,
+            false,
+        )
+        .await
+        .expect("durable AVC state");
         seed_avc_trust_keys(&state);
         Arc::new(state)
     }
@@ -7934,6 +8282,239 @@ mod tests {
         )
         .await
         .unwrap()
+    }
+
+    const PUBLIC_OUTPUT_TIMESTAMP_PROBE_ENV: &str =
+        "EXO_AVC_PUBLIC_OUTPUT_TIMESTAMP_REQUIREMENT_PROBE";
+    const PUBLIC_OUTPUT_TIMESTAMP_TEST_NAME: &str = "avc::tests::public_output_authorization_stores_no_local_clock_receipt_when_external_timestamp_required";
+
+    #[tokio::test]
+    async fn public_output_authorization_stores_no_local_clock_receipt_when_external_timestamp_required()
+     {
+        match std::env::var(PUBLIC_OUTPUT_TIMESTAMP_PROBE_ENV) {
+            Err(std::env::VarError::NotPresent) => {
+                assert_public_output_timestamp_probe_passed();
+            }
+            Ok(mode) if mode == "required" => {
+                assert_public_output_refuses_local_clock_receipt_when_requirement_on().await;
+            }
+            Ok(mode) => panic!("unknown public output timestamp probe mode {mode}"),
+            Err(std::env::VarError::NotUnicode(_)) => {
+                panic!("{PUBLIC_OUTPUT_TIMESTAMP_PROBE_ENV} must be valid UTF-8")
+            }
+        }
+    }
+
+    async fn assert_public_output_refuses_local_clock_receipt_when_requirement_on() {
+        assert_eq!(
+            std::env::var(AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV)
+                .expect("timestamp authority requirement"),
+            "true"
+        );
+        assert!(
+            configured_require_external_timestamp_from_env()
+                .expect("external timestamp authority requirement")
+        );
+
+        let dir = tempfile::tempdir().expect("temp data dir");
+        let state = fresh_unconfigured_durable_state(dir.path()).await;
+        assert!(
+            matches!(
+                state.external_timestamp_source,
+                AvcReceiptExternalTimestampSource::Unconfigured
+            ),
+            "required probe must leave the timestamp authority unconfigured"
+        );
+        assert!(
+            state.require_external_timestamp,
+            "{AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV}=true must require an external timestamp authority on the public-output route"
+        );
+        let evidence_hash = Hash256::from_bytes([0xA7; 32]);
+        let credential_id =
+            store_livesafe_public_output_credential_for_evidence(&state, evidence_hash);
+        let app = avc_router_with_bearer_gate(Arc::clone(&state));
+        let request = public_output_authorization_request(
+            credential_id,
+            "public-output-idem-require-tsa",
+            evidence_hash,
+            exo_avc::LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_AUDIENCE,
+        );
+
+        let response =
+            post_public_output_authorization(app, request, Some("vcg-006a-admin-token")).await;
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = String::from_utf8(read_body(response).await).expect("denial body is utf-8");
+        assert!(
+            body.contains(AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV),
+            "denial must name the timestamp authority requirement, got {body}"
+        );
+        assert_eq!(
+            state.registry.lock().unwrap().receipt_count(),
+            0,
+            "public output must store no signed receipt when the timestamp authority requirement is on"
+        );
+    }
+
+    fn assert_public_output_timestamp_probe_passed() {
+        let mut command = Command::new(std::env::current_exe().expect("test executable"));
+        command
+            .args(["--exact", PUBLIC_OUTPUT_TIMESTAMP_TEST_NAME, "--nocapture"])
+            .env(PUBLIC_OUTPUT_TIMESTAMP_PROBE_ENV, "required")
+            .env(AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV, "true")
+            .env_remove(AVC_EXTERNAL_TIMESTAMP_AUTHORITY_URL_ENV)
+            .env_remove(AVC_EXTERNAL_TIMESTAMP_AUTHORITY_KIND_ENV)
+            .env_remove(AVC_EXTERNAL_TIMESTAMP_AUTHORITY_DID_ENV)
+            .env_remove(AVC_EXTERNAL_TIMESTAMP_AUTHORITY_PUBLIC_KEY_HEX_ENV)
+            .env_remove(AVC_RFC3161_TIMESTAMP_CA_SPKI_HEX_ENV)
+            .env_remove(AVC_RFC3161_TIMESTAMP_POLICY_OID_ENV);
+        let output = command
+            .output()
+            .expect("public output timestamp requirement probe");
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            output.status.success() && combined.contains("test result: ok. 1 passed;"),
+            "required public-output probe failed\n{combined}"
+        );
+    }
+
+    #[tokio::test]
+    async fn public_output_authorization_stores_external_timestamp_proof_when_authority_configured()
+    {
+        let signer: AvcReceiptSigner = Arc::new(|payload: &[u8]| validator_keypair().sign(payload));
+        let mut state = AvcApiState::new_with_external_timestamp_source(
+            validator_did(),
+            signer,
+            fixed_external_timestamp_source(Timestamp::new(1_600_000, 0)),
+        );
+        state.require_external_timestamp = true;
+        seed_avc_trust_keys(&state);
+        let state = Arc::new(state);
+        let evidence_hash = Hash256::from_bytes([0xA8; 32]);
+        let credential_id =
+            store_livesafe_public_output_credential_for_evidence(&state, evidence_hash);
+        let app = avc_router_with_bearer_gate(Arc::clone(&state));
+        let request = public_output_authorization_request(
+            credential_id,
+            "public-output-idem-configured-tsa",
+            evidence_hash,
+            exo_avc::LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_AUDIENCE,
+        );
+
+        let response = post_public_output_authorization(
+            app.clone(),
+            request.clone(),
+            Some("vcg-006a-admin-token"),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let envelope: exo_avc::LivesafePublicAdapterOutputAuthorizationEnvelope =
+            serde_json::from_slice(&read_body(response).await).expect("configured proof envelope");
+        let receipt = state
+            .registry
+            .lock()
+            .unwrap()
+            .get_receipt(&envelope.proof.receipt_id)
+            .expect("stored configured receipt");
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 1);
+        assert_eq!(
+            receipt.timestamp_provenance,
+            Some(AvcReceiptTimestampProvenance::ExternalTimestampAuthority)
+        );
+        assert!(receipt.external_timestamp_proof.is_some());
+        assert_eq!(receipt.created_at, Timestamp::new(1_600_000, 0));
+        assert_eq!(envelope.proof.issued_at, Timestamp::new(1_600_000, 0));
+
+        let replay =
+            post_public_output_authorization(app, request, Some("vcg-006a-admin-token")).await;
+        assert_eq!(replay.status(), StatusCode::OK);
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 1);
+        let replayed = state
+            .registry
+            .lock()
+            .unwrap()
+            .get_receipt(&envelope.proof.receipt_id)
+            .expect("replayed configured receipt");
+        assert_eq!(
+            replayed.timestamp_provenance,
+            Some(AvcReceiptTimestampProvenance::ExternalTimestampAuthority)
+        );
+        assert!(replayed.external_timestamp_proof.is_some());
+    }
+
+    #[tokio::test]
+    async fn public_output_authorization_denies_replay_of_local_clock_receipt_when_external_timestamp_required()
+     {
+        let state = fresh_state();
+        let evidence_hash = Hash256::from_bytes([0xA9; 32]);
+        let credential_id =
+            store_livesafe_public_output_credential_for_evidence(&state, evidence_hash);
+        let app = avc_router_with_bearer_gate(Arc::clone(&state));
+        let request = public_output_authorization_request(
+            credential_id,
+            "public-output-idem-replay-local-clock",
+            evidence_hash,
+            exo_avc::LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_AUDIENCE,
+        );
+
+        let stored =
+            post_public_output_authorization(app, request.clone(), Some("vcg-006a-admin-token"))
+                .await;
+        assert_eq!(stored.status(), StatusCode::OK);
+        let envelope: exo_avc::LivesafePublicAdapterOutputAuthorizationEnvelope =
+            serde_json::from_slice(&read_body(stored).await).expect("local-clock proof envelope");
+        let stored_receipt = state
+            .registry
+            .lock()
+            .unwrap()
+            .get_receipt(&envelope.proof.receipt_id)
+            .expect("stored local-clock receipt");
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 1);
+        assert_eq!(
+            stored_receipt.timestamp_provenance,
+            Some(AvcReceiptTimestampProvenance::LocalHybridLogicalClock)
+        );
+        assert!(stored_receipt.external_timestamp_proof.is_none());
+
+        let mut required_state = (*state).clone();
+        required_state.require_external_timestamp = true;
+        let required_state = Arc::new(required_state);
+        let required_app = avc_router_with_bearer_gate(required_state);
+        let replay =
+            post_public_output_authorization(required_app, request, Some("vcg-006a-admin-token"))
+                .await;
+
+        assert_eq!(replay.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = String::from_utf8(read_body(replay).await).expect("replay denial is utf-8");
+        assert!(
+            body.contains("stored receipt with no external timestamp proof"),
+            "replay denial must name the stored receipt, got {body}"
+        );
+        assert!(
+            serde_json::from_str::<exo_avc::LivesafePublicAdapterOutputAuthorizationEnvelope>(
+                &body
+            )
+            .is_err(),
+            "replay denial must not return the stored local-clock proof, got {body}"
+        );
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 1);
+        let receipt_after_replay = state
+            .registry
+            .lock()
+            .unwrap()
+            .get_receipt(&envelope.proof.receipt_id)
+            .expect("original local-clock receipt remains");
+        assert_eq!(
+            receipt_after_replay.timestamp_provenance,
+            Some(AvcReceiptTimestampProvenance::LocalHybridLogicalClock)
+        );
+        assert!(receipt_after_replay.external_timestamp_proof.is_none());
+        assert_eq!(receipt_after_replay, stored_receipt);
     }
 
     #[tokio::test]
