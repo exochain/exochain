@@ -2916,40 +2916,70 @@ pub(crate) mod tests {
         };
         let first_did = "did:exo:durable-capacity-first";
         let second_did = "did:exo:durable-capacity-second";
+        let foreign_did = format!("did:exo:durable-capacity-foreign-{}", std::process::id());
         cleanup_identity_erasure_fixture(&pool, first_did).await?;
         cleanup_identity_erasure_fixture(&pool, second_did).await?;
+        sqlx::query("DELETE FROM did_documents WHERE did = $1")
+            .bind(&foreign_did)
+            .execute(&pool)
+            .await?;
+        sqlx::query(
+            "INSERT INTO did_documents (did, document, created_at_ms, updated_at_ms, revoked) \
+             VALUES ($1, '{}'::jsonb, 0, 0, false)",
+        )
+        .bind(&foreign_did)
+        .execute(&pool)
+        .await?;
 
-        assert!(
-            insert_did_document_with_capacity(&pool, &minimal_doc(first_did), 1).await?,
-            "first DID document should fit inside the durable capacity budget"
-        );
-        let err = insert_did_document_with_capacity(&pool, &minimal_doc(second_did), 1)
-            .await
-            .expect_err("second distinct DID document must be rejected at the durable cap");
+        let outcome = async {
+            let foreign_count: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM did_documents WHERE did = $1")
+                    .bind(&foreign_did)
+                    .fetch_one(&pool)
+                    .await?;
+            assert_eq!(
+                foreign_count, 1,
+                "a row outside this test must already occupy the shared registry"
+            );
 
-        assert!(
-            matches!(
-                err,
-                DidDocumentPersistenceError::RegistryCapacityExceeded {
-                    max_documents: 1,
-                    attempted_documents: 2
-                }
-            ),
-            "expected typed durable capacity error, got {err}"
-        );
-        let stored_second: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM did_documents WHERE did = $1")
-                .bind(second_did)
-                .fetch_one(&pool)
-                .await?;
-        assert_eq!(
-            stored_second, 0,
-            "over-capacity DID document must not be persisted"
-        );
+            assert!(
+                insert_did_document_with_capacity(&pool, &minimal_doc(first_did), 1).await?,
+                "first DID document should fit inside the durable capacity budget"
+            );
+            let err = insert_did_document_with_capacity(&pool, &minimal_doc(second_did), 1)
+                .await
+                .expect_err("second distinct DID document must be rejected at the durable cap");
 
+            assert!(
+                matches!(
+                    err,
+                    DidDocumentPersistenceError::RegistryCapacityExceeded {
+                        max_documents: 1,
+                        attempted_documents: 2
+                    }
+                ),
+                "expected typed durable capacity error, got {err}"
+            );
+            let stored_second: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM did_documents WHERE did = $1")
+                    .bind(second_did)
+                    .fetch_one(&pool)
+                    .await?;
+            assert_eq!(
+                stored_second, 0,
+                "over-capacity DID document must not be persisted"
+            );
+            Ok(())
+        }
+        .await;
+
+        sqlx::query("DELETE FROM did_documents WHERE did = $1")
+            .bind(&foreign_did)
+            .execute(&pool)
+            .await?;
         cleanup_identity_erasure_fixture(&pool, first_did).await?;
         cleanup_identity_erasure_fixture(&pool, second_did).await?;
-        Ok(())
+        outcome
     }
 
     #[tokio::test]
