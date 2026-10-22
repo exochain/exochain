@@ -25,8 +25,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.3.1]
-
 Workspace, pins, locks, SDKs, WASM, LYNK, and protocol constants move from
 `0.2.7` to `0.3.1`. This source state is not a tag, GitHub Release, registry
 publication, or deployment.
@@ -87,6 +85,16 @@ publication, or deployment.
   `0.23.46`, `rustls-webpki` below `0.103.16`, and `webpki-roots` `1.x` below
   `1.0.10`, including the guest lock. The audit ignore list is unchanged.
   (#888)
+- An Allow receipt commits its SQLite anchor before the registry file is
+  installed, and that anchor is keyed by the receipt `validator_did`. A failed
+  anchor `COMMIT` leaves the previous registry file. A failed file install
+  after `COMMIT` can leave the anchor without the new Allow file. A
+  non-terminal unanchored Allow is re-anchored in place. If that re-anchor
+  cannot commit, the receipt stays, `GET` returns 503, and list hides it. LYNK
+  Allow attestation is signed after the Allow commitment is staged and before
+  the registry and anchor become durable. A failed attestation leaves no new
+  receipt and no anchor. A durable registry with no finality store fails
+  closed. Reversal stays deferred. (#870)
 
 ### Release / CI
 
