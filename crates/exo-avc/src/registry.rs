@@ -34,6 +34,16 @@ use crate::{
     revocation::AvcRevocation,
 };
 
+/// Whether a named emergency-stop reference is clear or engaged.
+///
+/// Validation denies a credential when any of its references is missing
+/// from the registry or is [`EmergencyStopStanding::Engaged`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmergencyStopStanding {
+    Clear,
+    Engaged,
+}
+
 /// Read-only registry interface used by validation.
 pub trait AvcRegistryRead {
     fn resolve_public_key(&self, did: &Did) -> Option<PublicKey>;
@@ -50,6 +60,11 @@ pub trait AvcRegistryRead {
     fn authority_chain_valid(&self, chain_hash: &Hash256, now: &Timestamp) -> bool;
     fn get_credential(&self, credential_id: &Hash256) -> Option<AutonomousVolitionCredential>;
     fn list_credentials_for_subject(&self, subject_did: &Did) -> Vec<AutonomousVolitionCredential>;
+    /// `None` means the reference is not registered.
+    fn emergency_stop_standing(&self, stop_ref: &str) -> Option<EmergencyStopStanding> {
+        let _ = stop_ref;
+        None
+    }
 }
 
 /// Mutating registry interface used by node API handlers and tests.
@@ -147,6 +162,7 @@ pub struct InMemoryAvcRegistry {
     consent_refs: BTreeSet<Hash256>,
     policy_refs: BTreeSet<(Hash256, u16)>,
     authority_chains: BTreeSet<Hash256>,
+    emergency_stops: BTreeMap<String, EmergencyStopStanding>,
     /// Durable per-issuer runtime registrations, keyed by issuer DID, each
     /// carrying the `exo-authority` DelegationRegistry chain that authorized
     /// it (VCG-006b / #736). Distinct from `public_keys`: entries here are
@@ -887,6 +903,15 @@ impl InMemoryAvcRegistry {
             .cloned()
     }
 
+    /// Record whether `stop_ref` is clear or engaged.
+    pub fn set_emergency_stop(
+        &mut self,
+        stop_ref: impl Into<String>,
+        standing: EmergencyStopStanding,
+    ) {
+        self.emergency_stops.insert(stop_ref.into(), standing);
+    }
+
     /// List receipts whose referenced credential belongs to `subject_did`.
     ///
     /// Receipts are stored in a `BTreeMap`, so iteration order is the
@@ -957,6 +982,10 @@ impl AvcRegistryRead for InMemoryAvcRegistry {
         ids.iter()
             .filter_map(|id| self.credentials.get(id).cloned())
             .collect()
+    }
+
+    fn emergency_stop_standing(&self, stop_ref: &str) -> Option<EmergencyStopStanding> {
+        self.emergency_stops.get(stop_ref).copied()
     }
 }
 
