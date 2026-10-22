@@ -6428,7 +6428,11 @@ mod tests {
     }
 
     fn signing_registry() -> (Arc<RwLock<LocalDidRegistry>>, exo_core::SecretKey) {
-        let did = Did::new("did:exo:login-alice").unwrap();
+        signing_registry_for("did:exo:login-alice")
+    }
+
+    fn signing_registry_for(did: &str) -> (Arc<RwLock<LocalDidRegistry>>, exo_core::SecretKey) {
+        let did = Did::new(did).unwrap();
         let (pk, sk) = generate_keypair();
         let doc = did_document_with_ed25519_key(&did, &pk);
         let registry = Arc::new(RwLock::new(LocalDidRegistry::new()));
@@ -9377,6 +9381,121 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    struct FreshLoginAttempt {
+        status: StatusCode,
+        body: String,
+        signer_key_stored: bool,
+    }
+
+    async fn login_with_fresh_signing_key(
+        pool: &sqlx::PgPool,
+        did: &str,
+        metadata: SessionIssueMetadata,
+        gateway_now_ms: u64,
+    ) -> FreshLoginAttempt {
+        let (registry, sk) = signing_registry_for(did);
+        let did_key = Did::new(did).unwrap();
+        let doc = registry
+            .read()
+            .unwrap()
+            .resolve(&did_key)
+            .expect("signing DID document")
+            .clone();
+        db::insert_did_document(pool, &doc)
+            .await
+            .expect("persist signing DID document");
+        let stored = db::find_did_document(pool, did)
+            .await
+            .expect("read signing DID document");
+        let signer_key_stored = stored
+            .as_ref()
+            .is_some_and(|stored_doc| stored_doc.public_keys == doc.public_keys);
+        let timestamp = Timestamp::new(gateway_now_ms, 0);
+        let signature = sign(
+            &session_login_auth_signing_payload(did, &metadata, timestamp).unwrap(),
+            &sk,
+        );
+        let body = serde_json::json!({
+            "did": did,
+            "createdAt": metadata.created_at,
+            "expiresAt": metadata.expires_at,
+            "authTimestampPhysicalMs": timestamp.physical_ms,
+            "authTimestampLogical": timestamp.logical,
+            "signature": hex::encode(signature.to_bytes())
+        });
+        let response = handle_auth_login(
+            State(db_state_at(
+                pool.clone(),
+                Arc::new(RwLock::new(LocalDidRegistry::new())),
+                gateway_now_ms,
+            )),
+            Json(body),
+        )
+        .await
+        .into_response();
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = String::from_utf8_lossy(&bytes).into_owned();
+        FreshLoginAttempt {
+            status,
+            body,
+            signer_key_stored,
+        }
+    }
+
+    #[tokio::test]
+    async fn auth_login_valid_signature_survives_a_leftover_signing_document() {
+        let pool = match gateway_test_pool().await {
+            Some(pool) => pool,
+            None => return,
+        };
+        let did = "did:exo:login-stale-document";
+        sqlx::query("DELETE FROM sessions WHERE actor_did = $1")
+            .bind(did)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM did_documents WHERE did = $1")
+            .bind(did)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let (stale_pk, _) = generate_keypair();
+        let stale_did = Did::new(did).unwrap();
+        let stale_doc = did_document_with_ed25519_key(&stale_did, &stale_pk);
+        assert!(
+            db::insert_did_document(&pool, &stale_doc)
+                .await
+                .expect("store leftover signing document"),
+            "leftover signing document should be inserted"
+        );
+
+        let metadata = SessionIssueMetadata {
+            created_at: 10_000,
+            expires_at: 20_000,
+        };
+        let attempt = login_with_fresh_signing_key(&pool, did, metadata, 10_000).await;
+
+        sqlx::query("DELETE FROM sessions WHERE actor_did = $1")
+            .bind(did)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM did_documents WHERE did = $1")
+            .bind(did)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            (attempt.status, attempt.signer_key_stored),
+            (StatusCode::OK, true),
+            "{}",
+            attempt.body
+        );
     }
 
     #[tokio::test]
