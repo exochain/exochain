@@ -101,7 +101,7 @@ ml-dsa = { version = "=0.1.0-rc.7", default-features = false, features = ["zeroi
 indexmap = { version = "=2.12.1", features = ["serde"] }
 
 # Async runtime (deterministic task ordering where possible)
-tokio = { version = "=1.50.0", features = ["full"] }
+tokio = { version = "=1.51.6", features = ["full"] }
 
 # HTTP server
 axum = { version = "=0.7.9", features = ["json", "macros"] }

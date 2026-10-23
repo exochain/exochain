@@ -24,7 +24,7 @@ python_path="$($python_path -c 'import os,sys; print(os.path.realpath(sys.execut
 
 # The corpus digest is reviewed, not inferred from whichever version is present.
 # This test archives HEAD; refuse to claim coverage of different working inputs.
-reviewed_version=0.2.7
+reviewed_version=0.3.1
 workspace_version="$("$python_path" -I -B -c \
   'import pathlib,sys,tomllib; print(tomllib.loads(pathlib.Path(sys.argv[1]).read_text())["workspace"]["package"]["version"])' \
   "$repo_root/Cargo.toml")"
@@ -89,11 +89,25 @@ canonical_one="$test_root/canonical-one"
 canonical_two="$test_root/canonical-two"
 digest_one="$(run_validator "$raw_root" "$metadata_file" "$lock_file" "$canonical_one")"
 digest_two="$(run_validator "$raw_root" "$metadata_file" "$lock_file" "$canonical_two")"
-# Reconciled against source 1a42883a7cc1 after reproducing the cb81064f7089
-# 0.2.6 digest d085e1ae94fb41ba802c58ff6a0c40ddb67086e23f1a9649bb2645d4f7768319.
-# Only owned package versions, their references and output filenames change to
-# 0.2.7; third-party components, checksums and graph edges remain unchanged.
-expected_digest=abdb895d4795a54dd5950368ad31da551b211da39ce9361ae669522aebd9ed4f
+# Reproduced the 1a42883a7cc1 cargo-cyclonedx 0.5.9 corpus
+# abdb895d4795a54dd5950368ad31da551b211da39ce9361ae669522aebd9ed4f, then
+# regenerated this tree. Owned package versions, references, purls, output
+# filenames, and target versions move from 0.2.7 to 0.3.1. Target paths do
+# not. Pull 888, already on main, replaces quinn 0.11.9 with 0.11.12,
+# quinn-proto 0.11.15 with 0.11.19, rustls 0.23.45 with 0.23.46,
+# rustls-webpki 0.103.15 with 0.103.16, and webpki-roots 1.0.6 with 1.0.10;
+# those checksums change. quinn-proto moves from rand 0.9.4 and getrandom
+# 0.3.4 to rand 0.10.3, rand_pcg 0.10.2, and getrandom 0.4.2, adding chacha20
+# 0.10.2 and rand_core 0.10.1. getrandom 0.4.2 gains js-sys, wasm-bindgen,
+# and rand_core 0.10.1. getrandom 0.3.4 loses js-sys and wasm-bindgen, and
+# the exochain-sdk document also drops getrandom 0.3.4, r-efi 5.3.0, rand
+# 0.9.4, rand_chacha 0.9.0, and rand_core 0.9.3. exochain-node and
+# exochain-sdk gain direct edges to the patched rustls, rustls-webpki,
+# webpki-roots, and quinn-proto crates. webpki-roots 0.26.11 now depends on
+# webpki-roots 1.0.10. Tokio is pinned to 1.51.6 for RUSTSEC-2026-0386, with
+# tokio-macros 2.7.2, libc 0.2.191, mio 1.2.4, and syn 3.0.9 on the
+# tokio-macros edge. No other component, checksum, or edge changes.
+expected_digest=bfdc60be921b496aba295f5df1fbfb7296bb02c3b056bcc6bd8cf44161c50152
 [ "$digest_one" = "$expected_digest" ] && [ "$digest_two" = "$expected_digest" ] \
   || fail "exact cargo-cyclonedx 0.5.9 corpus did not produce the reviewed canonical digest"
 /usr/bin/diff -ru "$canonical_one" "$canonical_two" >/dev/null \

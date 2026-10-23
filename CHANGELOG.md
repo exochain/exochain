@@ -23,7 +23,7 @@ All notable changes to EXOCHAIN will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.1] - 2026-10-23
 
 Workspace, pins, locks, SDKs, WASM, LYNK, and protocol constants move from
 `0.2.7` to `0.3.1`. This source state is not a tag, GitHub Release, registry
@@ -95,16 +95,20 @@ publication, or deployment.
   the registry and anchor become durable. A failed attestation leaves no new
   receipt and no anchor. A durable registry with no finality store fails
   closed. Reversal stays deferred. (#870)
+- Workspace `tokio` moves from `1.50.0` to `1.51.6` for `RUSTSEC-2026-0386`.
+  The root lock moves `tokio-macros` to `2.7.2`, `libc` to `0.2.191`, and
+  `mio` to `1.2.4`, and adds `syn` `3.0.9` on the `tokio-macros` edge. The
+  guest lock moves `tokio` and `tokio-macros` to those same releases.
 
 ### Release / CI
 
 - Aligns the 32 publishable Rust crates, standalone CGR packages, 158 exact
   first-party dependency pins, Rust locks, SDKs, WASM, and LLM proxy at
-  `0.3.1`, without upgrading third-party dependencies.
-- The SBOM source fixture starts its temporary tree at the reviewed corpus
-  version declared by `tools/test_verify_release_sbom.sh`, which remains
-  `0.2.7`. The workspace stays `0.3.1`. No `0.3.1` SBOM corpus is reviewed
-  or published.
+  `0.3.1`.
+- The release SBOM gate pins reviewed corpus `0.3.1` and digest
+  `bfdc60be921b496aba295f5df1fbfb7296bb02c3b056bcc6bd8cf44161c50152` from
+  cargo-cyclonedx 0.5.9 on this tree. The version check and the exact digest
+  check both stay. This does not publish an SBOM.
 
 ## [0.2.7] - 2026-10-08
 
