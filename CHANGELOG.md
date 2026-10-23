@@ -101,6 +101,10 @@ publication, or deployment.
 - Aligns the 32 publishable Rust crates, standalone CGR packages, 158 exact
   first-party dependency pins, Rust locks, SDKs, WASM, and LLM proxy at
   `0.3.1`, without upgrading third-party dependencies.
+- The SBOM source fixture starts its temporary tree at the reviewed corpus
+  version declared by `tools/test_verify_release_sbom.sh`, which remains
+  `0.2.7`. The workspace stays `0.3.1`. No `0.3.1` SBOM corpus is reviewed
+  or published.
 
 ## [0.2.7] - 2026-10-08
 

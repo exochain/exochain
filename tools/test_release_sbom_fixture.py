@@ -1,20 +1,39 @@
 #!/usr/bin/env python3
 # Copyright 2026 Exochain Foundation
 # SPDX-License-Identifier: Apache-2.0
-"""Prevent the SBOM corpus test from silently exercising stale committed source."""
+"""Prevent the SBOM corpus test from silently exercising stale committed source.
+
+The temporary tree starts at the reviewed corpus version declared by
+``test_verify_release_sbom.sh``. The live workspace can move ahead of that
+reviewed corpus. Seeding this fixture from the live workspace version makes
+the source-input checks unreachable.
+"""
 
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
-import tomllib
 import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = tomllib.loads((ROOT / "Cargo.toml").read_text())["workspace"]["package"]["version"]
+VALIDATOR_TEST = ROOT / "tools" / "test_verify_release_sbom.sh"
+REVIEWED_VERSION_PATTERN = re.compile(
+    r"(?m)^reviewed_version=([0-9]+\.[0-9]+\.[0-9]+)\s*$"
+)
+
+
+def reviewed_corpus_version(script_text: str) -> str:
+    match = REVIEWED_VERSION_PATTERN.search(script_text)
+    if match is None:
+        raise RuntimeError("reviewed SBOM corpus version is not declared")
+    return match.group(1)
+
+
+REVIEWED_VERSION = reviewed_corpus_version(VALIDATOR_TEST.read_text(encoding="utf-8"))
 
 
 class SbomFixtureTests(unittest.TestCase):
@@ -26,7 +45,9 @@ class SbomFixtureTests(unittest.TestCase):
         (self.root / "crates/example/src").mkdir(parents=True)
         for name in ("test_verify_release_sbom.sh", "verify_release_sbom.py"):
             shutil.copyfile(ROOT / "tools" / name, self.root / "tools" / name)
-        (self.root / "Cargo.toml").write_text(f'[workspace.package]\nversion = "{VERSION}"\n')
+        (self.root / "Cargo.toml").write_text(
+            f'[workspace.package]\nversion = "{REVIEWED_VERSION}"\n'
+        )
         (self.root / "Cargo.lock").write_text("version = 4\n")
         (self.root / "crates/example/src/lib.rs").write_text("// committed source\n")
         self.git("init", "-q")
