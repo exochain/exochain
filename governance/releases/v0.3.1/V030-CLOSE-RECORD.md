@@ -16,69 +16,68 @@ limitations under the License.
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# v0.3.0 close record — draft, inside the v0.3.1 release
+# v0.3.0 close record — inside the v0.3.1 release
 
-**Status: DRAFT. Unsigned. Not approved. Not a close. GD-031-01 remains
-PENDING. This document does not claim release readiness, and it does not
-close v0.3.0.**
+**Status: GD-031-01 SIGNED for path B, subject to its conditions.
+Completion evidence for P1–P8 remains required. This document does not
+claim release readiness or authorize a tag from PR #887.**
 
 This file is the place the v0.3.0 close is recorded. It lives in
 `governance/releases/v0.3.1/`. There is no separate `v0.3.0` tag, and this
-draft does not create one. Path A (tag 0.3.0 on its own) is not the selected
+record does not create one. Path A (tag 0.3.0 on its own) is not the selected
 shape.
 
 The checklist this record will be read against is
 [governance/releases/v0.3.0/GOAL.md](../v0.3.0/GOAL.md). The score of that
 checklist on `a2667295` is [V030-CLOSE-ASSESSMENT.md](V030-CLOSE-ASSESSMENT.md).
 That assessment is not this record. [DEMO.md](DEMO.md) treats `V030-CLOSE` as
-a precondition of a later demonstration. This draft does not satisfy that
-precondition.
+a precondition of a later demonstration. Signing the release shape does
+not by itself satisfy that precondition's completion-evidence requirement.
 
 ## GD-031-01
 
 | Field | Entry |
 | --- | --- |
 | Record | [GD-031-01](GOVERNANCE-DECISIONS.md) |
-| Status | PENDING |
-| Question this draft answers | Where is the v0.3.0 close recorded, and is there a separate `v0.3.0` tag? |
-| Decision | |
-| Conditions | |
-| Rationale | |
-| Dissent | |
-| Date | |
-| Signatures | |
+| Status | SIGNED |
+| Question this record answers | Where is the v0.3.0 close recorded, and is there a separate `v0.3.0` tag? |
+| Decision | Path B: the v0.3.0 close is written in `V030-CLOSE-RECORD.md`, inside the 0.3.1 release. There is no separate `v0.3.0` tag. |
+| Conditions | This decision records the close location and release shape. Completion evidence for P1–P8 remains required before implementation of C1–C8; other required GD-031 records remain pending. Do not create a `v0.3.0` or `v0.3.1` tag from PR #887. Publication still requires the two distinct release-environment approvers under #789. |
+| Rationale | Adopt the assessed path B so the v0.3.0 close is milestone 1 of v0.3.1, with one release record and no separate v0.3.0 publication cycle. Preserve the prerequisite evidence and publication controls. |
+| Dissent | None recorded. |
+| Date | 2026-10-23 |
+| Signatures | Bob Stewart — Chief Executive, EXOCHAIN PBC (`bob-stewart`); Max Stewart — Release approver A (`mstewartbz`, `release`); Robert Stewart — Release approver B (`robst3w`, `release-second`). |
 
-The blank fields above are for the humans named on GD-031-01. An agent must
-not write a decision, a signature, or a date into them. This draft does not
-sign GD-031-01, does not write a name into Signatures, and does not mark
-GD-031-01 approved.
+The three human names above are transcribed at the Chief Executive's
+explicit instruction on 2026-10-23, naming Max and Robert as the two release
+approvers. PR #887 also records approvals by `robst3w` on 2026-10-22 at
+20:23:54 UTC and `mstewartbz` at 20:29:50 UTC. This transcription is not an
+agent approval or a release-environment approval.
 
-## Proposed text awaiting signature
+## Recorded scope
 
-This text has no effect while GD-031-01 is PENDING. It is the draft a human
-may adopt by filling the blank fields above. Until those fields are filled
-by the named roles, the text authorizes nothing.
+GD-031-01 is signed for the path B release shape. The conditions above
+preserve the completion-evidence requirements and publication controls.
 
-| Field | Proposed entry |
+| Field | Entry |
 | --- | --- |
 | Selected shape | Path B in [GOAL.md](GOAL.md). Milestone 1 of this release is the v0.3.0 close. |
 | Where the close is recorded | This file, inside the 0.3.1 release. |
-| Tag | There is no separate `v0.3.0` tag. A later publication, if authorized, is the v0.3.1 publication. #789 still requires two distinct release approvers for that publication. |
-| What this text does not do | It does not approve GD-031-01. It does not authorize capabilities C1–C8. It does not claim that prerequisite rows P1–P8 hold. It does not close #810 or #813. It does not claim specification §19.6.1. |
+| Tag | There is no separate `v0.3.0` tag. Neither a `v0.3.0` nor a `v0.3.1` tag may be created from PR #887. A later publication, if separately authorized, still requires two distinct release approvers under #789. |
+| What this decision does not do | It does not authorize capabilities C1–C8 before the required close evidence and other decisions. It does not claim that prerequisite rows P1–P8 hold. It does not close #810 or #813. It does not claim specification §19.6.1. |
 
-Chief Executive ruling, 2026-10-22 at 4:00 PM ET, not a signature and not a
-decision: path B. The v0.3.0 close is recorded inside the 0.3.1 release.
-There is no separate v0.3.0 tag. The Signatures field stays empty. Status
-stays PENDING. This record is not approved.
+The Chief Executive's 2026-10-22 4:00 PM ET path B ruling is background,
+not a signature. The dated Signatures field above records the three names;
+the ruling does not substitute for it.
 
-## What a signed close would still have to say
+## Completion evidence still required
 
 [ISSUES.md](ISSUES.md) drafts V030-M1-01 and V030-M1-02. They are not done.
 The assessment scores rows 1, 2, 4, 5, 6, and 8 as already holding in source
 on `a2667295`, row 3 as partial, and row 7 as a missing release sentence.
-This draft does not convert those scores into a close.
+Signing GD-031-01 does not convert those scores into completion evidence.
 
-Sentences reserved for the human who signs the close:
+Completion statements required in addition to the signed release shape:
 
 1. This close is milestone 1 of the v0.3.1 release. It is not a `v0.3.0` GitHub release and not a `v0.3.0` tag.
 2. This release does not claim specification §19.6.1. Issue #810 stays open. This record adds no `cgr_trace` producer.
