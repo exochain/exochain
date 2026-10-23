@@ -19,18 +19,19 @@ import { Section, H2, Lede } from '@/components/ui/Section';
 
 export function PilotBanner() {
   return (
-    <Section className="py-16" id="pilot">
+    <Section className="py-16" id="deployment">
+      <span id="pilot" aria-hidden="true" />
       <div className="border hairline rounded-md bg-brand-white/70 px-6 py-10 md:px-10">
-        <H2>Talk to us about a design-partner pilot.</H2>
+        <H2>Put accountable agent commerce to work.</H2>
         <Lede className="mt-4 max-w-prose">
-          Bring one constrained, cross-organizational workflow — a procurement
-          decision or an executive approval, for example — where two parties
-          need to verify legitimate authority without sharing an internal
-          system. Developers can start from the SDK in the public repository.
+          Bring a workflow, the parties involved, and the outcome each must
+          be able to verify. We will scope the authority model, commercial
+          obligations, integrations, and acceptance evidence for your deployment.
+          A focused pilot is available as an entry point.
         </Lede>
         <div className="mt-6 flex flex-wrap gap-3">
-          <LinkButton href="/contact#pilot" size="lg">
-            Talk to us about a design-partner pilot
+          <LinkButton href="/contact#deployment" size="lg">
+            Explore enterprise deployment
           </LinkButton>
           <LinkButton href="/developers" variant="secondary" size="lg">
             Developers and SDK

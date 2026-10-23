@@ -20,21 +20,18 @@ import { Pill } from '@/components/ui/Pill';
 import { Section, Eyebrow, H1, H2, Lede } from '@/components/ui/Section';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
 import { Disclaimer } from '@/components/ui/Disclaimer';
-import { IllustrativeCalls } from '@/components/commercial/IllustrativeCalls';
 import { PilotBanner } from '@/components/commercial/PilotBanner';
+import { loadPublicStatus } from '@/lib/public-status';
 import {
   CANONICAL_ORIGIN,
   CORE_LICENSE,
-  NORMATIVE_SPEC,
-  PRODUCT_CHANNEL,
   publicMetadata,
-  RELEASE_VERSION,
   SITE_DESCRIPTION,
   SITE_TITLE,
 } from '@/lib/public-site';
 
 export const metadata = publicMetadata({
-  title: 'Proven Agentic Action Authority',
+  title: 'Accountable Autonomous Commerce',
   description: SITE_DESCRIPTION,
   path: '/',
   absoluteTitle: SITE_TITLE,
@@ -66,6 +63,29 @@ const STANDARDS = [
   },
 ];
 
+const TRANSACTION_STEPS = [
+  {
+    name: 'Authorize',
+    body: 'Identify the agent and its principal. Check the delegated authority, limits, consent, and revocation state before an action runs.',
+  },
+  {
+    name: 'Agree and entrust',
+    body: 'Define the work, counterparties, and obligations. Use bailment terms to specify entrusted resources, permitted use, and return or discharge conditions.',
+  },
+  {
+    name: 'Execute',
+    body: 'Enforce the decision at the action boundary. Preserve policy denial, revocation, human E-STOP, and evidence of the resulting outcome.',
+  },
+  {
+    name: 'Pay',
+    body: 'Connect the agreed payment flow to its provider. Bind payment evidence to the authorized action, including x402 evidence where that integration is in scope.',
+  },
+  {
+    name: 'Verify',
+    body: 'Give each party attributable records linking authority, obligations, execution, and payment evidence for independent review.',
+  },
+];
+
 const ECOSYSTEM = [
   {
     name: 'EXOCHAIN',
@@ -74,29 +94,29 @@ const ECOSYSTEM = [
   },
   {
     name: 'CrossChecked',
-    role: 'First commercial wedge',
-    body: 'Shows who authorized an AI-assisted decision, which evidence and constraints applied, and what occurred afterward. It is an adjacent product, currently a prototype, and it does not itself enforce the constitutional kernel.',
+    role: 'Commercial evidence application',
+    body: 'An affiliated application for decisions, supporting evidence, and outcomes. EXOCHAIN anchoring requires a tested, approved integration for the particular deployment.',
   },
   {
     name: 'AVC',
-    role: 'Distribution engine',
+    role: 'Commercialization and implementation',
     body: 'Incubation and venture formation for companies built on the fabric. Distinct from the protocol’s Autonomous Volition Credential.',
   },
   {
     name: 'AI-SDLC Institute',
     role: 'Independent education and assessment',
-    body: 'Training and assessment that stay independent of the products in the commercial network. Assessment here is education, not coverage.',
+    body: 'Training and assessment for people building and governing AI systems, independent of the products in the commercial network.',
   },
 ];
 
 const OFFERS = [
   {
-    name: 'Pilot or implementation',
-    body: 'A fixed-scope design-partner pilot or deployment for one constrained workflow, including architecture and integration into the systems you already run.',
+    name: 'Enterprise deployment',
+    body: 'Scope an accountable workflow, integrate with the systems you already run, and agree the operating controls and acceptance evidence. A focused pilot is an available entry point.',
   },
   {
     name: 'Platform licensing',
-    body: 'Licensed access to the EXOCHAIN control plane, hosted verification, and enterprise integration. The platform is the recurring product.',
+    body: 'Commercial licensing and support for the agreed platform services and integrations, with a defined deployment scope.',
   },
   {
     name: 'Managed governance services',
@@ -118,6 +138,8 @@ const websiteJsonLd = {
 };
 
 export default function HomePage() {
+  const publicStatus = loadPublicStatus();
+
   return (
     <>
       <script
@@ -130,36 +152,34 @@ export default function HomePage() {
             <div className="mb-6 h-px w-24 bg-brand-charter" />
             <Eyebrow>The trust fabric for autonomous commerce</Eyebrow>
             <H1 className="mt-4 font-light tracking-normal text-brand-vault">
-              Proven Agentic Action Authority
+              Make autonomous commerce accountable.
             </H1>
             <Lede className="mt-6 max-w-prose text-brand-midnight/80">
-              Every agent action carries proof of who authorized it, the limits
-              it ran under, and AI guarding with an E-STOP that fails closed.
+              Connect agent identity, delegated authority, commercial agreements,
+              payments, and verifiable outcomes—across organizational boundaries.
             </Lede>
             <p className="mt-4 max-w-prose text-base text-brand-midnight/80">
-              E-STOP is a current platform capability. Revocation, policy deny, and fail-closed gates stop an action that is outside authority.
-            </p>
-            <p className="mt-4 max-w-prose text-base text-brand-midnight/80">
-              Payment authorization is not legitimate decision-making authority.
+              Establish who may act, under which obligations, what occurred,
+              and which evidence each counterparty can verify.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
-              <LinkButton href="/contact#pilot" size="lg">
-                Talk to us about a design-partner pilot
+              <LinkButton href="/contact#deployment" size="lg">
+                Explore enterprise deployment
               </LinkButton>
-              <LinkButton href="/developers" variant="secondary" size="lg">
-                Developers and SDK
+              <LinkButton href="#transaction" variant="secondary" size="lg">
+                Explore the transaction flow
               </LinkButton>
             </div>
             <div className="mt-6 flex flex-wrap items-center gap-2 text-sm">
               <Pill tone="neutral" className="border border-brand-charter/40 bg-brand-charter/10 text-brand-vault">
-                {PRODUCT_CHANNEL} {RELEASE_VERSION}
+                {publicStatus.maturity} v{publicStatus.publication.version}
               </Pill>
               <Pill tone="neutral" className="border border-brand-signal/25 bg-brand-signal/10 text-brand-cerulean">
-                normative spec {NORMATIVE_SPEC}
+                normative spec v{publicStatus.spec.normative_version}
               </Pill>
               <Pill tone="neutral">{CORE_LICENSE} core</Pill>
               <Link href="/status" className="underline decoration-brand-signal/40 underline-offset-4">
-                status
+                Release scope
               </Link>
               <Link href="/lynk" className="underline decoration-brand-signal/40 underline-offset-4">
                 LYNK
@@ -167,7 +187,7 @@ export default function HomePage() {
             </div>
           </div>
           <Card>
-            <CardHeader eyebrow="Working category concept" title="Proof of Authority" />
+            <CardHeader eyebrow="Proven Agentic Action Authority" title="Proof of Authority" />
             <CardBody>
               <p className="text-sm text-brand-midnight/80">
                 A portable, independently verifiable claim that an agent’s
@@ -189,6 +209,38 @@ export default function HomePage() {
               </p>
             </CardBody>
           </Card>
+        </div>
+      </Section>
+
+      <Section className="py-12 scroll-mt-20" id="transaction">
+        <Eyebrow>The commercial workflow</Eyebrow>
+        <H2 className="mt-3">From delegated authority to verifiable outcomes.</H2>
+        <Lede className="mt-4 max-w-prose">
+          Design a deployment around the complete transaction. The agreed scope
+          identifies the controls, integrations, and evidence required at each
+          step; the release record identifies the available implementation.
+        </Lede>
+        <ol className="mt-8 grid sm:grid-cols-2 xl:grid-cols-5 gap-4">
+          {TRANSACTION_STEPS.map((step, index) => (
+            <li key={step.name}>
+              <Card className="h-full">
+                <CardHeader eyebrow={`Step ${index + 1}`} title={step.name} />
+                <CardBody><p className="text-sm">{step.body}</p></CardBody>
+              </Card>
+            </li>
+          ))}
+        </ol>
+        <div className="mt-6 border hairline rounded-md px-6 py-5 max-w-prose">
+          <h3 className="font-semibold text-brand-vault">Financial assurance for covered transactions</h3>
+          <p className="mt-2 text-sm text-brand-midnight/80">
+            Defined obligations and verifiable evidence can support independent
+            bonding and insurance arrangements, including reinsurance behind a
+            provider. Coverage depends on a separate provider agreement and its
+            stated limits, exclusions, and claims process.
+          </p>
+          <Link href="/engagement#assurance" className="mt-3 inline-block text-sm underline">
+            Discuss financial-assurance requirements
+          </Link>
         </div>
       </Section>
 
@@ -231,10 +283,9 @@ export default function HomePage() {
         <Eyebrow>Interoperability</Eyebrow>
         <H2 className="mt-3">Use the standards. Make the action accountable.</H2>
         <Lede className="mt-4 max-w-prose">
-          EXOCHAIN does not replace MCP, A2A, x402, or AP2. An agent can be
-          allowed to pay and still lack the authority to choose the vendor,
-          the evidence for that choice, or a receipt a counterparty can verify
-          on its own.
+          Connect tool access, agent collaboration, and payment protocols with
+          the authority and evidence an enterprise needs. MCP, A2A, x402, and
+          AP2 have distinct roles within an agreed integration.
         </Lede>
         <div className="mt-8 grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {STANDARDS.map((item) => (
@@ -255,16 +306,12 @@ export default function HomePage() {
 
       <Section className="py-12" id="developers">
         <Eyebrow>Developer experience</Eyebrow>
-        <H2 className="mt-3">Two calls. Verify authority. Produce evidence.</H2>
+        <H2 className="mt-3">Integrate at the point where agents act.</H2>
         <Lede className="mt-4 max-w-prose">
-          The intended experience is two calls: verify that the action is
-          within delegated authority, then attest the outcome. The current
-          SDK is the 0.2.7 client in the repository. The snippet below is the
-          target shape.
+          Start with the SDK, discover the configured gateway, and connect the
+          authority and receipt APIs required for your workflow. LYNK provides
+          an integration path for receipted LLM and MCP usage.
         </Lede>
-        <div className="mt-8">
-          <IllustrativeCalls />
-        </div>
         <p className="mt-6 text-sm">
           <Link href="/developers" className="underline">
             Developers and the current SDK
@@ -274,12 +321,11 @@ export default function HomePage() {
 
       <Section className="py-12" id="ecosystem">
         <Eyebrow>Ecosystem</Eyebrow>
-        <H2 className="mt-3">One fabric. Separate roles.</H2>
+        <H2 className="mt-3">One fabric. Multiple applications.</H2>
         <Lede className="mt-4 max-w-prose">
-          EXOCHAIN should be useful to companies it did not create and does
-          not control. CrossChecked is the first commercial wedge, AVC is the
-          distribution engine, and the AI-SDLC Institute keeps education and
-          assessment independent.
+          A shared foundation for independent companies and applications.
+          EXOCHAIN supplies the trust infrastructure; products, implementation
+          partners, and educators contribute distinct capabilities.
         </Lede>
         <div className="mt-8 grid md:grid-cols-2 gap-4">
           {ECOSYSTEM.map((item) => (
@@ -292,9 +338,8 @@ export default function HomePage() {
           ))}
         </div>
         <p className="mt-6 text-sm max-w-prose">
-          CyberMedica, LegalDyne, LiveSafe, and Decision.Forum are reference
-          implementations and candidates for future independent businesses.
-          They are not six products this site is launching at once.
+          Each application has its own deployment scope. Explore the ecosystem
+          for product roles and the evidence an integration needs to establish.
         </p>
         <p className="mt-4 text-sm">
           <Link href="/ecosystem" className="underline">
@@ -307,8 +352,8 @@ export default function HomePage() {
         <Eyebrow>Engagement</Eyebrow>
         <H2 className="mt-3">Three ways to work with EXOCHAIN.</H2>
         <Lede className="mt-4 max-w-prose">
-          Offers are scoped in conversation. This site does not publish a rate
-          card.
+          Start with the outcome your counterparties need to trust. We will
+          scope the deployment, platform services, and ongoing operating support.
         </Lede>
         <div className="mt-8 grid md:grid-cols-3 gap-4">
           {OFFERS.map((item) => (

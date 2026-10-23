@@ -14,8 +14,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import Link from 'next/link';
 import { DocPage } from '@/components/content/DocPage';
 import { ZeroPriceBanner } from '@/components/ui/ZeroPriceBanner';
+import { loadPublicStatus } from '@/lib/public-status';
 import { publicMetadata } from '@/lib/public-site';
 
 export const metadata = publicMetadata({
@@ -25,9 +27,15 @@ export const metadata = publicMetadata({
 });
 
 export default function Page() {
+  const publicStatus = loadPublicStatus();
   return (
     <DocPage title="Settlement (zero-priced launch policy)" unstable>
       <ZeroPriceBanner />
+      <p>
+        This page describes the internal ledger settlement policy. It does not
+        set the amount of a third-party x402 payment or the terms of commercial
+        licensing.
+      </p>
       <h2>Quotes</h2>
       <p>
         A quote is generated against a trust receipt. Under the current
@@ -37,7 +45,7 @@ export default function Page() {
       </p>
       <h2>ZeroFeeReason</h2>
       <ul>
-        <li><code>launch_policy_zero</code> — the default under the current beta launch policy.</li>
+        <li><code>launch_policy_zero</code> — the default under the current launch policy.</li>
         <li><code>governance_subsidy</code> — issued under specific governance amendments.</li>
         <li><code>humanitarian_carve_out</code> — declared scopes (see governance).</li>
       </ul>
@@ -53,6 +61,12 @@ export default function Page() {
         scopes. The economy crate ships the full mechanism today; it is
         suppressed by policy. Pricing changes route through the
         constitutional governance kernel.
+      </p>
+      <h2>Release scope</h2>
+      <p>{publicStatus.maturity_summary}</p>
+      <p>
+        See <Link href="/status">public status</Link> for the publication record
+        for v{publicStatus.publication.version} and current capability boundaries.
       </p>
     </DocPage>
   );

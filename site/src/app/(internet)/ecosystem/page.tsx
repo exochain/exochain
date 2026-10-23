@@ -24,30 +24,30 @@ import { publicMetadata } from '@/lib/public-site';
 export const metadata = publicMetadata({
   title: 'Ecosystem',
   description:
-    'EXOCHAIN is the infrastructure, CrossChecked is the first commercial wedge, AVC is the distribution engine, and the AI-SDLC Institute is independent education and assessment.',
+    'One shared trust fabric for accountable autonomous commerce, with distinct roles for EXOCHAIN infrastructure, CrossChecked, AVC commercialization, independent education, and service providers.',
   path: '/ecosystem',
 });
 
 const LAYERS = [
   {
     name: 'EXOCHAIN',
-    role: 'Common infrastructure',
-    body: 'Open protocols, SDKs, and enterprise services. The platform earns its place by being useful to companies EXOCHAIN did not create, does not own, and does not control. Core software is Apache-2.0 and is in beta (v0.2.7), under normative specification v2.2.',
+    role: 'Shared trust infrastructure',
+    body: 'Authority, consent, bailment, governed execution, and verifiable evidence for transactions across independent organizations. Open protocols, SDKs, and enterprise services let organizations build on the same fabric. Core software is Apache-2.0; the release record and agreed deployment scope establish available capabilities.',
   },
   {
     name: 'CrossChecked',
-    role: 'First commercial wedge',
-    body: 'The concrete result a buyer can evaluate: who authorized an AI-assisted decision, what evidence was used, which constraints applied, and what occurred afterward. The CrossChecked application in this repository is an adjacent prototype. It does not mint consent, authority, or governance outcomes, and this site does not claim it enforces the constitutional kernel.',
+    role: 'Commercial evidence application',
+    body: 'An affiliated product focused on evidence for AI-assisted decisions: who authorized the work, which records and constraints informed it, and what happened afterward. CrossChecked has its own application and deployment boundary. Any claim of EXOCHAIN enforcement depends on a tested integration with the core trust fabric.',
   },
   {
     name: 'AVC',
-    role: 'Distribution engine',
-    body: 'Incubation, venture formation, and commercialization for companies built on the fabric. That venture role is separate from the protocol credential also called an AVC — the Autonomous Volition Credential documented at /avc.',
+    role: 'Venture formation and commercialization',
+    body: 'Incubation and commercialization for businesses building on the shared trust fabric. This venture role is distinct from the protocol credential also called an AVC: the Autonomous Volition Credential used to describe delegated authority.',
   },
   {
     name: 'AI-SDLC Institute',
     role: 'Independent education and assessment',
-    body: 'Training and assessment for people building and governing AI systems. The institute’s value depends on staying independent of the products in the same commercial network. This page does not offer a certificate, a coverage product, or an attestation you can buy.',
+    body: 'Training and assessment for people building and governing AI systems. Educational assessment remains independent of product licensing and commercial delivery. It does not establish a deployment’s enforcement behavior or provide financial coverage for a transaction.',
   },
 ];
 
@@ -75,13 +75,13 @@ export default function EcosystemPage() {
     <>
       <Section className="pt-16 pb-8">
         <Eyebrow>Ecosystem</Eyebrow>
-        <H1 className="mt-3">One fabric. Separate roles.</H1>
+        <H1 className="mt-3">One shared trust fabric.</H1>
         <Lede className="mt-5 max-w-prose">
-          Independent companies, developers, agents, and institutions should
-          be able to build and transact on a shared fabric. Owning every
-          application would make EXOCHAIN a portfolio. The strategic objective
-          is a platform other organizations can adopt without permission to
-          exist.
+          Accountable autonomous commerce connects independent organizations
+          through a common transaction flow: authorize, agree and entrust,
+          execute, pay, and verify. EXOCHAIN provides the shared trust fabric;
+          applications, payment providers, and financial-assurance providers
+          retain their own responsibilities.
         </Lede>
       </Section>
       <Section className="py-8">
@@ -97,12 +97,28 @@ export default function EcosystemPage() {
         </div>
       </Section>
       <Section className="py-8">
+        <H2>Independent providers, connected evidence</H2>
+        <Lede className="mt-4 max-w-prose">
+          A2A supports collaboration between agents, and MCP connects them to
+          tools. Bailment records the purpose, permitted use, and obligations
+          of entrusted work. x402 uses HTTP 402 to coordinate payment
+          requirements and evidence, while payment providers carry out
+          settlement through the agreed integration.
+        </Lede>
+        <p className="mt-4 max-w-prose text-base text-brand-midnight/80">
+          Separately issued third-party bonds or insurance may cover specified
+          transactions under provider-defined terms. Reinsurance can support
+          the provider carrying that risk. EXOCHAIN connects the evidence;
+          coverage requires an issued instrument and does not arise from using
+          the fabric.
+        </p>
+      </Section>
+      <Section className="py-8">
         <H2>Reference implementations</H2>
         <Lede className="mt-4 max-w-prose">
-          CyberMedica, LegalDyne, LiveSafe, Decision.Forum, and CrossChecked
-          are not six equally urgent companies to launch. They are reference
-          implementations and candidates for future independent businesses on
-          the same infrastructure.
+          CyberMedica, LegalDyne, LiveSafe, and Decision.Forum illustrate
+          application domains around the shared infrastructure. Each has its
+          own product scope, deployment status, and integration boundary.
         </Lede>
         <div className="mt-8 grid md:grid-cols-2 gap-4">
           {REFERENCES.map((item) => (
@@ -117,8 +133,11 @@ export default function EcosystemPage() {
         <div className="mt-6 max-w-prose">
           <Disclaimer>
             Naming an adjacent product on this site is not a constitutional
-            trust claim. Enforcement, when it exists, is in the EXOCHAIN core
-            and its tested adapters. The core software on this site is beta.
+            trust claim or evidence of a customer deployment. Enforcement
+            claims require a tested path into EXOCHAIN core and evidence for
+            the particular deployment. See the{' '}
+            <Link href="/status" className="underline">release record</Link>
+            {' '}for published software status.
           </Disclaimer>
         </div>
         <p className="mt-6 text-sm">
@@ -128,6 +147,10 @@ export default function EcosystemPage() {
           {' · '}
           <Link href="/engagement" className="underline">
             Engagement offerings
+          </Link>
+          {' · '}
+          <Link href="/standards" className="underline">
+            Protocol and provider roles
           </Link>
         </p>
       </Section>
