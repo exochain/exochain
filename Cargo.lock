@@ -1498,7 +1498,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7ab67060fc6b8ef687992d439ca0fa36e7ed17e9a0b16b25b601e8757df720de"
 dependencies = [
  "data-encoding",
- "syn 1.0.109",
+ "syn 2.0.111",
 ]
 
 [[package]]
@@ -1832,7 +1832,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-api"
-version = "0.2.7"
+version = "0.3.1"
 dependencies = [
  "blake3",
  "ciborium",
@@ -1849,7 +1849,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-authority"
-version = "0.2.7"
+version = "0.3.1"
 dependencies = [
  "blake3",
  "ciborium",
@@ -1862,7 +1862,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-avc"
-version = "0.2.7"
+version = "0.3.1"
 dependencies = [
  "ciborium",
  "exochain-authority",
@@ -1874,7 +1874,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-catapult"
-version = "0.2.7"
+version = "0.3.1"
 dependencies = [
  "ciborium",
  "exochain-authority",
@@ -1890,7 +1890,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-consensus"
-version = "0.2.7"
+version = "0.3.1"
 dependencies = [
  "exochain-core",
  "exochain-decision-forum",
@@ -1902,7 +1902,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-consent"
-version = "0.2.7"
+version = "0.3.1"
 dependencies = [
  "blake3",
  "ciborium",
@@ -1913,7 +1913,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-core"
-version = "0.2.7"
+version = "0.3.1"
 dependencies = [
  "blake3",
  "chrono",
@@ -1934,7 +1934,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-dag"
-version = "0.2.7"
+version = "0.3.1"
 dependencies = [
  "async-trait",
  "blake3",
@@ -1953,7 +1953,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-dag-db-api"
-version = "0.2.7"
+version = "0.3.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -1961,7 +1961,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-dag-db-core"
-version = "0.2.7"
+version = "0.3.1"
 dependencies = [
  "ciborium",
  "exochain-core",
@@ -1973,7 +1973,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-dag-db-domain"
-version = "0.2.7"
+version = "0.3.1"
 dependencies = [
  "ciborium",
  "exochain-authority",
@@ -1992,7 +1992,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-dag-db-exchange"
-version = "0.2.7"
+version = "0.3.1"
 dependencies = [
  "exochain-authority",
  "exochain-avc",
@@ -2011,7 +2011,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-dag-db-graph"
-version = "0.2.7"
+version = "0.3.1"
 dependencies = [
  "ciborium",
  "exochain-core",
@@ -2024,7 +2024,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-dag-db-lab"
-version = "0.2.7"
+version = "0.3.1"
 dependencies = [
  "cap-fs-ext",
  "cap-std",
@@ -2049,7 +2049,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-dag-db-postgres"
-version = "0.2.7"
+version = "0.3.1"
 dependencies = [
  "exochain-core",
  "exochain-dag",
@@ -2070,7 +2070,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-dag-db-retrieval"
-version = "0.2.7"
+version = "0.3.1"
 dependencies = [
  "exochain-core",
  "exochain-dag-db-api",
@@ -2085,7 +2085,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-decision-forum"
-version = "0.2.7"
+version = "0.3.1"
 dependencies = [
  "blake3",
  "exochain-authority",
@@ -2103,7 +2103,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-economy"
-version = "0.2.7"
+version = "0.3.1"
 dependencies = [
  "ciborium",
  "exochain-core",
@@ -2113,7 +2113,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-escalation"
-version = "0.2.7"
+version = "0.3.1"
 dependencies = [
  "ciborium",
  "exochain-core",
@@ -2127,7 +2127,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-gatekeeper"
-version = "0.2.7"
+version = "0.3.1"
 dependencies = [
  "blake3",
  "ciborium",
@@ -2152,7 +2152,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-gateway"
-version = "0.2.7"
+version = "0.3.1"
 dependencies = [
  "async-graphql",
  "async-graphql-axum",
@@ -2196,7 +2196,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-governance"
-version = "0.2.7"
+version = "0.3.1"
 dependencies = [
  "blake3",
  "ciborium",
@@ -2212,7 +2212,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-identity"
-version = "0.2.7"
+version = "0.3.1"
 dependencies = [
  "blake3",
  "bs58",
@@ -2232,7 +2232,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-legal"
-version = "0.2.7"
+version = "0.3.1"
 dependencies = [
  "blake3",
  "ciborium",
@@ -2249,7 +2249,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-messaging"
-version = "0.2.7"
+version = "0.3.1"
 dependencies = [
  "ciborium",
  "exochain-core",
@@ -2267,7 +2267,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-node"
-version = "0.2.7"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -2347,7 +2347,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-pdp"
-version = "0.2.7"
+version = "0.3.1"
 dependencies = [
  "axum 0.7.9",
  "ciborium",
@@ -2364,7 +2364,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-proofs"
-version = "0.2.7"
+version = "0.3.1"
 dependencies = [
  "blake3",
  "ciborium",
@@ -2378,7 +2378,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-root"
-version = "0.2.7"
+version = "0.3.1"
 dependencies = [
  "argon2",
  "chacha20poly1305",
@@ -2398,7 +2398,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-sdk"
-version = "0.2.7"
+version = "0.3.1"
 dependencies = [
  "blake3",
  "ciborium",
@@ -2424,7 +2424,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-tenant"
-version = "0.2.7"
+version = "0.3.1"
 dependencies = [
  "blake3",
  "exochain-core",
@@ -2437,7 +2437,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-wasm"
-version = "0.2.7"
+version = "0.3.1"
 dependencies = [
  "ed25519-dalek",
  "exochain-api",
@@ -3132,7 +3132,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "tokio",
  "tower-service",
  "tracing",
@@ -3507,9 +3507,9 @@ checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
 
 [[package]]
 name = "libc"
-version = "0.2.178"
+version = "0.2.191"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37c93d8daa9d8a012fd8ab92f088405fb202ea0b6ab73ee2482ae66af4f42091"
+checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
 name = "libm"
@@ -3960,9 +3960,9 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 
 [[package]]
 name = "mio"
-version = "1.1.1"
+version = "1.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a69bcab0ad47271a0234d9422b131806bf3968021e5dc9328caf2d4cd58557fc"
+checksum = "1788edb87fdc09c7e26304471e2f5be8cdefb1b6930d6e3985fc02ff53bf86ee"
 dependencies = [
  "libc",
  "wasi",
@@ -4711,7 +4711,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
@@ -4749,7 +4749,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "tracing",
  "windows-sys 0.52.0",
 ]
@@ -5963,6 +5963,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "syn"
+version = "3.0.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d78c8dee4c7bf0e14673097256fed6142ce9d3b85a408189d07482442145823b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "unicode-ident",
+]
+
+[[package]]
 name = "sync_wrapper"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6154,9 +6165,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.50.0"
+version = "1.51.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27ad5e34374e03cfffefc301becb44e9dc3c17584f414349ebe29ed26661822d"
+checksum = "a13e32eacd0222f9658be2ccbd83b718bfd9bfb0d54b5921913c184cb86124a5"
 dependencies = [
  "bytes",
  "libc",
@@ -6171,13 +6182,13 @@ dependencies = [
 
 [[package]]
 name = "tokio-macros"
-version = "2.6.1"
+version = "2.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c55a2eff8b69ce66c84f85e1da1c233edc36ceb85a2058d11b0d6a3c7e7569c"
+checksum = "78773a2a397f451582ce068015985c33193cf6dea8b74d2a639fe457b2f07b0e"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.111",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -6863,7 +6874,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

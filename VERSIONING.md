@@ -35,7 +35,7 @@ MAJOR.MINOR.PATCH
 The workspace version is set in `Cargo.toml`:
 ```toml
 [workspace.package]
-version = "0.2.7"
+version = "0.3.1"
 ```
 
 GitHub Release `v0.2.7` was published at `2026-10-08T17:28:52Z` (release id

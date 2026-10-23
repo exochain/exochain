@@ -23,7 +23,92 @@ All notable changes to EXOCHAIN will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.1] - 2026-10-23
+
+Workspace, pins, locks, SDKs, WASM, LYNK, and protocol constants move from
+`0.2.7` to `0.3.1`. This source state is not a tag, GitHub Release, registry
+publication, or deployment.
+
+### Security / Correctness
+
+- `validate_avc` follows `parent_avc_id` up to `AVC_PARENT_REVOCATION_WALK_LIMIT`
+  (32) and denies when an ancestor is revoked, when an ancestor credential
+  cannot be loaded, or when the walk hits that bound. A credential with no
+  `parent_avc_id` stays a root. The walk does not apply ancestor expiry,
+  suspension, or quarantine. (#875)
+- `POST` delegate requires `parent_credential_id`, loads that parent, and issues
+  the child through `delegate_avc`. A missing, revoked, or expired parent is
+  rejected and the child is not stored. `enforce_narrowing` rejects a child
+  whose `allowed_objectives` are outside the parent and a child that drops a
+  parent `prohibited_objectives` entry. (#878)
+- An unset `EXO_AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY` requires an external
+  timestamp authority. The unconfigured-authority warning says receipt emission
+  fails closed unless that variable is `false` or `0`. (#876)
+- Public-output authorization, when that requirement is on, refuses a stored
+  receipt that has no external timestamp proof and stores the proof when an
+  authority is configured. (#881)
+- A DID insert that hits `RegistryCapacityExceeded` rolls the transaction back
+  before returning the error. (#883)
+- `Timestamp::is_expired` is true when `now.physical_ms` is the genesis value
+  `1_000_000` and the expiry is at least `1_000_000_000_000`. `validate_avc`
+  denies a Unix `expires_at` and a Unix `allowed_time_window.not_after` under
+  that clock. `AuthorityRevocation` structure validation compares
+  `expires <= revoked_at` with ordinary ordering, so a genesis `revoked_at`
+  does not reject an already-signed Unix link as expired. Authorization still
+  denies through `is_expired`. (#882)
+- `validate_avc` denies an action outside the credential's allowed objectives,
+  autonomy level, or jurisdictions, and denies when an `emergency_stop_refs`
+  entry is engaged, unknown, or unreadable. A named action with no `@` is
+  denied when jurisdictions are non-empty. `forbidden_actions` compares the
+  canonical name. Emergency-stop standing is durable. (#879)
+- A denied receipt emit that has a finality store signs the trust receipt,
+  links it to the previous receipt, stores it, and anchors EXOCHAIN finality
+  with outcome `Denied`. The HTTP response is 200. A registry persist failure
+  returns 500, stores no receipt, and writes no finality node. A finality
+  failure after the registry write returns 500, rolls that write back, and
+  does not claim a receipt. A denial with no finality store stays HTTP 403
+  and stores no receipt. When an external timestamp authority is required and
+  unconfigured, emit returns 503 before signing. Replaying a stored Allow
+  commitment after revocation or expiry stays HTTP 403, keeps that Allow
+  receipt, and does not advance finality. Allow anchoring is unchanged. LYNK
+  receipt emit uses the same deny store-then-anchor path. LYNK response
+  attestation still requires Allow. (#885)
+- Locks `quinn` `0.11.12`, `quinn-proto` `0.11.19`, `rustls` `0.23.46`,
+  `rustls-webpki` `0.103.16`, and `webpki-roots` `1.0.10` in the workspace
+  lock. The guest lock moves `rustls`, `rustls-webpki`, and `webpki-roots` to
+  those same releases. These are the patched floors for the eleven Gate 6 and
+  Gate 7 advisories. `webpki-roots` `0.26.11` stays as the unaffected
+  compatibility crate beside `1.0.10`. `exochain-node` and the `exochain-sdk`
+  `http-client` feature publish exact floors `=0.23.46`, `=0.103.16`,
+  `=1.0.10`, and `=0.11.19` so a crates.io user does not inherit only this
+  workspace lock. The pin guard rejects `rustls` from `0.21.0` below
+  `0.23.46`, `rustls-webpki` below `0.103.16`, and `webpki-roots` `1.x` below
+  `1.0.10`, including the guest lock. The audit ignore list is unchanged.
+  (#888)
+- An Allow receipt commits its SQLite anchor before the registry file is
+  installed, and that anchor is keyed by the receipt `validator_did`. A failed
+  anchor `COMMIT` leaves the previous registry file. A failed file install
+  after `COMMIT` can leave the anchor without the new Allow file. A
+  non-terminal unanchored Allow is re-anchored in place. If that re-anchor
+  cannot commit, the receipt stays, `GET` returns 503, and list hides it. LYNK
+  Allow attestation is signed after the Allow commitment is staged and before
+  the registry and anchor become durable. A failed attestation leaves no new
+  receipt and no anchor. A durable registry with no finality store fails
+  closed. Reversal stays deferred. (#870)
+- Workspace `tokio` moves from `1.50.0` to `1.51.6` for `RUSTSEC-2026-0386`.
+  The root lock moves `tokio-macros` to `2.7.2`, `libc` to `0.2.191`, and
+  `mio` to `1.2.4`, and adds `syn` `3.0.9` on the `tokio-macros` edge. The
+  guest lock moves `tokio` and `tokio-macros` to those same releases.
+
+### Release / CI
+
+- Aligns the 32 publishable Rust crates, standalone CGR packages, 158 exact
+  first-party dependency pins, Rust locks, SDKs, WASM, and LLM proxy at
+  `0.3.1`.
+- The release SBOM gate pins reviewed corpus `0.3.1` and digest
+  `bfdc60be921b496aba295f5df1fbfb7296bb02c3b056bcc6bd8cf44161c50152` from
+  cargo-cyclonedx 0.5.9 on this tree. The version check and the exact digest
+  check both stay. This does not publish an SBOM.
 
 ## [0.2.7] - 2026-10-08
 
