@@ -18,11 +18,13 @@ SPDX-License-Identifier: Apache-2.0
 
 # Governance decision records — v0.3.1
 
-**Status: PROPOSAL. Every record below is PENDING. None is approved. This
-document does not claim release readiness.**
+**Status: GD-031-01 is SIGNED for path B, subject to its conditions.
+GD-031-02 through GD-031-11 remain PENDING. This document does not claim
+release readiness.**
 
-Humans fill the blank fields. An agent must not write a decision, a
-signature, or a date into those fields. An agent must not be any approver.
+Humans authorize decisions, signatures, and dates. GD-031-01 is transcribed
+at the Chief Executive's explicit instruction on 2026-10-23, naming Max
+and Robert as the two release approvers. An agent must not be any approver.
 The engineer recommendation is context for review. It is not a vote and it
 is not a default that takes effect on silence.
 
@@ -43,19 +45,32 @@ off, and an administrator bypass does not count.
 
 | Field | Entry |
 | --- | --- |
-| Status | PENDING |
+| Status | SIGNED |
 | Question | May engineers implement `governance/releases/v0.3.1/` after a v0.3.0 close, and not before? |
 | Approver roles | Chief Executive, EXOCHAIN PBC; Release approver A; Release approver B |
-| Decision | |
-| Conditions | |
-| Rationale | |
-| Dissent | |
-| Date | |
-| Signatures | |
+| Decision | Path B: the v0.3.0 close is written in `V030-CLOSE-RECORD.md`, inside the 0.3.1 release. There is no separate `v0.3.0` tag. |
+| Conditions | This decision records the close location and release shape. Completion evidence for P1–P8 remains required before implementation of C1–C8; other required GD-031 records remain pending. Do not create a `v0.3.0` or `v0.3.1` tag from PR #887. Publication still requires the two distinct release-environment approvers under #789. |
+| Rationale | Adopt the assessed path B so the v0.3.0 close is milestone 1 of v0.3.1, with one release record and no separate v0.3.0 publication cycle. Preserve the prerequisite evidence and publication controls. |
+| Dissent | None recorded. |
+| Date | 2026-10-23 |
+| Signatures | Bob Stewart — Chief Executive, EXOCHAIN PBC (`bob-stewart`); Max Stewart — Release approver A (`mstewartbz`, `release`); Robert Stewart — Release approver B (`robst3w`, `release-second`). |
 
-Engineer recommendation, not a decision: do not authorize implementation in
-this pull request. Require `V030-CLOSE` first. Keep this record PENDING until
-those three humans sign.
+The three human names above are recorded at the Chief Executive's explicit
+instruction. PR #887 also records approvals by `robst3w` on 2026-10-22 at
+20:23:54 UTC and `mstewartbz` at 20:29:50 UTC. This transcription is not an
+agent approval or a release-environment approval. The signed decision is
+limited to path B and remains subject to the conditions above.
+
+| Field | Recorded scope |
+| --- | --- |
+| Selected shape | Path B in [GOAL.md](GOAL.md). The v0.3.0 close is recorded inside the 0.3.1 release. There is no separate `v0.3.0` tag. |
+| Where the close record lives | [V030-CLOSE-RECORD.md](V030-CLOSE-RECORD.md), inside `governance/releases/v0.3.1/`. GD-031-01 is signed there; completion evidence for P1–P8 is still required to satisfy the `V030-CLOSE` precondition in [DEMO.md](DEMO.md). |
+| What stays refused | Path A. A standalone `v0.3.0` tag is not the selected shape. |
+| What this decision does not do | It does not authorize C1–C8 before the required close evidence and other decisions. It does not claim that prerequisite rows P1–P8 hold. It does not close issue #810 or #813. It does not claim specification §19.6.1. It does not authorize a tag from this pull request. |
+
+The Chief Executive's 2026-10-22 4:00 PM ET path B ruling is background,
+not a signature. The dated Signatures field above records the three names;
+the ruling does not substitute for it.
 
 ## GD-031-02 — Marketplace take-rate, a v0.3.0 non-goal
 
@@ -280,7 +295,7 @@ HTTP reachability of the TSA as a contract or as token validity.
 These are the blanks that block implementation. They are questions, not
 decisions.
 
-1. GD-031-01: choose path A (tag 0.3.0 on its own) or path B (milestone 1 inside v0.3.1), or authorize neither. The assessment recommends path B. The signature line is blank.
+1. GD-031-01: path B is SIGNED on 2026-10-23 above and in [V030-CLOSE-RECORD.md](V030-CLOSE-RECORD.md), with Bob Stewart, Max Stewart, and Robert Stewart named. The close is recorded inside the 0.3.1 release; there is no separate v0.3.0 tag. Completion evidence remains required under its conditions. Neither a v0.3.0 nor a v0.3.1 tag is authorized from this pull request.
 2. GD-031-02: confirm that market-making does not include a take-rate. CEO direction on 2026-10-09 calls the commercial lines preparatory. The signature line is blank.
 3. GD-031-03: confirm that portable evidence is not a second product on AVC validate. CEO direction on 2026-10-09 keeps that commercial line preparatory. The signature line is blank.
 4. GD-031-04, GD-031-07, GD-031-08: define AACP, CIM fiction, and Gamma, or confirm they stay undefined and unreversed.

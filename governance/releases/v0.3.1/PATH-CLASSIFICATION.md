@@ -43,6 +43,7 @@ asset is modified.
 | `governance/releases/v0.3.1/GOVERNANCE-DECISIONS.md` | EXOCHAIN core (governance artifact) | PENDING decision templates |
 | `governance/releases/v0.3.1/PATH-CLASSIFICATION.md` | EXOCHAIN core (governance artifact) | This file |
 | `governance/releases/v0.3.1/V030-CLOSE-ASSESSMENT.md` | EXOCHAIN core (governance artifact) | v0.3.0 close assessment and path B recommendation. Not a release record |
+| `governance/releases/v0.3.1/V030-CLOSE-RECORD.md` | EXOCHAIN core (governance artifact) | Unsigned draft of the v0.3.0 close inside this release. Not a close. No tag |
 | `governance/releases/v0.3.1/specs/*.md` | EXOCHAIN core (governance artifact) | Proposed protocol specifications |
 | `governance/releases/v0.3.1/schemas/*.json` | EXOCHAIN core (governance artifact) | Proposed JSON Schemas, not an implemented wire format |
 | `governance/releases/v0.3.1/test-vectors/*.json` | EXOCHAIN core (governance artifact) | Proposed fixtures, not a passing test run |

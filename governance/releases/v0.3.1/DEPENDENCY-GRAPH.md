@@ -57,7 +57,9 @@ evidence-grade train named by the 0.2.4 RC and the 0.2.6 issue disposition.
 
 [V030-CLOSE-ASSESSMENT.md](V030-CLOSE-ASSESSMENT.md) scores the eight rows on
 `a2667295` and recommends path B: milestone 1 inside this release, with no
-separate 0.3.0 tag. That recommendation does not close `V030-CLOSE` and does
+separate 0.3.0 tag. The Chief Executive ruled that shape on 2026-10-22 at
+4:00 PM ET. The ruling is drafted in [V030-CLOSE-RECORD.md](V030-CLOSE-RECORD.md).
+That draft does not close `V030-CLOSE`, does not sign GD-031-01, and does
 not authorize the issues below. #813 stays outside milestone 1 unless humans
 narrow it.
 

@@ -28,9 +28,13 @@ unrecorded or while any GD-031 record is PENDING.
 
 [V030-CLOSE-ASSESSMENT.md](V030-CLOSE-ASSESSMENT.md) recommends path B: roll
 the v0.3.0 close into this release as gating milestone 1, and do not cut a
-separate 0.3.0 tag. That recommendation is not adopted. GD-031-01 stays
-PENDING. The two drafts below are the proposed milestone-1 scope. The 28
-market drafts stay where they are and stay blocked.
+separate 0.3.0 tag. The Chief Executive ruled path B on 2026-10-22 at
+4:00 PM ET: the v0.3.0 close is recorded inside this release, and there is
+no separate `v0.3.0` tag. That ruling is drafted in
+[V030-CLOSE-RECORD.md](V030-CLOSE-RECORD.md) and on GD-031-01. It is not
+signed. GD-031-01 stays PENDING and is not approved. The two drafts below
+are the milestone-1 scope. The 28 market drafts stay where they are and
+stay blocked.
 
 | Milestone | Drafts | What "done" means |
 | --- | --- | --- |

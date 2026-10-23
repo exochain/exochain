@@ -40,7 +40,7 @@ A release record is a separate human artifact. It is not created here.
 
 | Evidence | Verifier | Fails if |
 | --- | --- | --- |
-| v0.3.0 close record covering P1–P8 | Read the record against `governance/releases/v0.3.0/GOAL.md` | Any prerequisite is "in source since 0.2.4" with no close |
+| v0.3.0 close record covering P1–P8 | Read the record against `governance/releases/v0.3.0/GOAL.md`. `V030-CLOSE-RECORD.md` is the draft place for that record and is not itself the close while GD-031-01 is PENDING | Any prerequisite is "in source since 0.2.4" with no close, or the draft is treated as signed |
 | GD-031-01 through GD-031-11 filled, signed by the named roles, no agent DID among signers | Compare roles to the filled signature blocks | Any record still PENDING, or one person signed both release environments |
 | #789 environments | The release workflow run shows two distinct approvers, self-review off | One approver, or the committing agent is an approver |
 | Demonstration directory from `DEMO.md` | Recompute BLAKE3 of `08-evidence-bundle.cbor` and compare to the stamp imprint inputs | Missing file, or a private key in the directory |
