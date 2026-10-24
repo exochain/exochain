@@ -47,18 +47,22 @@ SPDX-License-Identifier: Apache-2.0
 Binding worksheet: [DOGFOOD-LIVE-ITEM-PUSH-ENABLEMENT.md](DOGFOOD-LIVE-ITEM-PUSH-ENABLEMENT.md)
 (push-enablement ratification; AI-IRB seats + Bob/Max rows still blank).
 
+## Secrets status (2026-07-14)
+
+- **Railway:** `PRESIDENTIAL_SLACK_WEBHOOK_URL`, `PRESIDENTIAL_TWILIO_AUTH_TOKEN`, `PRESIDENTIAL_TWILIO_ACCOUNT_SID`, `PRESIDENTIAL_TWILIO_FROM`, `PRESIDENTIAL_TWILIO_TO` set (names only) on `commandbase-web` production and on `exochain-node` + `livesafe` for development/staging/production. `EXOCHAIN_API_BASE_URL` already present.
+- **GitHub Actions:** still blocked for cloud agents (`HTTP 403`); repo admin must set the same `PRESIDENTIAL_*` names.
+
 ## Blockers to full dogfood close
 
 - Human Bob+Max attestation on the live item above (not only the automated bridge fixture).
-- GitHub Actions secrets not writable by this cloud-agent token (`HTTP 403` on `gh secret set/list`).
-- Railway variables require Bob’s Railway OAuth/session (device login) — see [SECRETS-ACTIVATION.md](SECRETS-ACTIVATION.md).
+- GitHub Actions secrets still need admin `gh secret set` (see commands below / [SECRETS-ACTIVATION.md](SECRETS-ACTIVATION.md)).
 
 ## Push enablement decision
 
 **Do not enable live Slack/SMS push yet.** Remain fail-closed until:
 
-1. PR #791 merged to `main`
-2. Secrets configured per [SECRETS-ACTIVATION.md](SECRETS-ACTIVATION.md)
+1. PR #791 merged to `main` ✅
+2. Secrets configured — Railway ✅ / GitHub ⏳ admin
 3. Bob+Max complete one live dual-gate ratify/veto on a real item and update this record to **Complete**
 
 ## Required secrets (names only — values must be set by operators)
