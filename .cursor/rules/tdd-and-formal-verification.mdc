@@ -1,0 +1,15 @@
+---
+description: Always use TDD and always cover changed promises with a formal verification skill
+alwaysApply: true
+---
+
+# TDD and formal verification
+
+Use test-driven development for every behavior change.
+
+1. Write a failing test that states the behavior.
+2. Run it and confirm it fails for the reason you expect.
+3. Write the code that makes that test pass.
+4. Re-run that test and the nearest existing checks.
+
+Always create or update a project-local formal verification skill when a change creates or alters a promise, unless a skill in `.cursor/skills/` already verifies that promise. Follow `/create-formal-verification-skill`. Do not weaken a property so a check passes. After merges that change verified code without re-running the check, follow `/maintain-formal-verification-skill`.
