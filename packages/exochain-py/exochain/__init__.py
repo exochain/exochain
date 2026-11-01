@@ -67,12 +67,12 @@ from .types import (
     TrustReceipt,
 )
 
-__version__ = "0.3.1"
+__version__ = "0.4.0"
 
 #: Fabric protocol version this SDK speaks (A-066). Clients may ``/version``-probe
 #: a target gateway on init and warn when the server reports a different
 #: major/minor so users can distinguish protocol skew from transport errors.
-PROTOCOL_VERSION = "0.3.1"
+PROTOCOL_VERSION = "0.4.0"
 
 __all__ = [
     "PROTOCOL_VERSION",

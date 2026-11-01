@@ -30,7 +30,7 @@
  * a target gateway on init and warn when the server reports a different
  * major/minor so users can distinguish protocol skew from transport errors.
  */
-export const PROTOCOL_VERSION = '0.3.1';
+export const PROTOCOL_VERSION = '0.4.0';
 export * from './types.js';
 export * from './errors.js';
 export * from './client.js';
