@@ -224,6 +224,8 @@ const AVC_EXOCHAIN_FINALITY_DAG_DOMAIN: &str = "exo.avc.receipt.exochain_finalit
 const AVC_EXOCHAIN_FINALITY_ACTION_TYPE: &str = "avc.receipt.exochain_finality";
 pub const LYNK_RECEIPT_RESPONSE_ATTESTATION_DOMAIN: &str =
     "exo.avc.lynk.receipt_response.attestation.v1";
+pub const ACTION_RECEIPT_RESPONSE_ATTESTATION_DOMAIN: &str =
+    "exo.avc.action.receipt_response.attestation.v1";
 const DEFAULT_AVC_RECEIPT_LIST_LIMIT: u32 = 50;
 const MAX_AVC_RECEIPT_LIST_LIMIT: u32 = 500;
 const WASM_PACKAGE_NAME: &str = "@exochain/exochain-wasm";
@@ -2281,6 +2283,9 @@ pub struct EmitReceiptResponse {
     pub validation: AvcValidationResult,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lynk_response_attestation: Option<LynkReceiptResponseAttestation>,
+    /// Authenticates a generic action's request, decision and finality before dispatch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action_response_attestation: Option<LynkReceiptResponseAttestation>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2534,6 +2539,7 @@ fn emit_receipt_response(
         receipt,
         validation,
         lynk_response_attestation: None,
+        action_response_attestation: None,
     }
 }
 
@@ -2587,6 +2593,20 @@ fn lynk_receipt_response_attestation_payload(
     receipt_request: &serde_json::Value,
     validator_did: &Did,
 ) -> anyhow::Result<Vec<u8>> {
+    receipt_response_attestation_payload(
+        response,
+        receipt_request,
+        validator_did,
+        LYNK_RECEIPT_RESPONSE_ATTESTATION_DOMAIN,
+    )
+}
+
+fn receipt_response_attestation_payload(
+    response: &EmitReceiptResponse,
+    receipt_request: &serde_json::Value,
+    validator_did: &Did,
+    domain: &str,
+) -> anyhow::Result<Vec<u8>> {
     let finality_hash = response
         .exochain_finality_hash
         .as_deref()
@@ -2611,7 +2631,7 @@ fn lynk_receipt_response_attestation_payload(
 
     let payload = serde_json::json!({
         "decision": "Allow",
-        "domain": LYNK_RECEIPT_RESPONSE_ATTESTATION_DOMAIN,
+        "domain": domain,
         "exochain_finality": {
             "hash": finality_hash,
             "height": finality_height,
@@ -3925,10 +3945,32 @@ async fn handle_validate(
 
 async fn handle_emit_receipt(
     State(state): State<Arc<AvcApiState>>,
-    Json(payload): Json<EmitReceiptRequest>,
+    Json(submitted_receipt_request): Json<serde_json::Value>,
 ) -> ApiResult<Json<EmitReceiptResponse>> {
+    let payload: EmitReceiptRequest = serde_json::from_value(submitted_receipt_request.clone())
+        .map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                "AVC action receipt request is malformed".into(),
+            )
+        })?;
+    let typed_request_shape = serde_json::to_value(&payload).map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "AVC action request serialization failed".into(),
+        )
+    })?;
+    reject_unknown_lynk_request_fields(&submitted_receipt_request, &typed_request_shape, "request")
+        .map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                "AVC action receipt request contains an unknown field".into(),
+            )
+        })?;
     let validator_did = state.validator_did.clone();
     let receipt_signer = Arc::clone(&state.receipt_signer);
+    let attestation_validator = validator_did.clone();
+    let attestation_signer = Arc::clone(&receipt_signer);
     let submitted_request = payload.validation.clone();
     let action = require_action(&submitted_request)?;
     let action_id = action.action_id;
@@ -4045,7 +4087,31 @@ async fn handle_emit_receipt(
             allow_anchors.note_allow(receipt.clone(), false);
             Ok(emit_receipt_response(receipt, validation))
         },
-        |session, response| Ok(attach_allow_anchor_commitment(session, response)),
+        move |session, response| {
+            let mut response = attach_allow_anchor_commitment(session, response);
+            if response.receipt.decision == AvcDecision::Allow
+                && response.exochain_finality_hash.is_some()
+                // Historical receipts remain readable/replayable after validator
+                // rotation, but cannot acquire a fresh execution attestation
+                // from an identity that did not issue the original receipt.
+                && response.receipt.validator_did == attestation_validator
+            {
+                let bytes = receipt_response_attestation_payload(
+                    &response,
+                    &submitted_receipt_request,
+                    &attestation_validator,
+                    ACTION_RECEIPT_RESPONSE_ATTESTATION_DOMAIN,
+                )
+                .map_err(exochain_finality_error)?;
+                response.action_response_attestation = Some(LynkReceiptResponseAttestation {
+                    domain: ACTION_RECEIPT_RESPONSE_ATTESTATION_DOMAIN.to_owned(),
+                    schema_version: AVC_SCHEMA_VERSION,
+                    validator_did: attestation_validator.clone(),
+                    signature: (attestation_signer)(&bytes),
+                });
+            }
+            Ok(response)
+        },
         move |mut response| {
             anchor_persisted_deny_receipt(&anchor_store, &anchor_signer, &mut response)?;
             Ok(response)
@@ -7631,6 +7697,7 @@ mod tests {
             Some(action_commitment_hash)
         );
         assert_eq!(parsed.receipt.previous_receipt_hash, None);
+        assert!(parsed.action_response_attestation.is_none());
         assert_eq!(
             parsed.receipt.timestamp_provenance,
             Some(AvcReceiptTimestampProvenance::ExternalTimestampAuthority)
@@ -7680,6 +7747,144 @@ mod tests {
             validator_keypair().public_key()
         ));
         assert_eq!(state.registry.lock().unwrap().receipt_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn action_response_attestation_binds_exact_request_and_finality() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(Mutex::new(
+            crate::store::SqliteDagStore::open(dir.path()).unwrap(),
+        ));
+        let state = fresh_state_with_finality_store(store);
+        let credential = baseline_credential();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(credential.clone())
+            .unwrap();
+        let validation = AvcValidationRequest {
+            credential,
+            action: Some(baseline_action(Did::new("did:exo:agent").unwrap())),
+            now: Timestamp::new(1_500_000, 0),
+        };
+        let request = serde_json::to_value(EmitReceiptRequest {
+            subject_signature: sign_action(&validation, &subject_keypair()),
+            validation,
+            subject_public_key: None,
+        })
+        .unwrap();
+        let response = avc_router(Arc::clone(&state))
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/avc/receipts/emit")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let response: serde_json::Value =
+            serde_json::from_slice(&read_body(response).await).unwrap();
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../fixtures/lynk/rust_action_receipt_v1.json"))
+                .unwrap();
+        assert_eq!(
+            fixture,
+            serde_json::json!({ "request": request, "response": response })
+        );
+        let attestation = &response["action_response_attestation"];
+        assert_eq!(
+            attestation["domain"],
+            "exo.avc.action.receipt_response.attestation.v1"
+        );
+        let signature: Signature =
+            serde_json::from_value(attestation["signature"].clone()).unwrap();
+        let payload = serde_json::json!({
+            "decision": "Allow",
+            "domain": "exo.avc.action.receipt_response.attestation.v1",
+            "schema_version": 1,
+            "validator_did": validator_did(),
+            "receipt_request": request,
+            "receipt": response["receipt"],
+            "receipt_hash": response["receipt_hash"],
+            "validation": response["validation"],
+            "exochain_finality": {
+                "hash": response["exochain_finality_hash"],
+                "height": response["exochain_finality_height"],
+                "receipt_hash": response["exochain_finality_receipt_hash"],
+            },
+        });
+        let encode = |value: &serde_json::Value| {
+            let mut bytes = Vec::new();
+            ciborium::ser::into_writer(&sorted_json_cbor_value(value).unwrap(), &mut bytes)
+                .unwrap();
+            bytes
+        };
+        assert!(crypto::verify(
+            &encode(&payload),
+            &signature,
+            validator_keypair().public_key()
+        ));
+        for pointer in [
+            "/receipt_request/validation/action/tool",
+            "/receipt_request/validation/action/action_id",
+            "/receipt_request/validation/now/logical",
+            "/exochain_finality/height",
+            "/receipt_hash",
+            "/domain",
+        ] {
+            let mut altered = payload.clone();
+            *altered.pointer_mut(pointer).unwrap() = serde_json::json!("tampered");
+            assert!(
+                !crypto::verify(
+                    &encode(&altered),
+                    &signature,
+                    validator_keypair().public_key()
+                ),
+                "{pointer}"
+            );
+        }
+        assert!(response.get("lynk_response_attestation").is_none());
+    }
+
+    #[tokio::test]
+    async fn action_receipt_rejects_unknown_request_material_before_commit() {
+        let state = fresh_state();
+        let credential = baseline_credential();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(credential.clone())
+            .unwrap();
+        let validation = AvcValidationRequest {
+            credential,
+            action: Some(baseline_action(Did::new("did:exo:agent").unwrap())),
+            now: Timestamp::new(1_500_000, 0),
+        };
+        let mut request = serde_json::to_value(EmitReceiptRequest {
+            subject_signature: sign_action(&validation, &subject_keypair()),
+            validation,
+            subject_public_key: None,
+        })
+        .unwrap();
+        request["validation"]["action"]["unrecognized_authority"] = serde_json::json!(true);
+        let response = avc_router(Arc::clone(&state))
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/avc/receipts/emit")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 0);
     }
 
     #[tokio::test]
@@ -13377,6 +13582,7 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{body}");
         let emitted: EmitReceiptResponse = serde_json::from_str(&body).unwrap();
         let original_did = emitted.receipt.validator_did.clone();
+        assert!(emitted.action_response_attestation.is_some());
         let node_hash = exochain_finality_node_hash(&emitted.receipt).unwrap();
 
         let mut state = Arc::into_inner(state).unwrap();
@@ -13399,6 +13605,13 @@ mod tests {
         let (status, body) =
             post_allow_emit(&state, &credential, Hash256::from_bytes([0x63; 32])).await;
         assert_eq!(status, StatusCode::OK, "{body}");
+        let replayed: EmitReceiptResponse = serde_json::from_str(&body).unwrap();
+        assert!(replayed.action_response_attestation.is_none());
+        assert_eq!(replayed.receipt, emitted.receipt);
+        assert_eq!(
+            replayed.exochain_finality_hash,
+            emitted.exochain_finality_hash
+        );
         assert_eq!(finality_height(&store), 1);
         let node = store
             .lock()
