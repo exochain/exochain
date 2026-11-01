@@ -41,37 +41,44 @@ export async function fetchBoundedResponse(
     DEFAULT_MAX_RESPONSE_BYTES,
     MAX_CONFIGURED_RESPONSE_BYTES,
   );
+  const fetchImpl = resolveFetch(config.fetch);
+  return withRequestDeadline(config, init.signal, label, async (signal, requestTimeoutMs) => {
+    const response = await fetchImpl(input, { ...init, signal });
+    const body = await readBoundedBody(response, maxResponseBytes, signal, label, requestTimeoutMs);
+    return { response, body, text: new TextDecoder().decode(body) };
+  });
+}
+
+/** Applies the same deadline and host cancellation to signing, storage and acceptance hooks. */
+export async function withRequestDeadline<T>(
+  config: Pick<LlmProxyConfig, "requestTimeoutMs">,
+  signal: AbortSignal | null | undefined,
+  label: string,
+  operation: (signal: AbortSignal, timeoutMs: number) => Promise<T>,
+): Promise<T> {
   const requestTimeoutMs = configuredPositiveInteger(
     "requestTimeoutMs",
     config.requestTimeoutMs,
     DEFAULT_REQUEST_TIMEOUT_MS,
     MAX_CONFIGURED_REQUEST_TIMEOUT_MS,
   );
-  const fetchImpl = resolveFetch(config.fetch);
   const controller = new AbortController();
+  const cancel = () => controller.abort();
+  if (signal?.aborted) controller.abort();
+  signal?.addEventListener("abort", cancel, { once: true });
   const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
 
   try {
-    const response = await awaitWithAbort(
-      fetchImpl(input, { ...init, signal: controller.signal }),
+    if (controller.signal.aborted) throw new LynkValidationError(`${label} cancelled before dispatch`);
+    return await awaitWithAbort(
+      operation(controller.signal, requestTimeoutMs),
       controller.signal,
       label,
       requestTimeoutMs,
     );
-    const body = await readBoundedBody(
-      response,
-      maxResponseBytes,
-      controller.signal,
-      label,
-      requestTimeoutMs,
-    );
-    return {
-      response,
-      body,
-      text: new TextDecoder().decode(body),
-    };
   } finally {
     clearTimeout(timeout);
+    signal?.removeEventListener("abort", cancel);
   }
 }
 
@@ -191,6 +198,9 @@ function awaitWithAbort<T>(
   timeoutMs: number,
 ): Promise<T> {
   if (signal.aborted) {
+    // The operation can synchronously abort its caller before returning its
+    // promise. It has already started, so observe a later rejection as well.
+    void operation.catch(() => undefined);
     return Promise.reject(
       new LynkValidationError(`${label} timed out after ${timeoutMs} ms`),
     );

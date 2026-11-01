@@ -175,10 +175,17 @@ export async function buildLlmUsageReceiptIntent(
     typeof config.adapterSignature === "function"
       ? await config.adapterSignature(envelope)
       : config.adapterSignature;
+  const authority = config.prepareReceipt
+    ? await config.prepareReceipt(structuredClone(evidence))
+    : { validation: config.validation, subjectSignature: config.subjectSignature,
+        subjectPublicKey: config.subjectPublicKey };
+  if (!authority || typeof authority.subjectSignature !== "string" || !authority.subjectSignature) {
+    throw new LynkConfigurationError("LYNK receipt authority requires a subject signature");
+  }
   return {
-    validation: config.validation,
-    subject_signature: config.subjectSignature,
-    subject_public_key: config.subjectPublicKey,
+    validation: authority.validation,
+    subject_signature: authority.subjectSignature,
+    subject_public_key: authority.subjectPublicKey,
     llm_usage_evidence: envelope,
     adapter_signature: adapterSignature,
     adapter_public_key: config.adapterPublicKey,
@@ -249,7 +256,7 @@ function assertRequiredConfig(config: LlmProxyConfig): void {
     ["actorDid", config.actorDid],
     ["adapterDid", config.adapterDid],
     ["custodyPolicyHash", config.custodyPolicyHash],
-    ["subjectSignature", config.subjectSignature],
+    ["subjectSignature", config.prepareReceipt ? "dynamic" : config.subjectSignature],
   ] as const) {
     if (typeof value !== "string" || value.trim() === "") {
       throw new LynkConfigurationError(`LYNK config requires ${name}`);

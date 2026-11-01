@@ -13,20 +13,57 @@ import { buildLlmUsageReceiptIntent, hashProviderPayload, LynkConfigurationError
 import { releaseWithReceipt } from "./delivery.js";
 import { emitUsageReceipt, requireProductionValidatorTrust } from "./receipt.js";
 import { fetchBoundedResponse, parseBoundedJson } from "./http.js";
+import { authorizeMcpExecution, checkCancellation, requireHlc, snapshotJson } from "./action-authorization.js";
+const governedProxies = new WeakSet();
+export function isGovernedMcpProxy(value) {
+    return typeof value === "object" && value !== null && governedProxies.has(value);
+}
+/** Raised only before a tool was dispatched. Later failures may have external effects. */
+export class McpAuthorizationError extends LynkValidationError {
+    constructor() {
+        super("MCP action was not authorized before dispatch");
+        this.name = "McpAuthorizationError";
+    }
+}
 export function createReceiptedMcpProxy(config, mcp) {
     requireProductionValidatorTrust(config);
     if (!mcp.serverUrl || mcp.serverUrl.trim() === "") {
         throw new LynkConfigurationError("MCP LYNK proxy requires serverUrl");
     }
-    return {
-        callTool: (call, options) => callMcpTool(config, mcp.serverUrl, call, options),
-    };
+    if (config.mode === "production" && (!mcp.authorization
+        || typeof mcp.authorization.prepare !== "function"
+        || typeof mcp.authorization.now !== "function"
+        || typeof mcp.authorization.journal?.claim !== "function")) {
+        throw new LynkConfigurationError("production MCP requires pre-execution authorization and a durable journal");
+    }
+    const endpoint = mcp.serverUrl;
+    const serverUrl = new URL(endpoint);
+    if (serverUrl.username || serverUrl.password || serverUrl.hash
+        || (config.mode === "production" && serverUrl.protocol !== "https:")
+        || !["http:", "https:"].includes(serverUrl.protocol)) {
+        throw new LynkConfigurationError("MCP requires an HTTPS endpoint without embedded credentials or fragment");
+    }
+    const boundConfig = { ...config };
+    const authorization = mcp.authorization ? { ...mcp.authorization } : undefined;
+    const proxy = Object.freeze({
+        callTool: (call, options) => callMcpTool(boundConfig, endpoint, call, options, authorization),
+    });
+    if (config.mode === "production" && authorization)
+        governedProxies.add(proxy);
+    return proxy;
 }
-async function callMcpTool(config, serverUrl, call, options) {
-    if (!call.name || call.name.trim() === "") {
+async function callMcpTool(config, serverUrl, call, options, authorization) {
+    if (typeof call.name !== "string" || call.name.trim() === "" || call.name.length > 256) {
         throw new LynkValidationError("MCP tools/call requires a tool name");
     }
-    const requestPayload = {
+    if (typeof options.idempotencyKey !== "string" || options.idempotencyKey.trim() === ""
+        || options.idempotencyKey.length > 256) {
+        throw new LynkValidationError("MCP requires a non-empty idempotency key no longer than 256 characters");
+    }
+    options = { ...options, createdAt: requireHlc(options.createdAt),
+        issuedAt: options.issuedAt ? requireHlc(options.issuedAt) : undefined };
+    checkCancellation(options.signal);
+    const requestPayload = snapshotJson({
         jsonrpc: "2.0",
         id: options.idempotencyKey,
         method: "tools/call",
@@ -34,17 +71,33 @@ async function callMcpTool(config, serverUrl, call, options) {
             name: call.name,
             arguments: call.arguments ?? {},
         },
-    };
+    });
+    if (!isRecord(requestPayload.params.arguments)) {
+        throw new LynkValidationError("MCP tool arguments must be a JSON object");
+    }
+    call = { name: requestPayload.params.name, arguments: requestPayload.params.arguments };
+    if (authorization) {
+        try {
+            await authorizeMcpExecution(config, authorization, serverUrl, requestPayload, options);
+        }
+        catch {
+            throw new McpAuthorizationError();
+        }
+    }
+    checkCancellation(options.signal);
     const bounded = await fetchBoundedResponse(config, serverUrl, {
         method: "POST",
         headers: {
             "content-type": "application/json",
         },
         body: JSON.stringify(requestPayload),
+        redirect: "error",
+        signal: options.signal,
     }, "MCP tools/call response");
     const { response } = bounded;
     const responsePayload = parseBoundedJson(bounded, "MCP tools/call response");
-    if (!response.ok || (isRecord(responsePayload) && responsePayload.error !== undefined)) {
+    if (!response.ok || (isRecord(responsePayload) && (responsePayload.error !== undefined
+        || (isRecord(responsePayload.result) && responsePayload.result.isError === true)))) {
         return emitMcpFailureReceipt(config, call, requestPayload, response.status, options);
     }
     if (!isValidMcpToolResult(responsePayload, requestPayload.id)) {

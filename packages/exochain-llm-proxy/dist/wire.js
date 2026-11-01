@@ -14,6 +14,15 @@ const HASH256_HEX = /^[0-9a-f]{64}$/;
 const ED25519_SIGNATURE_HEX = /^[0-9a-f]{128}$/;
 const ZERO_HASH256_HEX = "0".repeat(64);
 const MAX_ML_DSA_65_SIGNATURE_BYTES = 3309;
+export function encodeAvcActionReceiptForWire(intent) {
+    return {
+        validation: encodeValidationRequest(intent.validation),
+        subject_signature: encodeSignature(intent.subject_signature, "subject_signature"),
+        ...(intent.subject_public_key === undefined ? {} : {
+            subject_public_key: decodeFixedHex(intent.subject_public_key, 32, "subject_public_key", true),
+        }),
+    };
+}
 /**
  * Encode the stable, retryable LYNK receipt intent into the exact JSON shape
  * consumed by Rust's serde implementations. The logical intent intentionally

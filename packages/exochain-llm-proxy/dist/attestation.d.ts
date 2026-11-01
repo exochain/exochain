@@ -2,6 +2,7 @@ import type { LlmProxyConfig } from "./types.js";
 import type { ReceiptEmitWireRequest } from "./wire.js";
 export declare const LYNK_RECEIPT_RESPONSE_ATTESTATION_DOMAIN = "exo.avc.lynk.receipt_response.attestation.v1";
 export declare const LYNK_RECEIPT_RESPONSE_ATTESTATION_SCHEMA_VERSION = 1;
+export declare const AVC_ACTION_RESPONSE_ATTESTATION_DOMAIN = "exo.avc.action.receipt_response.attestation.v1";
 type JsonRecord = Record<string, unknown>;
 export interface LynkReceiptResponseAttestationInput {
     receiptHash: string;
@@ -23,6 +24,12 @@ export declare function assertJsonUnicodeScalars(value: unknown): void;
  * identical. Integers use CBOR's shortest-width representation.
  */
 export declare function encodeLynkReceiptResponseAttestationPayload(input: LynkReceiptResponseAttestationInput): Uint8Array;
+export type AvcActionResponseAttestationInput = Omit<LynkReceiptResponseAttestationInput, "request"> & {
+    request: unknown;
+};
+export declare function encodeAvcActionResponseAttestationPayload(input: AvcActionResponseAttestationInput): Uint8Array;
 export declare function verifyLynkReceiptResponseAttestation(config: LlmProxyConfig, input: LynkReceiptResponseAttestationInput, signature: number[]): Promise<void>;
+export declare function verifyAvcActionResponseAttestation(config: LlmProxyConfig, input: AvcActionResponseAttestationInput, signature: number[]): Promise<void>;
+export declare function encodeCanonicalCbor(value: unknown): Uint8Array;
 export {};
 //# sourceMappingURL=attestation.d.ts.map

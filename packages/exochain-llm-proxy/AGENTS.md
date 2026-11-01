@@ -12,6 +12,12 @@ request AVC receipts, but it must not mint EXOCHAIN receipts directly.
   expanded workflow producers.
 - Production mode must never return provider or tool output unless receipt
   emission returns a committed or replayed EXOCHAIN receipt.
+- Production MCP dispatch also requires an exact, finalized action authorization
+  signed by the pinned validator and a durable atomic attempt claim before the
+  external call. Usage receipts alone do not authorize side effects.
+- The bounded agent runner composes only existing supported lanes. Models propose
+  and review; the core authorizes. Keep independent reviewer identities, finite
+  loop/call/deadline limits, host acceptance checks and terminal escalation.
 
 ## Privacy Boundary
 

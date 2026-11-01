@@ -47,8 +47,8 @@ import sys
 
 source, destination = map(Path, sys.argv[1:])
 entries = sorted(source.iterdir())
-if len(entries) != 44:
-    raise SystemExit("current LYNK package must contain exactly 44 build outputs")
+if len(entries) != 64:
+    raise SystemExit("current LYNK package must contain exactly 64 build outputs")
 for entry in entries:
     if not stat.S_ISREG(entry.lstat().st_mode):
         raise SystemExit(f"current LYNK output is not a regular file: {entry.name}")
@@ -76,7 +76,7 @@ second_digest="$(run_transport create --profile llm-dist --version 0.2.6 \
   || fail "identical inputs did not produce deterministic transport bytes"
 
 if [ "$benign_only" = true ]; then
-  printf 'release file-set benign current-package round-trip test passed (44 files)\n'
+  printf 'release file-set benign current-package round-trip test passed (64 files)\n'
   exit 0
 fi
 

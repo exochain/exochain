@@ -45,11 +45,144 @@ Production is fail closed:
   withholds output.
 - Provider failure emits failure evidence without copying provider response body.
 - `allowUnreceiptedOutputForDevelopment` is rejected in production.
+- MCP dispatch additionally requires a finalized, pinned-validator-signed action
+  authorization **before** the external tool call and a durable attempt claim.
+
+Model calls retain the existing post-call receipt boundary. Hosts must approve
+model selection, prompt data egress and provider budgets before invoking them;
+withholding output after a denied usage receipt cannot undo provider processing
+or charges.
 
 AVC receipts contain hashes, counters, safe metadata, policy hashes, and receipt
 links. They must not contain provider secrets, bearer tokens, KMS material, raw
 object locations, raw prompts, raw completions, raw tool arguments, or raw tool
 results.
+
+## Governed agents and improvement runs
+
+`createGovernedAgent` composes the existing OpenAI Responses and MCP adapters.
+It plans one step, asks a separate model/actor to review the exact proposal,
+obtains core authorization, executes an allow-listed tool, and uses its receipted
+output as evidence for the next step. Model agreement is advice, not authority.
+Completion also requires the host's acceptance check. This is a bounded runtime
+for existing models, not a claim of superintelligence or a new consensus protocol.
+
+```ts
+import { createGovernedAgent, createLynkAgentModel } from "@exochain/llm-proxy";
+
+// Each host config pins the validator and supplies prepareReceipt(evidence).
+// That callback signs the actual AVC usage action using the host's signer.
+const planner = createLynkAgentModel(plannerOptions);
+const reviewer = createLynkAgentModel(reviewerOptions);
+const runtime = createGovernedAgent({
+  planner,
+  reviewer,
+  tools: governedTools,
+  now: hostHlc,
+  verifyCompletion: verifyReceiptedAcceptanceReport,
+  loop: {
+    max_iterations: 8,
+    max_model_calls: 16,
+    max_tool_calls: 6,
+    stop_condition: "reviewed_verified_completion",
+    escalation: "return_to_human",
+  },
+  operationTimeoutMs: 60_000,
+});
+const result = await runtime.run({
+  id: missionId,
+  objective: "Improve release verification time in an isolated candidate.",
+  successCriteria: [
+    "Every required baseline and candidate validation passes.",
+    "The measured candidate improves the agreed metric without regressions.",
+  ],
+}, { signal: operatorAbortController.signal });
+```
+
+The host chooses real model IDs. Planner and reviewer must have distinct IDs,
+model IDs and actor DIDs. Both use production LYNK and dynamic receipt signing.
+Only handles created by the production governed MCP factory are accepted as
+tools. Unknown tools, extra proposal fields, unbound reviews, missing receipts,
+or permission denials cannot authorize execution. There are at most 25 iterations,
+50 model calls and 25 tool attempts; two matching validation failures escalate.
+Each model has a finite output token cap. Call limits bound invocation count,
+not a dollar budget or total input token charge; AVC constraints and the host's
+signer still govern monetary authority.
+
+`verifyCompletion` receives a detached copy of the mission, summary and receipted
+tool observations plus a cancellation signal. It must inspect trusted evaluator
+evidence, not accept a model's assertion that tests passed. For code improvement,
+bind the report to the candidate/base commits, preserve required checks, compare
+the measured baseline and validate rollback before accepting. The example
+`examples/governed-improvement.ts` exposes only proposal and evaluation tools.
+Publishing remains in the repository's source-bound release pipeline.
+
+Every result reports its status, reason, iterations, model/tool attempts and
+receipt hashes. `escalated` and `stopped` are terminal for that run. An unavailable
+receipt may also return `pending`; retry that receipt using `resolveReceiptPending`,
+never the external action. The runner does not execute arbitrary workflow scripts,
+rewrite its policy, issue credentials, alter limits, merge or publish by itself.
+
+## MCP authorization and migration
+
+This is an intentional production API change. Existing production MCP callers
+must supply `authorization`; development callers retain the explicit development
+mode. Deploy a node with action response attestations before enabling this client.
+The generic action endpoint rejects unknown request fields before recording a
+receipt. Send the versioned AVC request shape. Historical receipts still replay
+after validator identity rotation, but receive no fresh execution attestation
+from a different validator identity.
+
+```ts
+import { createReceiptedMcpProxy, FileExecutionJournal } from "@exochain/llm-proxy";
+
+const toolProxy = createReceiptedMcpProxy(config, {
+  serverUrl: approvedMcpUrl,
+  authorization: {
+    now: hostHlc,
+    journal: new FileExecutionJournal(durableSharedJournalDirectory),
+    actionName: "mcp.tools.call@US",
+    maxAgeMs: 5_000,
+    prepare: hostSignMcpAction,
+  },
+});
+```
+
+`prepare(intent)` receives the actor, tool, exact action commitment, argument and
+server hashes, HLC, and detached raw arguments/server URL for host-local policy
+mapping. Treat those arguments as untrusted data. Validate target, data class,
+amount and risk against operator policy before signing. Return
+`{validation, subject_signature, subject_public_key?}`; `validation` is the
+existing AVC credential/action/now request. Its action must bind `intent.actionId`,
+`intent.actorDid`, `intent.tool`, permission `Execute`, and the configured action
+name. Its `now` must equal `intent.now`. Obtain real signatures with the existing
+AVC action signing payload; no placeholder or locally granted authority works.
+Raw arguments and server URLs are not put into the receipt or journal.
+
+The client calls `/api/v1/avc/receipts/emit` and verifies the complete request,
+Allow decision, receipt and finality tuple against the configured validator key
+under `exo.avc.action.receipt_response.attestation.v1`. The existing core checks
+signatures, current revocation/ancestor state, emergency-stop standing, consent,
+scope, limits and trusted time. The MCP request is snapshotted before signing,
+redirects are disabled, and a short HLC dispatch window is enforced. Keep host
+HLC synchronized with the core's trusted clock. Transport credentials belong in
+the host's origin-scoped transport; never forward a core token to a model or tool.
+
+`FileExecutionJournal` needs a trusted durable POSIX filesystem. Every worker
+sharing a tenant/actor/idempotency scope must use the same journal (or a custom
+atomic durable `ExecutionJournal`). It fsyncs claims before dispatch and stores
+only a hashed key and `claimed`. The journal directory and its ancestors must
+permit directory fsync; their entries are flushed through the filesystem root,
+including on concurrent first use. Claims are intentionally never deleted. Even a
+denied or interrupted attempt may consume its key. Reconcile uncertain attempts
+with the external system before issuing a new one. Local claims do not provide
+distributed exactly-once execution on independent disks.
+
+An authorization is a checked decision before dispatch, not a distributed lock
+over the target. Revocation after authorization but before a remote side effect
+requires target-side enforcement. Cancellation cannot undo an effect already
+accepted by the target. Tool errors and uncertain outcomes stop the run; no
+automatic retry is made. Post-execution usage receipts continue to gate output.
 
 ## Minimal Responses Example
 

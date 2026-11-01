@@ -176,9 +176,12 @@ export interface LlmProxyConfig {
   maxResponseBytes?: number;
   /** Total request deadline, including streamed response-body collection. */
   requestTimeoutMs?: number;
-  validation: unknown;
+  validation?: unknown;
   /** Canonical lowercase hex for the 64-byte signature over the AVC action payload. */
-  subjectSignature: string;
+  subjectSignature?: string;
+  /** Host signer prepares fresh AVC action material after actual usage is known. */
+  prepareReceipt?: (evidence: Readonly<LlmUsageEvidence>) =>
+    Promise<LlmReceiptAuthority> | LlmReceiptAuthority;
   /**
    * Canonical lowercase hex for the 64-byte signature over Rust's canonical
    * LYNK evidence-signature payload, or a callback that returns that value.
@@ -187,6 +190,12 @@ export interface LlmProxyConfig {
   fetch?: FetchLike;
   objectStore?: ObjectStoreLike;
   kms?: KmsLike;
+}
+
+export interface LlmReceiptAuthority {
+  validation: unknown;
+  subjectSignature: string;
+  subjectPublicKey?: string;
 }
 
 export interface UsageContext {
@@ -218,10 +227,47 @@ export interface PerCallReceiptOptions {
   createdAt: HlcTimestamp;
   issuedAt?: HlcTimestamp;
   sessionId?: string;
+  signal?: AbortSignal;
 }
 
 export interface McpProxyOptions {
   serverUrl?: string;
+  /** Required in production. Only core-signed authorization permits dispatch. */
+  authorization?: McpAuthorization;
+}
+
+export interface ExecutionJournal {
+  /** Atomically and durably claim a nonzero 256-bit hex key; false if already claimed. */
+  claim(key: string): Promise<boolean>;
+}
+
+export interface McpExecutionIntent {
+  readonly actionId: string;
+  readonly actorDid: string;
+  readonly tool: string;
+  readonly argumentsHash: string;
+  readonly serverUrlHash: string;
+  /** Host-local untrusted input for policy mapping; never included in the receipt or journal. */
+  readonly arguments: unknown;
+  readonly serverUrl: string;
+  readonly now: HlcTimestamp;
+}
+
+export interface AvcActionReceiptIntent {
+  validation: unknown;
+  subject_signature: string;
+  subject_public_key?: string;
+}
+
+export interface McpAuthorization {
+  /** Trusted host signer supplies request material; it cannot return an Allow decision. */
+  prepare(intent: McpExecutionIntent): Promise<AvcActionReceiptIntent> | AvcActionReceiptIntent;
+  now(): HlcTimestamp;
+  journal: ExecutionJournal;
+  /** Jurisdiction-qualified names, e.g. mcp.tools.call@US, are supported. */
+  actionName?: string;
+  /** Short dispatch window, 1..30000 milliseconds; defaults to 5000. */
+  maxAgeMs?: number;
 }
 
 export interface McpToolCall {

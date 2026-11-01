@@ -94,6 +94,7 @@ async function callOpenAIEndpoint(
             "content-type": "application/json",
           },
       body: JSON.stringify(body),
+      signal: options.signal,
     },
     "OpenAI provider response",
   );

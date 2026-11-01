@@ -3,6 +3,7 @@ import {
   hashProviderPayload,
   type FetchLike,
   type LlmProxyConfig,
+  type McpAuthorization,
 } from "../src/index.js";
 import type { ReceiptAuthority } from "./receipt-authority.js";
 
@@ -25,9 +26,11 @@ export const exampleMcpConfig = (
 export async function runMcpToolCallExample(
   fetchImpl: FetchLike,
   authority: ReceiptAuthority,
+  authorization: McpAuthorization,
 ): Promise<unknown> {
   const proxy = createReceiptedMcpProxy(exampleMcpConfig(fetchImpl, authority), {
     serverUrl: "https://mcp.example",
+    authorization,
   });
 
   return proxy.callTool(

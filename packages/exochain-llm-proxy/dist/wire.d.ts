@@ -1,4 +1,10 @@
-import type { EncryptedPayloadRef, LlmUsageEvidence, LlmUsageEvidenceEnvelope, ReceiptIntent } from "./types.js";
+import type { AvcActionReceiptIntent, EncryptedPayloadRef, LlmUsageEvidence, LlmUsageEvidenceEnvelope, ReceiptIntent } from "./types.js";
+export interface AvcActionReceiptWireRequest {
+    validation: unknown;
+    subject_signature: WireSignature;
+    subject_public_key?: number[];
+}
+export declare function encodeAvcActionReceiptForWire(intent: AvcActionReceiptIntent): AvcActionReceiptWireRequest;
 export type WireHash256 = number[];
 export type WireSignature = {
     Ed25519: number[];
