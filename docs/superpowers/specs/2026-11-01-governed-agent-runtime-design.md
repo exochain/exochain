@@ -1,8 +1,7 @@
 # Governed agent runtime
 
-This implements Bob's instruction to make the next EXOCHAIN intelligence runtime,
-grounded in main `3d0941b`. It does not claim a new superintelligent model. It makes
-existing models usable as bounded, reviewed, receipted agents under core authority.
+This extends the EXOCHAIN intelligence runtime from main `3d0941b`. Existing
+models act as bounded, reviewed, receipted agents under core authority.
 
 ## Design
 
@@ -53,7 +52,7 @@ An independent orchestration/policy service would duplicate canonical enforcemen
 A Rust-only state machine would not connect the existing live model/tool adapters.
 The selected approach extends the existing Rust authority endpoint and TypeScript
 runtime adapter together, with separate commits and cross-language verification.
-Implementation choices are the assistant's under the user's instruction to build.
+The shared receipt fixture validates the core and adapter changes together.
 
 ## Acceptance
 

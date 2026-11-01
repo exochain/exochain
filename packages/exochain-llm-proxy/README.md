@@ -48,6 +48,11 @@ Production is fail closed:
 - MCP dispatch additionally requires a finalized, pinned-validator-signed action
   authorization **before** the external tool call and a durable attempt claim.
 
+Model calls retain the existing post-call receipt boundary. Hosts must approve
+model selection, prompt data egress and provider budgets before invoking them;
+withholding output after a denied usage receipt cannot undo provider processing
+or charges.
+
 AVC receipts contain hashes, counters, safe metadata, policy hashes, and receipt
 links. They must not contain provider secrets, bearer tokens, KMS material, raw
 object locations, raw prompts, raw completions, raw tool arguments, or raw tool

@@ -30,10 +30,10 @@ Files: `crates/exo-node/src/avc.rs`, node receipt fixtures/tests.
 Produces: optional `action_response_attestation` on finalized generic Allow receipts;
 domain `exo.avc.action.receipt_response.attestation.v1`, existing response payload.
 
-- [ ] Add failing tests for attestation binding, tamper rejection and no-finality denial.
-- [ ] Run focused node tests and observe failure.
-- [ ] Reuse canonical CBOR and the existing transactional receipt path to sign.
-- [ ] Run focused node tests and existing receipt tests, commit core change.
+- [x] Add failing tests for attestation binding, tamper rejection and no-finality denial.
+- [x] Run focused node tests and observe failure.
+- [x] Reuse canonical CBOR and the existing transactional receipt path to sign.
+- [x] Run focused node tests and existing receipt tests, commit core change.
 
 ### Task 2: Gate MCP dispatch and retain durable attempt claims
 
@@ -42,12 +42,12 @@ Files: LYNK `action-authorization.ts`, `execution-journal.ts`, `mcp.ts`, `http.t
 Consumes: Task 1 signed response. Produces: production MCP proxy that requires
 signed request material and durable atomic claim; retains existing receipt gate.
 
-- [ ] Write failing tests for missing/denied/tampered authorization, exact request
+- [x] Write failing tests for missing/denied/tampered authorization, exact request
       binding, duplicate/concurrent claims, restart, cancellation and mutation.
-- [ ] Run tests to observe missing protection.
-- [ ] Implement preflight using `/api/v1/avc/receipts/emit`, pinned-key verification,
+- [x] Run tests to observe missing protection.
+- [x] Implement preflight using `/api/v1/avc/receipts/emit`, pinned-key verification,
       request snapshot, durable journal and no redirect/automatic retry.
-- [ ] Run `npm test`, commit adapter enforcement.
+- [x] Run `npm test`, commit adapter enforcement.
 
 ### Task 3: Run bounded reviewed agents through LYNK
 
@@ -56,9 +56,10 @@ Consumes: Task 2 MCP proxy plus existing receipted model clients.
 Produces: planner/reviewer loop with declared bounds, reviewed completion and
 structured escalation, using production adapters and host signing configuration.
 
-- [ ] Write failing tests for reviewed execution/completion, rejected review,
+- [x] Write failing tests for reviewed execution/completion, rejected review,
       forged/invalid proposals, repeated failures, exhausted limits and cancellation.
-- [ ] Implement structured model adapter and runner without granting authority.
-- [ ] Run package test/build/coverage/artifact/pack checks and relevant Rust gates.
-- [ ] Review complete diff independently, correct material findings, commit and
+- [x] Implement structured model adapter and runner without granting authority.
+- [x] Run package test/build/coverage/artifact/pack checks and relevant Rust gates;
+      record pending or environment-blocked results explicitly in the draft PR.
+- [x] Review complete diff independently, correct material findings, commit and
       create a draft PR with precise scope, validation and limitations.
