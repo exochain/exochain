@@ -43,6 +43,7 @@ async function callOpenAIEndpoint(config, openAI, endpointName, path, body, opti
                 "content-type": "application/json",
             },
         body: JSON.stringify(body),
+        signal: options.signal,
     }, "OpenAI provider response");
     const { response } = bounded;
     if (!response.ok) {

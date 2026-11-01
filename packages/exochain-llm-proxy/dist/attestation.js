@@ -11,6 +11,7 @@
  */
 export const LYNK_RECEIPT_RESPONSE_ATTESTATION_DOMAIN = "exo.avc.lynk.receipt_response.attestation.v1";
 export const LYNK_RECEIPT_RESPONSE_ATTESTATION_SCHEMA_VERSION = 1;
+export const AVC_ACTION_RESPONSE_ATTESTATION_DOMAIN = "exo.avc.action.receipt_response.attestation.v1";
 const ED25519 = { name: "Ed25519" };
 const PUBLIC_KEY_HEX = /^[0-9a-f]{64}$/;
 export function assertJsonUnicodeScalars(value) {
@@ -61,9 +62,15 @@ function assertUnicodeScalarString(value) {
  * identical. Integers use CBOR's shortest-width representation.
  */
 export function encodeLynkReceiptResponseAttestationPayload(input) {
+    return encodeResponseAttestationPayload(input, LYNK_RECEIPT_RESPONSE_ATTESTATION_DOMAIN);
+}
+export function encodeAvcActionResponseAttestationPayload(input) {
+    return encodeResponseAttestationPayload(input, AVC_ACTION_RESPONSE_ATTESTATION_DOMAIN);
+}
+function encodeResponseAttestationPayload(input, domain) {
     return encodeCanonicalCbor({
         decision: "Allow",
-        domain: LYNK_RECEIPT_RESPONSE_ATTESTATION_DOMAIN,
+        domain,
         exochain_finality: {
             hash: input.finalityHash,
             height: input.finalityHeight,
@@ -111,12 +118,18 @@ function jsonTransportCopy(value) {
     throw new Error(`unsupported LYNK response attestation value type: ${typeof value}`);
 }
 export async function verifyLynkReceiptResponseAttestation(config, input, signature) {
+    return verifyResponseSignature(config, input.validatorDid, signature, encodeLynkReceiptResponseAttestationPayload(input));
+}
+export async function verifyAvcActionResponseAttestation(config, input, signature) {
+    return verifyResponseSignature(config, input.validatorDid, signature, encodeAvcActionResponseAttestationPayload(input));
+}
+async function verifyResponseSignature(config, validatorDid, signature, payload) {
     const trustedDid = config.trustedValidatorDid;
     const trustedPublicKey = config.trustedValidatorPublicKey;
     if (typeof trustedDid !== "string" || !/^did:[a-z0-9]+:[^\s]+$/.test(trustedDid)) {
         throw new Error("LYNK receipt verification requires trustedValidatorDid");
     }
-    if (input.validatorDid !== trustedDid) {
+    if (validatorDid !== trustedDid) {
         throw new Error("LYNK receipt validator DID does not match the configured trust root");
     }
     if (typeof trustedPublicKey !== "string"
@@ -141,7 +154,6 @@ export async function verifyLynkReceiptResponseAttestation(config, input, signat
     catch {
         throw new Error("trustedValidatorPublicKey is not a valid Ed25519 public key");
     }
-    const payload = encodeLynkReceiptResponseAttestationPayload(input);
     let verified;
     try {
         verified = await subtle.verify(ED25519, publicKey, Uint8Array.from(signature), payload);
@@ -153,7 +165,7 @@ export async function verifyLynkReceiptResponseAttestation(config, input, signat
         throw new Error("LYNK response attestation signature is invalid");
     }
 }
-function encodeCanonicalCbor(value) {
+export function encodeCanonicalCbor(value) {
     const output = [];
     appendCanonicalCbor(value, output);
     return Uint8Array.from(output);
@@ -183,7 +195,8 @@ function appendCanonicalCbor(value, output) {
         assertUnicodeScalarString(value);
         const bytes = new TextEncoder().encode(value);
         appendTypeAndLength(3, bytes.length, output);
-        output.push(...bytes);
+        for (const byte of bytes)
+            output.push(byte);
         return;
     }
     if (Array.isArray(value)) {
@@ -195,7 +208,16 @@ function appendCanonicalCbor(value, output) {
     }
     if (typeof value === "object") {
         const record = value;
-        const keys = Object.keys(record).sort();
+        // Rust sorts UTF-8 strings, not JavaScript UTF-16 code units.
+        const keys = Object.keys(record).sort((left, right) => {
+            const a = new TextEncoder().encode(left);
+            const b = new TextEncoder().encode(right);
+            for (let i = 0; i < Math.min(a.length, b.length); i += 1) {
+                if (a[i] !== b[i])
+                    return a[i] - b[i];
+            }
+            return a.length - b.length;
+        });
         appendTypeAndLength(5, keys.length, output);
         for (const key of keys) {
             assertUnicodeScalarString(key);

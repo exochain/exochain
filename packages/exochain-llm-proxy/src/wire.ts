@@ -12,6 +12,7 @@
 
 import { LynkValidationError } from "./evidence.js";
 import type {
+  AvcActionReceiptIntent,
   EncryptedPayloadRef,
   LlmUsageEvidence,
   LlmUsageEvidenceEnvelope,
@@ -24,6 +25,22 @@ const ZERO_HASH256_HEX = "0".repeat(64);
 const MAX_ML_DSA_65_SIGNATURE_BYTES = 3_309;
 
 type JsonRecord = Record<string, unknown>;
+
+export interface AvcActionReceiptWireRequest {
+  validation: unknown;
+  subject_signature: WireSignature;
+  subject_public_key?: number[];
+}
+
+export function encodeAvcActionReceiptForWire(intent: AvcActionReceiptIntent): AvcActionReceiptWireRequest {
+  return {
+    validation: encodeValidationRequest(intent.validation),
+    subject_signature: encodeSignature(intent.subject_signature, "subject_signature"),
+    ...(intent.subject_public_key === undefined ? {} : {
+      subject_public_key: decodeFixedHex(intent.subject_public_key, 32, "subject_public_key", true),
+    }),
+  };
+}
 
 export type WireHash256 = number[];
 

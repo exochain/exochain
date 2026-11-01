@@ -77,6 +77,7 @@ git_env = {
 git = ["/usr/bin/git", "--no-replace-objects", "-C", str(repository)]
 head = subprocess.check_output(git + ["rev-parse", "HEAD"], env=git_env, text=True).strip()
 fixture_paths = (
+    "crates/exo-node/fixtures/lynk/rust_action_receipt_v1.json",
     "crates/exo-node/fixtures/lynk/rust_receipt_emit_response_v1.json",
     "crates/exo-node/fixtures/lynk/typescript_receipt_emit_request_v1.json",
 )

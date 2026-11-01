@@ -30,6 +30,8 @@ import {
   TEST_VALIDATOR_PUBLIC_KEY,
 } from "./receipt-fixture.js";
 
+import { actionResponse, testAuthorization } from "./action-fixture.js";
+
 const stamp = { physical_ms: 1_700_000, logical: 0 };
 
 function baseConfig(fetchImpl: FetchLike): LlmProxyConfig {
@@ -71,9 +73,23 @@ function fakeFetch(
       receiptBodies.push(receiptIntent);
       return jsonResponse(committedReceiptResponse(receiptIntent), receiptStatus);
     }
+    if (url.endsWith("/api/v1/avc/receipts/emit")) return jsonResponse(actionResponse(body));
     return mcp(url, body);
   };
 }
+
+test("production MCP refuses to dispatch without pre-execution authority", () => {
+  let externalCalls = 0;
+  const config = baseConfig(async () => {
+    externalCalls += 1;
+    return jsonResponse({});
+  });
+  assert.throws(
+    () => createReceiptedMcpProxy(config, { serverUrl: "https://mcp.test" }),
+    LynkConfigurationError,
+  );
+  assert.equal(externalCalls, 0);
+});
 
 test("tools call success emits receipt and hashes arguments plus result", async () => {
   const receipts: ReceiptIntent[] = [];
@@ -88,7 +104,7 @@ test("tools call success emits receipt and hashes arguments plus result", async 
         });
       }),
     ),
-    { serverUrl: "https://mcp.test" },
+    { serverUrl: "https://mcp.test", authorization: testAuthorization() },
   );
 
   const result = await proxy.callTool(
@@ -114,7 +130,7 @@ test("tools call failure emits failure receipt without raw server error", async 
         jsonResponse({ jsonrpc: "2.0", id: "idem-mcp-2", error: { message: "secret-error" } }, 500),
       ),
     ),
-    { serverUrl: "https://mcp.test" },
+    { serverUrl: "https://mcp.test", authorization: testAuthorization() },
   );
 
   const result = await proxy.callTool(
@@ -131,6 +147,7 @@ test("oversized MCP error body is rejected before failure receipt emission", asy
   const receipts: ReceiptIntent[] = [];
   const config = baseConfig(fakeFetch(receipts, () => new Response("123456789", { status: 500 })));
   config.maxResponseBytes = 8;
+  config.mode = "development";
   const proxy = createReceiptedMcpProxy(config, { serverUrl: "https://mcp.test" });
 
   await assert.rejects(
@@ -151,7 +168,7 @@ test("oversized MCP error body is rejected before failure receipt emission", asy
 test("malformed MCP response is rejected as untrusted", async () => {
   const proxy = createReceiptedMcpProxy(
     baseConfig(fakeFetch([], () => jsonResponse({ jsonrpc: "2.0", id: "bad", result: "raw" }))),
-    { serverUrl: "https://mcp.test" },
+    { serverUrl: "https://mcp.test", authorization: testAuthorization() },
   );
 
   await assert.rejects(
@@ -171,7 +188,7 @@ test("MCP rejects non-object and invalid jsonrpc tool results", async () => {
   ] as const) {
     const proxy = createReceiptedMcpProxy(
       baseConfig(fakeFetch([], () => jsonResponse(payload))),
-      { serverUrl: "https://mcp.test" },
+      { serverUrl: "https://mcp.test", authorization: testAuthorization() },
     );
 
     await assert.rejects(
@@ -198,7 +215,7 @@ test("MCP success is bound to the exact JSON-RPC request id", async () => {
     const receipts: ReceiptIntent[] = [];
     const proxy = createReceiptedMcpProxy(
       baseConfig(fakeFetch(receipts, () => jsonResponse(payload))),
-      { serverUrl: "https://mcp.test" },
+      { serverUrl: "https://mcp.test", authorization: testAuthorization() },
     );
 
     await assert.rejects(
@@ -227,7 +244,7 @@ test("MCP response containing both result and error never releases result", asyn
         }),
       ),
     ),
-    { serverUrl: "https://mcp.test" },
+    { serverUrl: "https://mcp.test", authorization: testAuthorization() },
   );
 
   const result = await proxy.callTool(
@@ -235,6 +252,16 @@ test("MCP response containing both result and error never releases result", asyn
     { idempotencyKey: "idem-mcp-ambiguous", createdAt: stamp },
   );
 
+  assert.equal(result.status, "provider_error");
+  assert.equal("output" in result, false);
+});
+
+test("MCP tool-level isError is a failure, never a successful observation", async () => {
+  const proxy = createReceiptedMcpProxy(baseConfig(fakeFetch([], () => jsonResponse({
+    jsonrpc: "2.0", id: "tool-error", result: { isError: true, content: [{ type: "text", text: "private error" }] },
+  }))), { serverUrl: "https://mcp.test", authorization: testAuthorization() });
+  const result = await proxy.callTool({ name: "write", arguments: {} },
+    { idempotencyKey: "tool-error", createdAt: stamp });
   assert.equal(result.status, "provider_error");
   assert.equal("output" in result, false);
 });
@@ -259,7 +286,7 @@ test("empty MCP tool name fails before provider call", async () => {
         return jsonResponse({});
       }),
     ),
-    { serverUrl: "https://mcp.test" },
+    { serverUrl: "https://mcp.test", authorization: testAuthorization() },
   );
 
   await assert.rejects(
@@ -288,7 +315,7 @@ test("MCP provider success plus receipt failure withholds tool result", async ()
         503,
       ),
     ),
-    { serverUrl: "https://mcp.test" },
+    { serverUrl: "https://mcp.test", authorization: testAuthorization() },
   );
 
   const result = await proxy.callTool(
@@ -328,7 +355,7 @@ test("MCP external payload refs store hashed tool call and result refs", async (
   config.storageMode = "external_payload_ref";
   config.kms = kms;
   config.objectStore = objectStore;
-  const proxy = createReceiptedMcpProxy(config, { serverUrl: "https://mcp.test" });
+  const proxy = createReceiptedMcpProxy(config, { serverUrl: "https://mcp.test", authorization: testAuthorization() });
 
   const result = await proxy.callTool(
     { name: "search", arguments: { topic: "placeholder" } },

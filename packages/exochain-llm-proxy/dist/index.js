@@ -14,5 +14,10 @@ export { ReceiptEmissionError, emitUsageReceipt, receiptPendingFromError, resolv
 export { encodeReceiptIntentForWire } from "./wire.js";
 export { LYNK_RECEIPT_RESPONSE_ATTESTATION_DOMAIN, LYNK_RECEIPT_RESPONSE_ATTESTATION_SCHEMA_VERSION, encodeLynkReceiptResponseAttestationPayload, verifyLynkReceiptResponseAttestation, } from "./attestation.js";
 export { createReceiptedOpenAIClient, createReceiptedOpenAIProxy, parseSseStream, usageFromChatCompletions, usageFromResponses, } from "./openai.js";
-export { createReceiptedMcpProxy } from "./mcp.js";
+export { createReceiptedMcpProxy, McpAuthorizationError } from "./mcp.js";
+export { FileExecutionJournal } from "./execution-journal.js";
+export { createGovernedAgent } from "./agent.js";
+export { createLynkAgentModel } from "./agent-model.js";
+export { encodeAvcActionReceiptForWire } from "./wire.js";
+export { AVC_ACTION_RESPONSE_ATTESTATION_DOMAIN, encodeAvcActionResponseAttestationPayload, verifyAvcActionResponseAttestation } from "./attestation.js";
 //# sourceMappingURL=index.js.map

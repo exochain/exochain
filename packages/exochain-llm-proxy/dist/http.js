@@ -17,21 +17,30 @@ export const MAX_CONFIGURED_REQUEST_TIMEOUT_MS = 300000;
 const TYPED_ARRAY_BYTE_LENGTH_GETTER = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), "byteLength")?.get;
 export async function fetchBoundedResponse(config, input, init, label) {
     const maxResponseBytes = configuredPositiveInteger("maxResponseBytes", config.maxResponseBytes, DEFAULT_MAX_RESPONSE_BYTES, MAX_CONFIGURED_RESPONSE_BYTES);
-    const requestTimeoutMs = configuredPositiveInteger("requestTimeoutMs", config.requestTimeoutMs, DEFAULT_REQUEST_TIMEOUT_MS, MAX_CONFIGURED_REQUEST_TIMEOUT_MS);
     const fetchImpl = resolveFetch(config.fetch);
+    return withRequestDeadline(config, init.signal, label, async (signal, requestTimeoutMs) => {
+        const response = await fetchImpl(input, { ...init, signal });
+        const body = await readBoundedBody(response, maxResponseBytes, signal, label, requestTimeoutMs);
+        return { response, body, text: new TextDecoder().decode(body) };
+    });
+}
+/** Applies the same deadline and host cancellation to signing, storage and acceptance hooks. */
+export async function withRequestDeadline(config, signal, label, operation) {
+    const requestTimeoutMs = configuredPositiveInteger("requestTimeoutMs", config.requestTimeoutMs, DEFAULT_REQUEST_TIMEOUT_MS, MAX_CONFIGURED_REQUEST_TIMEOUT_MS);
     const controller = new AbortController();
+    const cancel = () => controller.abort();
+    if (signal?.aborted)
+        controller.abort();
+    signal?.addEventListener("abort", cancel, { once: true });
     const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
     try {
-        const response = await awaitWithAbort(fetchImpl(input, { ...init, signal: controller.signal }), controller.signal, label, requestTimeoutMs);
-        const body = await readBoundedBody(response, maxResponseBytes, controller.signal, label, requestTimeoutMs);
-        return {
-            response,
-            body,
-            text: new TextDecoder().decode(body),
-        };
+        if (controller.signal.aborted)
+            throw new LynkValidationError(`${label} cancelled before dispatch`);
+        return await awaitWithAbort(operation(controller.signal, requestTimeoutMs), controller.signal, label, requestTimeoutMs);
     }
     finally {
         clearTimeout(timeout);
+        signal?.removeEventListener("abort", cancel);
     }
 }
 export function parseBoundedJson(result, label) {
@@ -121,6 +130,9 @@ function intrinsicUint8ArrayByteLength(value) {
 }
 function awaitWithAbort(operation, signal, label, timeoutMs) {
     if (signal.aborted) {
+        // The operation can synchronously abort its caller before returning its
+        // promise. It has already started, so observe a later rejection as well.
+        void operation.catch(() => undefined);
         return Promise.reject(new LynkValidationError(`${label} timed out after ${timeoutMs} ms`));
     }
     return new Promise((resolve, reject) => {

@@ -236,10 +236,14 @@ test("receipt requests reject unpaired UTF-16 surrogates before transport", asyn
   }
 });
 
-test("receipt requests reject noncanonical raw JSON spelling before transport", async () => {
+test("receipt requests reject noncanonical raw JSON spelling before transport", async (context) => {
   const jsonWithRawValues = JSON as JSON & {
     rawJSON(value: string): unknown;
   };
+  if (typeof jsonWithRawValues.rawJSON !== "function") {
+    context.skip("This runtime cannot construct JSON.rawJSON values; Node 24 exercises this boundary.");
+    return;
+  }
   let calls = 0;
   const cfg = config(async () => {
     calls += 1;

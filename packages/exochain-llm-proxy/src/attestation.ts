@@ -16,6 +16,8 @@ import type { ReceiptEmitWireRequest } from "./wire.js";
 export const LYNK_RECEIPT_RESPONSE_ATTESTATION_DOMAIN =
   "exo.avc.lynk.receipt_response.attestation.v1";
 export const LYNK_RECEIPT_RESPONSE_ATTESTATION_SCHEMA_VERSION = 1;
+export const AVC_ACTION_RESPONSE_ATTESTATION_DOMAIN =
+  "exo.avc.action.receipt_response.attestation.v1";
 
 const ED25519: AlgorithmIdentifier = { name: "Ed25519" };
 const PUBLIC_KEY_HEX = /^[0-9a-f]{64}$/;
@@ -84,9 +86,25 @@ function assertUnicodeScalarString(value: string): void {
 export function encodeLynkReceiptResponseAttestationPayload(
   input: LynkReceiptResponseAttestationInput,
 ): Uint8Array {
+  return encodeResponseAttestationPayload(input, LYNK_RECEIPT_RESPONSE_ATTESTATION_DOMAIN);
+}
+
+export type AvcActionResponseAttestationInput =
+  Omit<LynkReceiptResponseAttestationInput, "request"> & { request: unknown };
+
+export function encodeAvcActionResponseAttestationPayload(
+  input: AvcActionResponseAttestationInput,
+): Uint8Array {
+  return encodeResponseAttestationPayload(input, AVC_ACTION_RESPONSE_ATTESTATION_DOMAIN);
+}
+
+function encodeResponseAttestationPayload(
+  input: AvcActionResponseAttestationInput,
+  domain: string,
+): Uint8Array {
   return encodeCanonicalCbor({
     decision: "Allow",
-    domain: LYNK_RECEIPT_RESPONSE_ATTESTATION_DOMAIN,
+    domain,
     exochain_finality: {
       hash: input.finalityHash,
       height: input.finalityHeight,
@@ -140,12 +158,28 @@ export async function verifyLynkReceiptResponseAttestation(
   input: LynkReceiptResponseAttestationInput,
   signature: number[],
 ): Promise<void> {
+  return verifyResponseSignature(config, input.validatorDid, signature,
+    encodeLynkReceiptResponseAttestationPayload(input));
+}
+
+export async function verifyAvcActionResponseAttestation(
+  config: LlmProxyConfig,
+  input: AvcActionResponseAttestationInput,
+  signature: number[],
+): Promise<void> {
+  return verifyResponseSignature(config, input.validatorDid, signature,
+    encodeAvcActionResponseAttestationPayload(input));
+}
+
+async function verifyResponseSignature(
+  config: LlmProxyConfig, validatorDid: string, signature: number[], payload: Uint8Array,
+): Promise<void> {
   const trustedDid = config.trustedValidatorDid;
   const trustedPublicKey = config.trustedValidatorPublicKey;
   if (typeof trustedDid !== "string" || !/^did:[a-z0-9]+:[^\s]+$/.test(trustedDid)) {
     throw new Error("LYNK receipt verification requires trustedValidatorDid");
   }
-  if (input.validatorDid !== trustedDid) {
+  if (validatorDid !== trustedDid) {
     throw new Error("LYNK receipt validator DID does not match the configured trust root");
   }
   if (
@@ -181,7 +215,6 @@ export async function verifyLynkReceiptResponseAttestation(
   } catch {
     throw new Error("trustedValidatorPublicKey is not a valid Ed25519 public key");
   }
-  const payload = encodeLynkReceiptResponseAttestationPayload(input);
   let verified: boolean;
   try {
     verified = await subtle.verify(
@@ -198,7 +231,7 @@ export async function verifyLynkReceiptResponseAttestation(
   }
 }
 
-function encodeCanonicalCbor(value: unknown): Uint8Array {
+export function encodeCanonicalCbor(value: unknown): Uint8Array {
   const output: number[] = [];
   appendCanonicalCbor(value, output);
   return Uint8Array.from(output);
@@ -228,7 +261,7 @@ function appendCanonicalCbor(value: unknown, output: number[]): void {
     assertUnicodeScalarString(value);
     const bytes = new TextEncoder().encode(value);
     appendTypeAndLength(3, bytes.length, output);
-    output.push(...bytes);
+    for (const byte of bytes) output.push(byte);
     return;
   }
   if (Array.isArray(value)) {
@@ -240,7 +273,15 @@ function appendCanonicalCbor(value: unknown, output: number[]): void {
   }
   if (typeof value === "object") {
     const record = value as JsonRecord;
-    const keys = Object.keys(record).sort();
+    // Rust sorts UTF-8 strings, not JavaScript UTF-16 code units.
+    const keys = Object.keys(record).sort((left, right) => {
+      const a = new TextEncoder().encode(left);
+      const b = new TextEncoder().encode(right);
+      for (let i = 0; i < Math.min(a.length, b.length); i += 1) {
+        if (a[i] !== b[i]) return a[i]! - b[i]!;
+      }
+      return a.length - b.length;
+    });
     appendTypeAndLength(5, keys.length, output);
     for (const key of keys) {
       assertUnicodeScalarString(key);

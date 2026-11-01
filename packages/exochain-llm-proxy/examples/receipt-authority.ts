@@ -12,6 +12,7 @@ export type ReceiptAuthority = Pick<
   | "validation"
   | "subjectSignature"
   | "subjectPublicKey"
+  | "prepareReceipt"
   | "adapterSignature"
   | "adapterPublicKey"
 > & Required<Pick<

@@ -39,7 +39,8 @@ LLM_DIST_PROFILE = "llm-dist"
 LLM_DIST_FILES = tuple(
     f"{stem}{suffix}"
     for stem in (
-        "attestation", "cli", "delivery", "evidence", "http", "index",
+        "action-authorization", "agent", "agent-model", "agent-types",
+        "attestation", "cli", "delivery", "evidence", "execution-journal", "http", "index",
         "mcp", "openai", "receipt", "types", "wire",
     )
     for suffix in (".d.ts", ".d.ts.map", ".js", ".js.map")

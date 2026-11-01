@@ -44,6 +44,14 @@ export {
   usageFromChatCompletions,
   usageFromResponses,
 } from "./openai.js";
-export { createReceiptedMcpProxy } from "./mcp.js";
+export { createReceiptedMcpProxy, McpAuthorizationError } from "./mcp.js";
+export { FileExecutionJournal } from "./execution-journal.js";
+export { createGovernedAgent } from "./agent.js";
+export { createLynkAgentModel } from "./agent-model.js";
+export type { LynkAgentModel } from "./agent-model.js";
+export type * from "./agent-types.js";
+export { encodeAvcActionReceiptForWire } from "./wire.js";
+export { AVC_ACTION_RESPONSE_ATTESTATION_DOMAIN,
+  encodeAvcActionResponseAttestationPayload, verifyAvcActionResponseAttestation } from "./attestation.js";
 export type * from "./types.js";
 export type * from "./wire.js";
