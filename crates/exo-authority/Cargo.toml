@@ -34,8 +34,8 @@ workspace = true
 
 [dependencies]
 ciborium = { workspace = true }
-exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.3.1" }
-exo-identity = { package = "exochain-identity", path = "../exo-identity", version = "=0.3.1" }
+exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.4.0" }
+exo-identity = { package = "exochain-identity", path = "../exo-identity", version = "=0.4.0" }
 serde = { workspace = true }
 blake3 = { workspace = true }
 thiserror = { workspace = true }

@@ -19,5 +19,5 @@ import { strictEqual } from 'node:assert/strict';
 import { PROTOCOL_VERSION } from '../src/index.js';
 
 test('PROTOCOL_VERSION is exported from package entry point', () => {
-  strictEqual(PROTOCOL_VERSION, '0.3.1');
+  strictEqual(PROTOCOL_VERSION, '0.4.0');
 });

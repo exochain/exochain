@@ -35,7 +35,7 @@ MAJOR.MINOR.PATCH
 The workspace version is set in `Cargo.toml`:
 ```toml
 [workspace.package]
-version = "0.3.1"
+version = "0.4.0"
 ```
 
 GitHub Release `v0.2.7` was published at `2026-10-08T17:28:52Z` (release id
@@ -58,6 +58,11 @@ and npm E404 for both versioned npm packages; `0.2.4` provider controls were
 reachable. These checks are a dated snapshot, not a current publication claim.
 Workspace version alignment is not evidence of a tag, GitHub
 Release, registry publication, deployment, or live runtime activation.
+
+The 0.4.0 workspace is an unpublished candidate for the intentional production
+MCP authorization API change in PR #891. The pre-1.0 minor increment does not
+change constitutional invariants. Deploy the attestation-capable node before
+migrating callers; see `packages/exochain-llm-proxy/README.md`.
 
 ## Release Process
 

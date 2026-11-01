@@ -23,6 +23,21 @@ All notable changes to EXOCHAIN will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - Unreleased
+
+### Changed
+
+- Production MCP callers must supply exact-action authorization and a shared
+  durable execution journal before dispatch (PR #891). Deploy the updated node
+  before upgrading callers; unknown AVC request fields now fail closed.
+- Add bounded planner/reviewer agents with host-verified completion, independent
+  identities, receipted observations and terminal escalation.
+- Parallelize independent constitutional CI jobs and produce commit-bound release
+  readiness evidence. Publication still requires signed tags and both protected
+  environments.
+- Align first-party Rust, npm and Python package versions at 0.4.0 without
+  upgrading third-party dependencies. This entry does not claim publication.
+
 ## [0.3.1] - 2026-10-23
 
 Workspace, pins, locks, SDKs, WASM, LYNK, and protocol constants move from
