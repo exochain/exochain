@@ -70,6 +70,15 @@ ignore = [
     # it is an internal dependency of the vendored verifier crate graph, not
     # a logging sink this workspace configures or writes to.
     { id = "RUSTSEC-2025-0055", reason = "tracing-subscriber 0.2.25 ANSI-injection advisory concerns logging untrusted input to a terminal; pulled transitively via risc0-zkvm's arkworks-internal tracing instrumentation, not used by EXOCHAIN for untrusted-input logging" },
+
+    # pin-utils 0.1.0. Unmaintained only, not a vulnerability.
+    # Transitive via hyper 1.8.1 (axum 0.7.9, axum 0.8.8, axum-server 0.8.0,
+    # hyper-rustls 0.27.7, hyper-util 0.1.20, reqwest 0.12.28). The advisory
+    # database id is RUSTSEC-0000-0000 (informational = unmaintained, patched = []).
+    # cargo-deny 0.19.2 can scope an advisory ignore by id only. Tracked for
+    # removal when hyper and its dependents no longer pull pin-utils.
+    # https://github.com/exochain/exochain/issues/894
+    { id = "RUSTSEC-0000-0000", reason = "pin-utils 0.1.0 unmaintained-only via hyper 1.8.1 -> axum/axum-server/hyper-rustls/hyper-util/reqwest; not a vulnerability; https://github.com/exochain/exochain/issues/894" },
 ]
 
 # ---------------------------------------------------------------------------
