@@ -17,14 +17,8 @@
 import Link from 'next/link';
 import { Logo } from './Logo';
 import { Pill } from '../ui/Pill';
-import {
-  CORE_LICENSE,
-  LEGAL_EMAIL,
-  LEGAL_ENTITY,
-  NORMATIVE_SPEC,
-  PRODUCT_CHANNEL,
-  RELEASE_VERSION,
-} from '@/lib/public-site';
+import { loadPublicStatus } from '@/lib/public-status';
+import { CORE_LICENSE, LEGAL_EMAIL, LEGAL_ENTITY } from '@/lib/public-site';
 
 const cols = [
   {
@@ -75,6 +69,7 @@ const cols = [
 ];
 
 export function PublicFooter() {
+  const publicStatus = loadPublicStatus();
   return (
     <footer className="mt-24 border-t hairline">
       <div className="max-w-page mx-auto px-6 md:px-10 py-12 grid gap-10 md:grid-cols-5">
@@ -85,10 +80,10 @@ export function PublicFooter() {
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
             <Pill tone="neutral" className="border border-brand-charter/40 bg-brand-charter/10 text-brand-vault">
-              {PRODUCT_CHANNEL} {RELEASE_VERSION}
+              {publicStatus.maturity} v{publicStatus.publication.version}
             </Pill>
             <Pill tone="neutral" className="border border-brand-signal/25 bg-brand-signal/10 text-brand-cerulean">
-              spec {NORMATIVE_SPEC}
+              spec v{publicStatus.spec.normative_version}
             </Pill>
           </div>
           <p className="mt-4 text-xs text-brand-midnight/70 dark:text-brand-white/65">
@@ -125,10 +120,12 @@ export function PublicFooter() {
             © {new Date().getFullYear()} {LEGAL_ENTITY}. Core software is {CORE_LICENSE}.
           </div>
           <div className="max-w-xl text-right">
-            EXOCHAIN is in beta ({RELEASE_VERSION}, 0.x), not general availability.
-            The public API may change between minor versions. The same pages are
-            served at exochain.com, exochain.ai, and exochain.net. Canonical URLs
-            use https://exochain.com.
+            {publicStatus.maturity_summary}{' '}
+            <Link href="/status" className="underline">
+              Publication and deployment scope
+            </Link>.
+            {' '}The same pages are served at exochain.com, exochain.ai, and
+            exochain.net. Canonical URLs use https://exochain.com.
           </div>
         </div>
       </div>

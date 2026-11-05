@@ -21,23 +21,20 @@ import { Pre } from '@/components/ui/Code';
 import { Pill } from '@/components/ui/Pill';
 import { LinkButton } from '@/components/ui/Button';
 import { Disclaimer } from '@/components/ui/Disclaimer';
-import { IllustrativeCalls } from '@/components/commercial/IllustrativeCalls';
 import { PilotBanner } from '@/components/commercial/PilotBanner';
-import { publicMetadata, RELEASE_VERSION } from '@/lib/public-site';
+import { publicMetadata } from '@/lib/public-site';
+import { loadPublicStatus } from '@/lib/public-status';
 
 export const metadata = publicMetadata({
   title: 'Developers',
   description:
-    'The intended EXOCHAIN developer experience is two calls: verify delegated authority, then attest the outcome. The verify and attest snippet is illustrative API design, not the current SDK.',
+    'Integrate EXOCHAIN at the agent action boundary with the documented SDK, gateway discovery, authority controls, and verifiable receipt evidence.',
   path: '/developers',
 });
 
-const CURRENT_SDK = `import { ExochainClient, PROTOCOL_VERSION } from '@exochain/sdk';
+const CURRENT_SDK = `import { ExochainClient } from '@exochain/sdk';
 
-// PROTOCOL_VERSION in the ${RELEASE_VERSION} TypeScript SDK is "0.2.7".
-// Namespaces on ExochainClient: identity, consent, governance, authority, economy.
-// discover() and health() are real methods. verify() and attest() are not.
-
+// Use the gateway URL supplied by your deployment operator.
 const client = new ExochainClient({
   baseUrl: 'https://gateway.example',
 });
@@ -46,33 +43,27 @@ const discovery = await client.discover();
 const health = await client.health();`;
 
 export default function DevelopersPage() {
+  const publicStatus = loadPublicStatus();
+
   return (
     <>
       <Section className="pt-16 pb-8">
         <Eyebrow>Developers</Eyebrow>
-        <H1 className="mt-3">Two calls. Verify authority. Produce evidence.</H1>
+        <H1 className="mt-3">Build accountable agent workflows.</H1>
         <Lede className="mt-5 max-w-prose">
-          Adoption has to stay small even when the platform is not. The
-          intended developer experience is to verify that a proposed action
-          sits inside delegated authority, then attest the decision and its
-          outcome.
+          Connect the systems your agents already use to delegated authority,
+          consent, policy enforcement, and verifiable outcomes. Start with
+          discovery, then integrate the controls at the boundary where your
+          application executes an action.
         </Lede>
         <div className="mt-6 flex flex-wrap gap-2">
-          <Pill tone="signal">beta {RELEASE_VERSION}</Pill>
-          <Pill tone="unstable">illustrative API</Pill>
+          <Pill tone="signal">{publicStatus.maturity} v{publicStatus.publication.version}</Pill>
           <Pill tone="neutral">Apache-2.0 core</Pill>
         </div>
       </Section>
 
       <Section className="py-8">
-        <H2>Target shape</H2>
-        <div className="mt-6">
-          <IllustrativeCalls />
-        </div>
-      </Section>
-
-      <Section className="py-8">
-        <H2>What has to be true around those two calls</H2>
+        <H2>Build around the enforcement boundary</H2>
         <div className="mt-6 grid md:grid-cols-2 gap-4">
           {[
             ['Freshness and revocation', 'A stale or revoked delegation fails closed before the action runs.'],
@@ -91,14 +82,16 @@ export default function DevelopersPage() {
       </Section>
 
       <Section className="py-8">
-        <H2>Current SDK</H2>
+        <H2>Start with the documented SDK</H2>
         <Lede className="mt-4 max-w-prose">
-          The repository ships Rust, TypeScript, and Python SDKs at {RELEASE_VERSION}.
-          The TypeScript client below is the current surface. It does not
-          implement the illustrative verify and attest calls.
+          The TypeScript client exposes discovery and health methods. This
+          example reads the configured gateway; authorization and receipt
+          emission require the corresponding APIs and deployment credentials.
+          Select package versions from the{' '}
+          <a href={publicStatus.publication.github_url} className="underline">published release record</a>.
         </Lede>
         <div className="mt-6">
-          <Pre caption="Current TypeScript SDK — ExochainClient in @exochain/sdk 0.2.7">
+          <Pre caption="TypeScript SDK — gateway discovery and health">
             {CURRENT_SDK}
           </Pre>
           <div className="mt-4">
@@ -109,6 +102,13 @@ export default function DevelopersPage() {
             </Disclaimer>
           </div>
         </div>
+        <p className="mt-4 text-sm">
+          <a href="https://github.com/exochain/exochain/tree/main/packages/exochain-sdk" className="underline">
+            TypeScript SDK source and usage
+          </a>
+          {' · '}
+          <Link href="/status" className="underline">Release scope and capability boundaries</Link>
+        </p>
       </Section>
 
       <Section className="py-8">
@@ -178,8 +178,8 @@ export default function DevelopersPage() {
                   </Link>
                 </li>
                 <li>
-                  <Link href="/contact#pilot" className="underline">
-                    Design-partner pilot
+                  <Link href="/contact#deployment" className="underline">
+                    Enterprise deployment
                   </Link>
                 </li>
               </ul>

@@ -14,8 +14,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import Link from 'next/link';
 import { Section, Eyebrow, H1 } from '@/components/ui/Section';
 import { Disclaimer } from '@/components/ui/Disclaimer';
+import { loadPublicStatus } from '@/lib/public-status';
 import { publicMetadata } from '@/lib/public-site';
 
 export const metadata = publicMetadata({
@@ -25,6 +27,7 @@ export const metadata = publicMetadata({
 });
 
 export default function Page() {
+  const publicStatus = loadPublicStatus();
   return (
     <Section className="py-12 max-w-prose">
       <Eyebrow>Legal</Eyebrow>
@@ -34,13 +37,14 @@ export default function Page() {
           This is a v0 placeholder. Counsel will review and finalize before
           public launch.
         </Disclaimer>
-        <h2>Beta</h2>
+        <h2>Release status</h2>
         <p>
-          EXOCHAIN is in beta (0.x, published v0.2.7), not general availability.
-          The public API may change between minor versions. Use of the
-          protocol, the public site, and the authenticated surfaces is
-          subject to change without notice. These terms are published by
-          EXOCHAIN PBC. Legal notices: legal@exochain.com.
+          {publicStatus.maturity_summary}{' '}
+          See <Link href="/status">public status</Link> for the publication record
+          for v{publicStatus.publication.version} and current capability
+          boundaries. Use of the protocol, the public site, and the authenticated
+          surfaces is subject to change without notice. These terms are published
+          by EXOCHAIN PBC. Legal notices: legal@exochain.com.
         </p>
         <h2>No advice</h2>
         <p>

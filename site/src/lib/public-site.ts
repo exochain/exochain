@@ -31,17 +31,14 @@ export const MIRROR_ORIGINS = ['https://exochain.ai', 'https://exochain.net'] as
 export const LEGAL_ENTITY = 'EXOCHAIN PBC';
 export const LEGAL_EMAIL = 'legal@exochain.com';
 
-export const PRODUCT_CHANNEL = 'beta';
-export const RELEASE_VERSION = 'v0.2.7';
-export const NORMATIVE_SPEC = 'v2.2';
 export const CORE_LICENSE = 'Apache-2.0';
 
 export const SITE_NAME = 'EXOCHAIN';
 
-export const SITE_TITLE = 'EXOCHAIN — Proven Agentic Action Authority';
+export const SITE_TITLE = 'EXOCHAIN — Accountable Autonomous Commerce';
 
 export const SITE_DESCRIPTION =
-  'Every agent action carries proof of who authorized it, the limits it ran under, and AI guarding with an E-STOP that fails closed.';
+  'The trust fabric for autonomous commerce. Connect agent identity, delegated authority, commercial agreements, payments, and verifiable outcomes across organizational boundaries.';
 
 export function canonicalUrl(path: string): string {
   const normalized = path.startsWith('/') ? path : `/${path}`;

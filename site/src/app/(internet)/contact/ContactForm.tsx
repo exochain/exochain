@@ -101,7 +101,10 @@ export function ContactForm() {
           name="role"
           className="mt-1 w-full border hairline rounded-sm px-3 py-2 bg-transparent"
         >
-          <option>Design-partner pilot</option>
+          <option>Enterprise deployment</option>
+          <option>Platform integration</option>
+          <option>Focused pilot</option>
+          <option>Assurance provider</option>
           <option>Developer</option>
           <option>Enterprise / Buyer</option>
           <option>Validator / Node Operator</option>

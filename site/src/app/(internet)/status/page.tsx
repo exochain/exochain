@@ -23,7 +23,7 @@ import { publicMetadata } from '@/lib/public-site';
 export const metadata = publicMetadata({
   title: 'Status',
   description:
-    'Published EXOCHAIN v0.2.7 beta status. The page records the release snapshot and does not invent network metrics.',
+    'EXOCHAIN publication status, release evidence, capability boundaries, and a same-origin gateway probe.',
   path: '/status',
 });
 
