@@ -193,6 +193,7 @@ requires maintainer confirmation against `EXOCHAIN_Specification_v2.2.pdf`.
 | **AVC-008** | Node API: issue, validate, delegate, revoke, get, list per subject | `exo-node::avc` | `crates/exo-node/src/avc.rs` (mod tests) | 🟢 |
 | **AVC-009** | SDK re-exports for Rust consumers | `exochain-sdk::avc` | `crates/exochain-sdk/src/avc.rs` | 🟢 |
 | **AVC-010** | Trust validation independent of pricing/payment state | cross-layer | `crates/exo-avc/src/validation.rs::validation_does_not_consult_payment_state` | 🟢 |
+| **AVC-011** | Offline receipt verification (level 3, #910): signatures over stored bytes, chain inclusion under a signed tree head, `did:exo` key-bundle identity, RFC 3161 time | `exochain-verify` | `crates/exo-verify/tests/offline_fixture.rs`; `crates/exo-verify/src/{inclusion,key_bundle,rfc3161}.rs` (mod tests) | 🟢 |
 
 ## Custody-Native Economy Layer (zero-priced launch)
 

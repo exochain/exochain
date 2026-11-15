@@ -57,7 +57,7 @@ The `v0.2.7` GitHub Release states that each native archive contains 29 legacy `
 - **Clippy clean** under `-D warnings` for all workspace targets
 - **Format clean** under `cargo +nightly-2026-09-21 fmt --all -- --check`
 - **23 numbered CI quality gates** plus the required "All Constitutional Gates" aggregator are defined; workflow runs report their status, while merge enforcement depends on current GitHub ruleset or branch-protection settings
-- **Traceability matrix** maps 119 requirements — see `governance/traceability_matrix.md`
+- **Traceability matrix** maps 120 requirements — see `governance/traceability_matrix.md`
 - **Threat model** covers 17 threats tracked: 17 implemented, 0 partial, 0 planned — see `governance/threat_matrix.md`
 - **Constitutional invariants** are enforced in the tested gatekeeper and decision-forum adjudication paths
 - **No floating-point arithmetic** — denied workspace-wide via `#[deny(clippy::float_arithmetic)]`
@@ -261,7 +261,7 @@ This repository is managed under strict **Judicial Build Governance**. All contr
 
 ### Key Governance Artifacts
 
-* [Traceability Matrix](governance/traceability_matrix.md) — 119 requirements tracked
+* [Traceability Matrix](governance/traceability_matrix.md) — 120 requirements tracked
 * [Threat Model](governance/threat_matrix.md) — 17 tracked: 17 implemented, 0 partial, 0 planned
 * [Quality Gates](governance/quality_gates.md) — 23 numbered CI gates plus required aggregator
 * [Sub-Agent Charters](governance/sub_agents.md) — 11 agent charters documented
