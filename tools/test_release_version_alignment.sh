@@ -198,11 +198,11 @@ for manifest_path in all_manifests:
         tomllib.loads(manifest_path.read_text(encoding="utf-8")),
     )
 
-if first_party_pin_count != 158:
-    fail(f"found {first_party_pin_count} exact first-party dependency pins, expected 158")
+if first_party_pin_count != 164:
+    fail(f"found {first_party_pin_count} exact first-party dependency pins, expected 164")
 
 expected_lock_counts = {
-    "Cargo.lock": 32,
+    "Cargo.lock": 33,
     "crates/exo-cgr-methods/guest/Cargo.lock": 16,
     "fuzz/Cargo.lock": 5,
 }
@@ -457,15 +457,49 @@ inventory = re.search(
     r"<!-- rust-retirement-inventory:start -->\s*```text\s*(.*?)\s*```\s*"
     r"<!-- rust-retirement-inventory:end -->", rc, re.S
 )
-expected_retirement_crates = sorted(
-    tomllib.loads(read(f"{member}/Cargo.toml"))["package"]["name"]
-    for member in workspace_members
-)
+# The v0.2.6 retirement record is historical: it names the 32 Rust packages
+# that existed at v0.2.6. Crates added later (for example exochain-verify) are
+# not part of that record, so the inventory is pinned here, not derived from
+# the current workspace.
+expected_retirement_crates = [
+    "exochain-api",
+    "exochain-authority",
+    "exochain-avc",
+    "exochain-catapult",
+    "exochain-consensus",
+    "exochain-consent",
+    "exochain-core",
+    "exochain-dag",
+    "exochain-dag-db-api",
+    "exochain-dag-db-core",
+    "exochain-dag-db-domain",
+    "exochain-dag-db-exchange",
+    "exochain-dag-db-graph",
+    "exochain-dag-db-lab",
+    "exochain-dag-db-postgres",
+    "exochain-dag-db-retrieval",
+    "exochain-decision-forum",
+    "exochain-economy",
+    "exochain-escalation",
+    "exochain-gatekeeper",
+    "exochain-gateway",
+    "exochain-governance",
+    "exochain-identity",
+    "exochain-legal",
+    "exochain-messaging",
+    "exochain-node",
+    "exochain-pdp",
+    "exochain-proofs",
+    "exochain-root",
+    "exochain-sdk",
+    "exochain-tenant",
+    "exochain-wasm",
+]
 require_documentation(
     inventory is not None
     and inventory.group(1).split() == expected_retirement_crates
     and len(expected_retirement_crates) == 32,
-    "retirement inventory must enumerate exactly the 32 workspace Rust packages",
+    "retirement inventory must enumerate exactly the 32 v0.2.6 Rust packages",
 )
 require_documentation(
     all(name in rc for name in ("@exochain/exochain-wasm", "@exochain/llm-proxy", "@exochain/sdk"))

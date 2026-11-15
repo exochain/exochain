@@ -78,8 +78,8 @@ def validate_names(profile: str, names: list[str]) -> tuple[str, ...]:
         if names != expected:
             fail(f"{profile} transport must contain exactly {expected[0]}")
     elif profile == SBOM_PROFILE:
-        if len(names) != 32:
-            fail("raw SBOM transport must contain exactly 32 files")
+        if len(names) != 33:
+            fail("raw SBOM transport must contain exactly 33 files")
         if any(SBOM_NAME.fullmatch(name) is None for name in names):
             fail("raw SBOM transport contains an invalid file name")
     elif names != sorted(LLM_DIST_FILES):

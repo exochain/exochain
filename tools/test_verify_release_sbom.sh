@@ -66,8 +66,8 @@ while IFS= read -r -d '' raw_file; do
     || fail "cargo-cyclonedx produced duplicate flat SBOM names"
   /bin/cp -- "$raw_file" "$raw_root/$raw_name"
 done < <(/usr/bin/find "$source_root/crates" -type f -name '*.cdx.json' -print0 | /usr/bin/sort -z)
-[ "$(/usr/bin/find "$raw_root" -mindepth 1 -maxdepth 1 -type f | /usr/bin/wc -l | /usr/bin/tr -d ' ')" -eq 32 ] \
-  || fail "cargo-cyclonedx did not produce exactly 32 flat raw SBOMs"
+[ "$(/usr/bin/find "$raw_root" -mindepth 1 -maxdepth 1 -type f | /usr/bin/wc -l | /usr/bin/tr -d ' ')" -eq 33 ] \
+  || fail "cargo-cyclonedx did not produce exactly 33 flat raw SBOMs"
 
 run_validator() {
   local input_dir="$1"
@@ -89,11 +89,12 @@ canonical_one="$test_root/canonical-one"
 canonical_two="$test_root/canonical-two"
 digest_one="$(run_validator "$raw_root" "$metadata_file" "$lock_file" "$canonical_one")"
 digest_two="$(run_validator "$raw_root" "$metadata_file" "$lock_file" "$canonical_two")"
-# Regenerated from the committed 0.4.0 version-alignment corpus with
-# cargo-cyclonedx 0.5.9. Two independent canonical validations produced identical
-# bytes and digest. Only first-party package identities changed; third-party
-# Cargo.lock packages and dependency edges remain unchanged from 0.3.1.
-expected_digest=b1e79bc4aef94740a946263dac6a6f26270c90ada59c2420c98b80efa8f7791f
+# Regenerated with cargo-cyclonedx 0.5.9 after adding the exochain-verify
+# crate (33 workspace crates). Two independent canonical validations produced
+# identical bytes and digest. The change is the new first-party package and
+# its dependency edges (RFC 3161 crates moved from exochain-node to
+# exochain-verify); no new third-party package entered Cargo.lock.
+expected_digest=6625c1e752af2137a9adb2aea5546c71c2fd34b2b68c742d8f42292e6443f422
 [ "$digest_one" = "$expected_digest" ] && [ "$digest_two" = "$expected_digest" ] \
   || fail "exact cargo-cyclonedx 0.5.9 corpus did not produce the reviewed canonical digest"
 /usr/bin/diff -ru "$canonical_one" "$canonical_two" >/dev/null \
@@ -106,8 +107,8 @@ import sys
 
 root = pathlib.Path(sys.argv[1])
 files = sorted(root.iterdir())
-if len(files) != 32:
-    raise SystemExit("canonical inventory is not exactly 32 files")
+if len(files) != 33:
+    raise SystemExit("canonical inventory is not exactly 33 files")
 for path in files:
     payload = path.read_bytes()
     if not payload.endswith(b"\n") or payload.count(b"\n") != 1:
