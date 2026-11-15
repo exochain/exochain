@@ -29,7 +29,14 @@
 
 pub mod error;
 pub mod inclusion;
+pub mod key_bundle;
 pub mod rfc3161;
+pub mod verify;
 
 pub use error::VerifyError;
 pub use inclusion::{AVC_RECEIPT_TREE_HEAD_DOMAIN, ReceiptInclusionProof, ReceiptTreeHead};
+pub use key_bundle::{KEY_BUNDLE_FORMAT_V1, KeyBundle, KeyBundleEntry, KeyRole};
+pub use verify::{
+    RECEIPT_BUNDLE_FORMAT_V1, ReceiptBundle, TrustInputs, TsaTrust, VerifiedReceipt,
+    verify_receipt_bundle,
+};

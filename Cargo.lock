@@ -2445,6 +2445,7 @@ dependencies = [
  "cms",
  "const-oid 0.10.2",
  "der 0.8.2",
+ "exochain-authority",
  "exochain-avc",
  "exochain-core",
  "exochain-dag",

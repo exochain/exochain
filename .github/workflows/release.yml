@@ -5321,7 +5321,7 @@ jobs:
               "exochain-gatekeeper", "exochain-gateway", "exochain-governance",
               "exochain-identity", "exochain-legal", "exochain-messaging", "exochain-node",
               "exochain-pdp", "exochain-proofs", "exochain-root", "exochain-sdk",
-              "exochain-tenant", "exochain-wasm",
+              "exochain-tenant", "exochain-verify", "exochain-wasm",
           )
           expected = {
               f"archives/{target}/exochain-{version}-{target}.tar.gz"

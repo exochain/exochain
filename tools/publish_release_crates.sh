@@ -702,6 +702,7 @@ CRATES=(
   exochain-authority
   exochain-pdp
   exochain-avc
+  exochain-verify
   exochain-consent
   exochain-dag-db-core
   exochain-dag-db-graph

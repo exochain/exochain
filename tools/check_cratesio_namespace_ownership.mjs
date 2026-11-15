@@ -22,6 +22,7 @@ const CANONICAL_CRATES = Object.freeze([
   "exochain-authority",
   "exochain-pdp",
   "exochain-avc",
+  "exochain-verify",
   "exochain-consent",
   "exochain-dag-db-core",
   "exochain-dag-db-graph",

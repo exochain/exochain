@@ -8025,6 +8025,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn operator_signed_timestamps_do_not_satisfy_offline_verification() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(Mutex::new(
+            crate::store::SqliteDagStore::open(dir.path()).unwrap(),
+        ));
+        let state = fresh_state_with_finality_store(store);
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(baseline_credential())
+            .unwrap();
+        let emitted = emit_action_for_inclusion(&state, 0x81).await;
+        let entry = |did: &str, key: PublicKey, role| exo_verify::KeyBundleEntry {
+            did: Did::new(did).unwrap(),
+            public_key: key,
+            roles: vec![role],
+            valid_from: None,
+            valid_until: None,
+        };
+        let trust = exo_verify::TrustInputs {
+            key_bundle: exo_verify::KeyBundle {
+                format: exo_verify::KEY_BUNDLE_FORMAT_V1.into(),
+                version: 1,
+                keys: vec![
+                    entry(
+                        "did:exo:agent",
+                        subject_keypair().public,
+                        exo_verify::KeyRole::Agent,
+                    ),
+                    entry(
+                        "did:exo:validator",
+                        validator_keypair().public,
+                        exo_verify::KeyRole::Validator,
+                    ),
+                ],
+            },
+            tsa: exo_verify::TsaTrust {
+                signer_spki_der_hex: vec!["00".into()],
+                issuing_ca_spki_der_hex: Vec::new(),
+            },
+        };
+        let bundle = exo_verify::ReceiptBundle {
+            format: exo_verify::RECEIPT_BUNDLE_FORMAT_V1.into(),
+            receipt: emitted.receipt,
+            inclusion_proof: emitted.receipt_inclusion.unwrap(),
+        };
+        // The test node timestamps with an operator Ed25519 authority. That
+        // proves identity and chain position, but it is not RFC 3161 time.
+        assert!(matches!(
+            exo_verify::verify_receipt_bundle(&bundle, &trust),
+            Err(exo_verify::VerifyError::TimestampNotRfc3161 { .. })
+        ));
+    }
+
+    #[tokio::test]
     async fn receipt_proof_endpoint_reports_missing_receipt() {
         let response = avc_router(fresh_state())
             .oneshot(
