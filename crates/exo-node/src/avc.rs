@@ -75,11 +75,13 @@ use exo_avc::{
     AvcReasonCode, AvcReceiptEvidenceSubject, AvcReceiptExternalTimestampProof,
     AvcReceiptRfc3161TimestampProof, AvcReceiptRfc3161TrustAnchorKind,
     AvcReceiptTimestampProvenance, AvcRegistryDurableState, AvcRegistryRead, AvcRegistryWrite,
-    AvcRevocation, AvcTrustReceipt, AvcTrustReceiptEvidence, AvcValidationRequest,
-    AvcValidationResult, InMemoryAvcRegistry, LivesafePublicAdapterOutputAuthorizationDraft,
+    AvcRevocation, AvcSubjectAttestation, AvcTrustReceipt, AvcTrustReceiptEvidence,
+    AvcValidationRequest, AvcValidationResult, InMemoryAvcRegistry,
+    LivesafePublicAdapterOutputAuthorizationDraft,
     LivesafePublicAdapterOutputAuthorizationEnvelope, LlmUsageEvidenceEnvelope,
     avc_action_commitment_hash, avc_action_descriptor_hash, avc_action_signature_payload,
-    avc_llm_usage_action_request, create_trust_receipt_with_evidence, delegate_avc,
+    avc_llm_usage_action_request, create_trust_receipt_with_evidence,
+    create_trust_receipt_with_subject_attestation, delegate_avc,
     livesafe_public_adapter_output_authorization_action_commitment_hash,
     livesafe_public_adapter_output_authorization_action_request,
     livesafe_public_adapter_output_authorization_idempotency_hash,
@@ -3743,12 +3745,15 @@ fn resolve_did_public_key(
     Ok(public_key)
 }
 
+/// Verify the subject's action signature and return the verified
+/// attestation, including the exact bytes the subject signed, so the
+/// receipt can preserve it (issue #897).
 fn verify_subject_action_signature(
     registry: &InMemoryAvcRegistry,
     request: &AvcValidationRequest,
     subject_signature: &Signature,
     subject_public_key: Option<PublicKey>,
-) -> ApiResult<()> {
+) -> ApiResult<AvcSubjectAttestation> {
     if subject_signature.is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -3765,7 +3770,13 @@ fn verify_subject_action_signature(
             "subject action signature is invalid".into(),
         ));
     }
-    Ok(())
+    Ok(AvcSubjectAttestation {
+        subject_did: action.actor_did.clone(),
+        subject_public_key: public_key,
+        subject_signature: subject_signature.clone(),
+        validation_now: request.now,
+        signed_bytes: payload,
+    })
 }
 
 fn verify_llm_usage_evidence_signature(
@@ -4016,7 +4027,7 @@ async fn handle_emit_receipt(
         state_for_registry,
         move |registry, allow_anchors| {
             let credential_id = require_registered_credential(registry, &submitted_request)?;
-            verify_subject_action_signature(
+            let subject_attestation = verify_subject_action_signature(
                 registry,
                 &submitted_request,
                 &subject_signature,
@@ -4066,7 +4077,7 @@ async fn handle_emit_receipt(
                     "AVC receipt chain advanced during external timestamp attestation".into(),
                 ));
             }
-            let receipt = create_trust_receipt_with_evidence(
+            let receipt = create_trust_receipt_with_subject_attestation(
                 &validation,
                 Some(action_id),
                 AvcTrustReceiptEvidence {
@@ -4078,6 +4089,7 @@ async fn handle_emit_receipt(
                     timestamp_provenance: Some(timestamp_evidence.provenance),
                     external_timestamp_proof: timestamp_evidence.external_timestamp_proof,
                 },
+                subject_attestation,
                 validator_did.clone(),
                 trusted_now,
                 |bytes| (receipt_signer)(bytes),
@@ -4226,7 +4238,7 @@ async fn handle_llm_usage_emit_receipt(
                 &adapter_signature,
                 adapter_public_key,
             )?;
-            verify_subject_action_signature(
+            let subject_attestation = verify_subject_action_signature(
                 registry,
                 &submitted_request,
                 &subject_signature,
@@ -4276,7 +4288,7 @@ async fn handle_llm_usage_emit_receipt(
                     "AVC receipt chain advanced during external timestamp attestation".into(),
                 ));
             }
-            let receipt = create_trust_receipt_with_evidence(
+            let receipt = create_trust_receipt_with_subject_attestation(
                 &validation,
                 Some(action_id),
                 AvcTrustReceiptEvidence {
@@ -4288,6 +4300,7 @@ async fn handle_llm_usage_emit_receipt(
                     timestamp_provenance: Some(timestamp_evidence.provenance),
                     external_timestamp_proof: timestamp_evidence.external_timestamp_proof,
                 },
+                subject_attestation,
                 validator_did.clone(),
                 trusted_now,
                 |bytes| (receipt_signer)(bytes),
@@ -6766,6 +6779,8 @@ mod tests {
         ciborium::into_writer(&historical_payload, &mut historical_bytes).unwrap();
         receipt.receipt_id = Hash256::digest(&historical_bytes);
         receipt.signature = validator_keypair().sign(&historical_bytes);
+        // Receipts stored before issue #897 never carried their signed bytes.
+        receipt.signed_payload = None;
         let historical_id = receipt.receipt_id;
         let historical_signature = receipt.signature.clone();
 
@@ -7788,13 +7803,23 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         let response: serde_json::Value =
             serde_json::from_slice(&read_body(response).await).unwrap();
+        let generated = serde_json::json!({ "request": request, "response": response });
+        if std::env::var_os("EXO_UPDATE_LYNK_FIXTURES").is_some() {
+            let mut text = serde_json::to_string_pretty(&generated).unwrap();
+            text.push('\n');
+            std::fs::write(
+                concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/fixtures/lynk/rust_action_receipt_v1.json"
+                ),
+                text,
+            )
+            .unwrap();
+        }
         let fixture: serde_json::Value =
             serde_json::from_str(include_str!("../fixtures/lynk/rust_action_receipt_v1.json"))
                 .unwrap();
-        assert_eq!(
-            fixture,
-            serde_json::json!({ "request": request, "response": response })
-        );
+        assert_eq!(fixture, generated);
         let attestation = &response["action_response_attestation"];
         assert_eq!(
             attestation["domain"],

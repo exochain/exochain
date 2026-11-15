@@ -1867,7 +1867,9 @@ dependencies = [
  "ciborium",
  "exochain-authority",
  "exochain-core",
+ "hex",
  "serde",
+ "serde_json",
  "sha2",
  "thiserror 2.0.17",
 ]

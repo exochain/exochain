@@ -156,10 +156,12 @@ pub use public_output_authorization::{
 };
 pub use receipt::{
     AVC_RECEIPT_EVIDENCE_SUBJECT_DOMAIN, AVC_RECEIPT_EXTERNAL_TIMESTAMP_DOMAIN,
-    AVC_RECEIPT_SIGNING_DOMAIN, AvcReceiptEvidenceSubject, AvcReceiptExternalTimestampProof,
+    AVC_RECEIPT_SIGNING_DOMAIN, AVC_RECEIPT_SUBJECT_ATTESTED_SIGNING_DOMAIN,
+    AvcReceiptEvidenceSubject, AvcReceiptExternalTimestampProof,
     AvcReceiptExternalTimestampProofKind, AvcReceiptRfc3161TimestampProof,
-    AvcReceiptRfc3161TrustAnchorKind, AvcReceiptTimestampProvenance, AvcTrustReceipt,
-    AvcTrustReceiptEvidence, create_trust_receipt, create_trust_receipt_with_evidence,
+    AvcReceiptRfc3161TrustAnchorKind, AvcReceiptTimestampProvenance, AvcSubjectAttestation,
+    AvcTrustReceipt, AvcTrustReceiptEvidence, create_trust_receipt,
+    create_trust_receipt_with_evidence, create_trust_receipt_with_subject_attestation,
 };
 pub use registry::{
     AvcRegistryDurableState, AvcRegistryRead, AvcRegistryWrite, InMemoryAvcRegistry,
@@ -172,9 +174,10 @@ pub use validation::{
     AVC_ACTION_COMMITMENT_DOMAIN, AVC_ACTION_DESCRIPTOR_DOMAIN, AVC_ACTION_SIGNING_DOMAIN,
     AVC_HUMAN_APPROVAL_SIGNING_DOMAIN, AVC_LLM_USAGE_ACTION_NAME, AvcActionDescriptor,
     AvcActionRequest, AvcDecision, AvcHumanApproval, AvcReasonCode, AvcValidationRequest,
-    AvcValidationResult, avc_action_commitment_hash, avc_action_descriptor_hash,
-    avc_action_signature_payload, avc_llm_usage_action_request, human_approval_signature_payload,
-    validate_avc,
+    AvcValidationResult, DecodedAvcActionSignaturePayload, avc_action_commitment_hash,
+    avc_action_commitment_hash_for_credential_id, avc_action_descriptor_hash,
+    avc_action_signature_payload, avc_llm_usage_action_request,
+    decode_avc_action_signature_payload, human_approval_signature_payload, validate_avc,
 };
 
 /// All AVC signing domains as a sorted slice — used by hygiene tests
