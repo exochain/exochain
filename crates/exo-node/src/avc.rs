@@ -99,6 +99,7 @@ use exo_core::{
 };
 use exo_dag::dag::{DagNode, compute_node_hash};
 use exo_root::{RootSignature, RootTrustBundle, verify_root_bundle, verify_root_signature};
+use exo_verify::{ReceiptInclusionProof, ReceiptTreeHead};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use sqlx::{PgPool, Postgres, Row, Transaction};
@@ -958,6 +959,110 @@ fn build_exochain_finality_node_and_receipt(
     Ok((node, finality_receipt))
 }
 
+/// Append-only Merkle Mountain Range over receipt IDs in chain order.
+///
+/// The registry enforces a linear chain of extended receipts linked by
+/// `previous_receipt_hash`. The cache follows that chain from its head and
+/// appends only receipts it has not seen. If the head no longer descends
+/// from the cached tip (a terminal receipt was rolled back), it rebuilds.
+#[derive(Default)]
+struct ReceiptMmrCache {
+    leaves: Vec<Hash256>,
+    index: BTreeMap<Hash256, usize>,
+    mmr: exo_dag::mmr::MerkleMountainRange,
+}
+
+impl ReceiptMmrCache {
+    fn sync(&mut self, registry: &InMemoryAvcRegistry) -> anyhow::Result<()> {
+        let tip = self.leaves.last().copied();
+        let mut pending = Vec::new();
+        let mut cursor = registry.receipt_chain_head();
+        let mut reached_tip = false;
+        while let Some(receipt_id) = cursor {
+            if Some(receipt_id) == tip {
+                reached_tip = true;
+                break;
+            }
+            let receipt = registry.get_receipt(&receipt_id).ok_or_else(|| {
+                anyhow::anyhow!("AVC receipt chain references missing receipt {receipt_id}")
+            })?;
+            pending.push(receipt_id);
+            cursor = receipt.previous_receipt_hash;
+        }
+        if tip.is_some() && !reached_tip {
+            *self = Self::default();
+        }
+        for receipt_id in pending.into_iter().rev() {
+            let position = exo_dag::mmr::append(&mut self.mmr, receipt_id);
+            self.leaves.push(receipt_id);
+            self.index.insert(receipt_id, position);
+        }
+        Ok(())
+    }
+}
+
+/// Build an inclusion proof for `receipt_id` against a freshly signed tree
+/// head over the current receipt chain. Returns `None` for receipts that are
+/// not part of the extended receipt chain.
+fn receipt_inclusion_proof(
+    state: &AvcApiState,
+    registry: &InMemoryAvcRegistry,
+    receipt_id: &Hash256,
+) -> anyhow::Result<Option<ReceiptInclusionProof>> {
+    let mut cache = state
+        .receipt_mmr
+        .lock()
+        .map_err(|_| anyhow::anyhow!("AVC receipt MMR mutex poisoned"))?;
+    cache.sync(registry)?;
+    let Some(&position) = cache.index.get(receipt_id) else {
+        return Ok(None);
+    };
+    let Some(&chain_head) = cache.leaves.last() else {
+        return Ok(None);
+    };
+    let proof = exo_dag::mmr::prove(&cache.mmr, position)
+        .map_err(|error| anyhow::anyhow!("AVC receipt MMR proof failed: {error}"))?;
+    let mut tree_head = ReceiptTreeHead {
+        validator_did: state.validator_did.clone(),
+        tree_size: u64::try_from(cache.leaves.len())?,
+        root: exo_dag::mmr::root(&cache.mmr),
+        chain_head,
+        signature: Signature::empty(),
+    };
+    let payload = tree_head
+        .signing_payload()
+        .map_err(|error| anyhow::anyhow!("AVC receipt tree head encoding failed: {error}"))?;
+    tree_head.signature = (state.receipt_signer)(&payload);
+    Ok(Some(ReceiptInclusionProof {
+        receipt_id: *receipt_id,
+        leaf_index: u64::try_from(position)?,
+        siblings: proof.siblings,
+        peak_index: u64::try_from(proof.peak_index)?,
+        peaks: proof.peaks,
+        tree_head,
+    }))
+}
+
+async fn attach_receipt_inclusion(
+    state: &Arc<AvcApiState>,
+    response: &mut EmitReceiptResponse,
+) -> ApiResult<()> {
+    let receipt_id = response.receipt.receipt_id;
+    let proof_state = Arc::clone(state);
+    let proof = with_registry_blocking(Arc::clone(state), false, move |registry| {
+        receipt_inclusion_proof(&proof_state, registry, &receipt_id).map_err(|error| {
+            tracing::error!(err = %error, "AVC receipt inclusion proof failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "AVC receipt inclusion proof failed".into(),
+            )
+        })
+    })
+    .await?;
+    response.receipt_inclusion = proof;
+    Ok(())
+}
+
 fn commit_exochain_finality(
     finality_store: &Option<Arc<Mutex<crate::store::SqliteDagStore>>>,
     receipt: &AvcTrustReceipt,
@@ -1039,6 +1144,9 @@ pub struct AvcApiState {
     /// AVC issuer allow-list at runtime — the bare admin bearer token is
     /// deliberately insufficient on its own.
     authority: Arc<Mutex<exo_authority::delegation::DelegationRegistry>>,
+    /// Append-only MMR over receipt IDs in chain order, used to issue
+    /// receipt inclusion proofs with a signed tree head (issue #897).
+    receipt_mmr: Arc<Mutex<ReceiptMmrCache>>,
 }
 
 impl AvcApiState {
@@ -1086,6 +1194,7 @@ impl AvcApiState {
             finality_anchor_faults_remaining: Arc::new(AtomicUsize::new(0)),
             lynk_response_attestation_faults_remaining: Arc::new(AtomicUsize::new(0)),
             durability: AvcRegistryDurability::None,
+            receipt_mmr: Arc::default(),
             authority: Arc::new(Mutex::new(
                 exo_authority::delegation::DelegationRegistry::new(),
             )),
@@ -1149,6 +1258,7 @@ impl AvcApiState {
             finality_anchor_faults_remaining: Arc::new(AtomicUsize::new(0)),
             lynk_response_attestation_faults_remaining: Arc::new(AtomicUsize::new(0)),
             durability,
+            receipt_mmr: Arc::default(),
             authority: Arc::new(Mutex::new(
                 exo_authority::delegation::DelegationRegistry::new(),
             )),
@@ -2288,6 +2398,20 @@ pub struct EmitReceiptResponse {
     /// Authenticates a generic action's request, decision and finality before dispatch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub action_response_attestation: Option<LynkReceiptResponseAttestation>,
+    /// Inclusion proof for the receipt in the sealed receipt chain, with a
+    /// validator-signed tree head (issue #897).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt_inclusion: Option<ReceiptInclusionProof>,
+}
+
+/// Receipt plus its current inclusion proof, for offline verification.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReceiptProofResponse {
+    pub receipt: AvcTrustReceipt,
+    /// Absent for receipts outside the extended receipt chain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inclusion_proof: Option<ReceiptInclusionProof>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2542,6 +2666,7 @@ fn emit_receipt_response(
         validation,
         lynk_response_attestation: None,
         action_response_attestation: None,
+        receipt_inclusion: None,
     }
 }
 
@@ -4139,6 +4264,8 @@ async fn handle_emit_receipt(
             "AVC Allow receipt is not anchored".into(),
         ));
     }
+    let mut response = response;
+    attach_receipt_inclusion(&state, &mut response).await?;
     Ok(Json(response))
 }
 
@@ -4346,6 +4473,8 @@ async fn handle_llm_usage_emit_receipt(
             "AVC Allow receipt is not anchored".into(),
         ));
     }
+    let mut response = response;
+    attach_receipt_inclusion(&state, &mut response).await?;
     Ok(Json(response))
 }
 
@@ -4937,6 +5066,35 @@ async fn handle_get_receipt(
     Ok(Json(receipt))
 }
 
+async fn handle_get_receipt_proof(
+    State(state): State<Arc<AvcApiState>>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ReceiptProofResponse>> {
+    let hash = parse_hash(&id)?;
+    let proof_state = Arc::clone(&state);
+    let (receipt, inclusion_proof) =
+        with_registry_blocking(Arc::clone(&state), false, move |registry| {
+            let receipt = registry
+                .get_receipt(&hash)
+                .ok_or((StatusCode::NOT_FOUND, "receipt not found".into()))?;
+            let proof =
+                receipt_inclusion_proof(&proof_state, registry, &hash).map_err(|error| {
+                    tracing::error!(err = %error, "AVC receipt inclusion proof failed");
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "AVC receipt inclusion proof failed".into(),
+                    )
+                })?;
+            Ok((receipt, proof))
+        })
+        .await?;
+    reject_unanchored_allow_receipt(&state, &receipt)?;
+    Ok(Json(ReceiptProofResponse {
+        receipt,
+        inclusion_proof,
+    }))
+}
+
 async fn handle_list_receipts(
     State(state): State<Arc<AvcApiState>>,
     Query(query): Query<ListAvcReceiptsQuery>,
@@ -5469,6 +5627,10 @@ pub fn avc_router(state: Arc<AvcApiState>) -> Router {
         )
         .route("/api/v1/avc/receipts", get(handle_list_receipts))
         .route("/api/v1/avc/receipts/:hash", get(handle_get_receipt))
+        .route(
+            "/api/v1/avc/receipts/:hash/proof",
+            get(handle_get_receipt_proof),
+        )
         .route("/api/v1/avc/protocol", get(handle_protocol_info))
         .route("/api/v1/avc/delegate", post(handle_delegate))
         .route("/api/v1/avc/revoke", post(handle_revoke))
@@ -7027,6 +7189,7 @@ mod tests {
             finality_anchor_faults_remaining: Arc::new(AtomicUsize::new(0)),
             lynk_response_attestation_faults_remaining: Arc::new(AtomicUsize::new(0)),
             durability: AvcRegistryDurability::Postgres(pool.clone()),
+            receipt_mmr: Arc::default(),
             authority: Arc::new(Mutex::new(
                 exo_authority::delegation::DelegationRegistry::new(),
             )),
@@ -7762,6 +7925,163 @@ mod tests {
             validator_keypair().public_key()
         ));
         assert_eq!(state.registry.lock().unwrap().receipt_count(), 1);
+    }
+
+    async fn emit_action_for_inclusion(
+        state: &Arc<AvcApiState>,
+        action_byte: u8,
+    ) -> EmitReceiptResponse {
+        let credential = baseline_credential();
+        let mut action = baseline_action(Did::new("did:exo:agent").unwrap());
+        action.action_id = Hash256::from_bytes([action_byte; 32]);
+        let validation = AvcValidationRequest {
+            credential,
+            action: Some(action),
+            now: Timestamp::new(1_500_000, 0),
+        };
+        let request = EmitReceiptRequest {
+            subject_signature: sign_action(&validation, &subject_keypair()),
+            validation,
+            subject_public_key: None,
+        };
+        let response = avc_router(Arc::clone(state))
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/avc/receipts/emit")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        serde_json::from_slice(&read_body(response).await).unwrap()
+    }
+
+    fn assert_inclusion_verifies(proof: &ReceiptInclusionProof, leaf_index: u64, tree_size: u64) {
+        assert_eq!(proof.leaf_index, leaf_index);
+        assert_eq!(proof.tree_head.tree_size, tree_size);
+        assert_eq!(proof.tree_head.validator_did, validator_did());
+        proof.verify_path().unwrap();
+        proof
+            .tree_head
+            .verify_signature(&validator_keypair().public)
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn emitted_receipts_carry_subject_attestation_and_verifiable_inclusion() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(Mutex::new(
+            crate::store::SqliteDagStore::open(dir.path()).unwrap(),
+        ));
+        let state = fresh_state_with_finality_store(store);
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(baseline_credential())
+            .unwrap();
+
+        let first = emit_action_for_inclusion(&state, 0x61).await;
+        let second = emit_action_for_inclusion(&state, 0x62).await;
+
+        for response in [&first, &second] {
+            let attestation = response.receipt.subject_attestation.as_ref().unwrap();
+            assert_eq!(attestation.subject_public_key, subject_keypair().public);
+            assert_eq!(attestation.validation_now, Timestamp::new(1_500_000, 0));
+            assert_ne!(attestation.validation_now, response.receipt.created_at);
+            response.receipt.verify_subject_attestation().unwrap();
+            response
+                .receipt
+                .verify_signed_payload(&validator_keypair().public)
+                .unwrap();
+        }
+        assert_inclusion_verifies(first.receipt_inclusion.as_ref().unwrap(), 0, 1);
+        let second_proof = second.receipt_inclusion.as_ref().unwrap();
+        assert_inclusion_verifies(second_proof, 1, 2);
+        assert_eq!(second_proof.tree_head.chain_head, second.receipt.receipt_id);
+
+        // The proof endpoint re-proves an earlier receipt against the newer head.
+        let response = avc_router(Arc::clone(&state))
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!(
+                        "/api/v1/avc/receipts/{}/proof",
+                        first.receipt.receipt_id
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let proof: ReceiptProofResponse =
+            serde_json::from_slice(&read_body(response).await).unwrap();
+        assert_eq!(proof.receipt, first.receipt);
+        assert_inclusion_verifies(proof.inclusion_proof.as_ref().unwrap(), 0, 2);
+    }
+
+    #[tokio::test]
+    async fn receipt_proof_endpoint_reports_missing_receipt() {
+        let response = avc_router(fresh_state())
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!(
+                        "/api/v1/avc/receipts/{}/proof",
+                        Hash256::from_bytes([0x09; 32])
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn receipt_mmr_rebuilds_after_terminal_receipt_rollback() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(Mutex::new(
+            crate::store::SqliteDagStore::open(dir.path()).unwrap(),
+        ));
+        let state = fresh_state_with_finality_store(store);
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(baseline_credential())
+            .unwrap();
+        let first = emit_action_for_inclusion(&state, 0x71).await;
+        let second = emit_action_for_inclusion(&state, 0x72).await;
+        assert_inclusion_verifies(second.receipt_inclusion.as_ref().unwrap(), 1, 2);
+
+        {
+            let mut registry = state.registry.lock().unwrap();
+            registry
+                .remove_terminal_extended_receipt(&second.receipt.receipt_id)
+                .unwrap();
+            assert!(
+                receipt_inclusion_proof(&state, &registry, &second.receipt.receipt_id)
+                    .unwrap()
+                    .is_none()
+            );
+            let proof = receipt_inclusion_proof(&state, &registry, &first.receipt.receipt_id)
+                .unwrap()
+                .unwrap();
+            assert_inclusion_verifies(&proof, 0, 1);
+        }
+
+        let third = emit_action_for_inclusion(&state, 0x73).await;
+        let third_proof = third.receipt_inclusion.as_ref().unwrap();
+        assert_inclusion_verifies(third_proof, 1, 2);
+        assert_eq!(
+            third.receipt.previous_receipt_hash,
+            Some(first.receipt.receipt_id)
+        );
     }
 
     #[tokio::test]
@@ -9115,6 +9435,7 @@ mod tests {
             finality_anchor_faults_remaining: Arc::new(AtomicUsize::new(0)),
             lynk_response_attestation_faults_remaining: Arc::new(AtomicUsize::new(0)),
             durability: AvcRegistryDurability::None,
+            receipt_mmr: Arc::default(),
             authority: Arc::new(Mutex::new(
                 exo_authority::delegation::DelegationRegistry::new(),
             )),
@@ -9621,6 +9942,7 @@ mod tests {
             finality_anchor_faults_remaining: Arc::new(AtomicUsize::new(0)),
             lynk_response_attestation_faults_remaining: Arc::new(AtomicUsize::new(0)),
             durability: AvcRegistryDurability::None,
+            receipt_mmr: Arc::default(),
             authority: Arc::new(Mutex::new(
                 exo_authority::delegation::DelegationRegistry::new(),
             )),
@@ -9940,6 +10262,7 @@ mod tests {
             finality_anchor_faults_remaining: Arc::new(AtomicUsize::new(0)),
             lynk_response_attestation_faults_remaining: Arc::new(AtomicUsize::new(0)),
             durability: AvcRegistryDurability::None,
+            receipt_mmr: Arc::default(),
             authority: Arc::new(Mutex::new(
                 exo_authority::delegation::DelegationRegistry::new(),
             )),
@@ -14116,6 +14439,7 @@ mod avc_root_trust_tests {
             finality_anchor_faults_remaining: Arc::new(AtomicUsize::new(0)),
             lynk_response_attestation_faults_remaining: Arc::new(AtomicUsize::new(0)),
             durability: AvcRegistryDurability::None,
+            receipt_mmr: Arc::default(),
             authority: Arc::new(Mutex::new(
                 exo_authority::delegation::DelegationRegistry::new(),
             )),
@@ -14141,6 +14465,7 @@ mod avc_root_trust_tests {
             finality_anchor_faults_remaining: Arc::new(AtomicUsize::new(0)),
             lynk_response_attestation_faults_remaining: Arc::new(AtomicUsize::new(0)),
             durability: AvcRegistryDurability::Postgres(pool),
+            receipt_mmr: Arc::default(),
             authority: Arc::new(Mutex::new(
                 exo_authority::delegation::DelegationRegistry::new(),
             )),

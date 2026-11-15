@@ -2303,6 +2303,7 @@ dependencies = [
  "exochain-proofs",
  "exochain-root",
  "exochain-sdk",
+ "exochain-verify",
  "frost-ed25519",
  "futures",
  "getrandom 0.2.16",
@@ -2435,6 +2436,20 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.17",
  "uuid",
+]
+
+[[package]]
+name = "exochain-verify"
+version = "0.4.0"
+dependencies = [
+ "blake3",
+ "ciborium",
+ "exochain-avc",
+ "exochain-core",
+ "exochain-dag",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
 ]
 
 [[package]]

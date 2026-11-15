@@ -45,6 +45,7 @@ members = [
     "crates/exo-messaging", "crates/exo-consensus",
     "crates/exochain-sdk",
     "crates/exo-avc",
+    "crates/exo-verify",
     "crates/exo-economy",
     "crates/exo-root",
     "crates/exo-pdp",
