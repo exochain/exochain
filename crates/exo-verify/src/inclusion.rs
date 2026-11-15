@@ -254,7 +254,7 @@ mod tests {
         let dag_proof = mmr::prove(tree, position).unwrap();
         let mut head = ReceiptTreeHead {
             validator_did: Did::new("did:exo:validator").unwrap(),
-            tree_size: leaves.len() as u64,
+            tree_size: u64::try_from(leaves.len()).unwrap(),
             root: mmr::root(tree),
             chain_head: *leaves.last().unwrap(),
             signature: Signature::empty(),
@@ -262,9 +262,9 @@ mod tests {
         head.signature = validator.sign(&head.signing_payload().unwrap());
         ReceiptInclusionProof {
             receipt_id: leaves[position],
-            leaf_index: position as u64,
+            leaf_index: u64::try_from(position).unwrap(),
             siblings: dag_proof.siblings,
-            peak_index: dag_proof.peak_index as u64,
+            peak_index: u64::try_from(dag_proof.peak_index).unwrap(),
             peaks: dag_proof.peaks,
             tree_head: head,
         }
@@ -361,13 +361,14 @@ mod tests {
             head.verify_signature(&other.public),
             Err(VerifyError::TreeHeadSignatureInvalid)
         );
-        for mutate in [
-            (|h: &mut ReceiptTreeHead| h.tree_size += 1) as fn(&mut ReceiptTreeHead),
+        let mutations: [fn(&mut ReceiptTreeHead); 5] = [
+            |h| h.tree_size += 1,
             |h| h.root = Hash256::from_bytes([5; 32]),
             |h| h.chain_head = Hash256::from_bytes([6; 32]),
             |h| h.validator_did = Did::new("did:exo:other").unwrap(),
             |h| h.signature = Signature::empty(),
-        ] {
+        ];
+        for mutate in mutations {
             let mut changed = head.clone();
             mutate(&mut changed);
             assert_eq!(

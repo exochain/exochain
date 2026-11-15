@@ -312,7 +312,7 @@ fn corrupted_timestamp_token_fails() {
 fn untrusted_timestamp_authority_fails() {
     let (bundle, mut trust) = fixture();
     // Pin the TSA signer certificate's issuer as an unrelated key.
-    trust.tsa.issuing_ca_spki_der_hex = vec!["30".repeat(1) + &"00".repeat(40)];
+    trust.tsa.issuing_ca_spki_der_hex = vec![format!("30{}", "00".repeat(40))];
     assert!(matches!(
         verify(&bundle, &trust),
         Err(VerifyError::TimestampInvalid { .. })

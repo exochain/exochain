@@ -27,6 +27,8 @@
 //! 4. trusted time from an RFC 3161 timestamp token, verified against a
 //!    pinned timestamp authority key.
 
+#![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
+
 pub mod error;
 pub mod inclusion;
 pub mod key_bundle;

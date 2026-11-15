@@ -27,6 +27,10 @@
 //! key is written to `<out-dir>`. Every run produces new keys and times, so
 //! regenerate only when the bundle format changes.
 
+// Developer-only fixture generator: fixed fixture DIDs and the system clock
+// cannot fail in practice, and a panic here only aborts regeneration.
+#![allow(clippy::expect_used)]
+
 use std::{
     fs,
     path::{Path, PathBuf},
