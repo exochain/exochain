@@ -94,7 +94,7 @@ digest_two="$(run_validator "$raw_root" "$metadata_file" "$lock_file" "$canonica
 # identical bytes and digest. The change is the new first-party package and
 # its dependency edges (RFC 3161 crates moved from exochain-node to
 # exochain-verify); no new third-party package entered Cargo.lock.
-expected_digest=6625c1e752af2137a9adb2aea5546c71c2fd34b2b68c742d8f42292e6443f422
+expected_digest=772544d3d17262aa40e77256e07fa1579a7efb2bdbdcf880c6603d794399bc72
 [ "$digest_one" = "$expected_digest" ] && [ "$digest_two" = "$expected_digest" ] \
   || fail "exact cargo-cyclonedx 0.5.9 corpus did not produce the reviewed canonical digest"
 /usr/bin/diff -ru "$canonical_one" "$canonical_two" >/dev/null \
