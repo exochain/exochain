@@ -39,6 +39,22 @@ serde = { workspace = true }
 ciborium = { workspace = true }
 blake3 = { workspace = true }
 thiserror = { workspace = true }
+anyhow = { workspace = true }
+hex = { workspace = true }
+sha2 = { workspace = true }
+base64 = "=0.22.1"
+# Calendar math for TSTInfo genTime only; no clock feature.
+chrono = { version = "=0.4.44", default-features = false }
+cms = { version = "=0.3.0-pre.2", default-features = false, features = ["std"] }
+const-oid = "=0.10.2"
+der = { version = "=0.8.2", features = ["std"] }
+ring = "=0.17.14"
+x509-cert = { version = "=0.3.0-rc.4", default-features = false, features = ["std"] }
+
+[features]
+# Exposes fixture helpers and an unpinned inspection function for tests in
+# dependent crates. Never enable this in production builds.
+test-support = []
 
 [dev-dependencies]
 exo-dag = { package = "exochain-dag", path = "../exo-dag", version = "=0.4.0" }

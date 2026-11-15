@@ -29,6 +29,7 @@
 
 pub mod error;
 pub mod inclusion;
+pub mod rfc3161;
 
 pub use error::VerifyError;
 pub use inclusion::{AVC_RECEIPT_TREE_HEAD_DOMAIN, ReceiptInclusionProof, ReceiptTreeHead};
