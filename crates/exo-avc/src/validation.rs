@@ -224,6 +224,18 @@ struct AvcActionSigningPayload<'a> {
     validation_now: &'a Timestamp,
 }
 
+/// Owned, decoded form of the subject action signing payload produced by
+/// [`avc_action_signature_payload`]. Offline verifiers decode the exact bytes
+/// the subject signed into this structure instead of reconstructing them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DecodedAvcActionSignaturePayload {
+    pub domain: String,
+    pub schema_version: u16,
+    pub credential_id: Hash256,
+    pub action: AvcActionRequest,
+    pub validation_now: Timestamp,
+}
+
 #[derive(Serialize)]
 struct AvcActionCommitmentPayload<'a> {
     domain: &'static str,
@@ -511,14 +523,74 @@ pub fn avc_action_commitment_hash(
     validation_now: &Timestamp,
 ) -> Result<Hash256, AvcError> {
     let credential_id = credential.id()?;
+    avc_action_commitment_hash_for_credential_id(&credential_id, action, validation_now)
+}
+
+/// Compute [`avc_action_commitment_hash`] from a content-addressed
+/// credential ID instead of the full credential. Offline verifiers hold only
+/// the receipt, which carries the credential ID.
+///
+/// # Errors
+/// Returns [`AvcError::Serialization`] if canonical CBOR encoding fails.
+pub fn avc_action_commitment_hash_for_credential_id(
+    credential_id: &Hash256,
+    action: &AvcActionRequest,
+    validation_now: &Timestamp,
+) -> Result<Hash256, AvcError> {
     let payload = AvcActionCommitmentPayload {
         domain: AVC_ACTION_COMMITMENT_DOMAIN,
         schema_version: AVC_SCHEMA_VERSION,
-        credential_id: &credential_id,
+        credential_id,
         action,
         validation_now,
     };
     hash_structured(&payload).map_err(AvcError::from)
+}
+
+/// Decode the exact bytes a subject signed (see
+/// [`avc_action_signature_payload`]) and require that they are the canonical
+/// encoding of a subject action signing payload.
+///
+/// # Errors
+/// Returns [`AvcError::InvalidInput`] when the bytes are not a canonical
+/// subject action signing payload, carry another domain, or carry an
+/// unsupported schema version.
+pub fn decode_avc_action_signature_payload(
+    bytes: &[u8],
+) -> Result<DecodedAvcActionSignaturePayload, AvcError> {
+    let decoded: DecodedAvcActionSignaturePayload =
+        ciborium::de::from_reader(bytes).map_err(|_| AvcError::InvalidInput {
+            reason: "subject signed bytes are not a CBOR action signing payload".into(),
+        })?;
+    if decoded.domain != AVC_ACTION_SIGNING_DOMAIN {
+        return Err(AvcError::InvalidInput {
+            reason: "subject signed bytes carry the wrong signing domain".into(),
+        });
+    }
+    if decoded.schema_version != AVC_SCHEMA_VERSION {
+        return Err(AvcError::UnsupportedSchema {
+            got: decoded.schema_version,
+            supported: AVC_SCHEMA_VERSION,
+        });
+    }
+    let canonical = {
+        let payload = AvcActionSigningPayload {
+            domain: AVC_ACTION_SIGNING_DOMAIN,
+            schema_version: decoded.schema_version,
+            credential_id: &decoded.credential_id,
+            action: &decoded.action,
+            validation_now: &decoded.validation_now,
+        };
+        let mut buf = Vec::new();
+        ciborium::ser::into_writer(&payload, &mut buf)?;
+        buf
+    };
+    if canonical != bytes {
+        return Err(AvcError::InvalidInput {
+            reason: "subject signed bytes are not canonically encoded".into(),
+        });
+    }
+    Ok(decoded)
 }
 
 /// Compute a deterministic hash for the minimal action descriptor embedded in

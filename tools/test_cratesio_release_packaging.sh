@@ -241,7 +241,7 @@ EXOCHAIN_CRATES_IO_ALLOWED_OWNERS=exochain \
   || fail "exact-target owner validation unexpectedly invoked Cargo"
 expect_owner_guard_failure \
   "a target outside the exact release inventory" \
-  "not one of the exact 32 release crates" \
+  "not one of the exact 33 release crates" \
   env EXOCHAIN_CRATES_IO_ALLOWED_OWNERS=exochain \
     EXOCHAIN_CRATES_IO_FIXTURE_DIR="$fixture_dir" \
     EXOCHAIN_CRATES_IO_EXACT_TARGET=attacker-crate \

@@ -163,7 +163,7 @@ run_transport extract --profile cargo-cyclonedx --version 0.5.9 \
 
 sbom_input="$test_root/sbom-input"
 /bin/mkdir "$sbom_input"
-for index in $(seq -w 1 32); do
+for index in $(seq -w 1 33); do
   printf '{"index":"%s"}\n' "$index" > "$sbom_input/exochain-fixture-$index.cdx.json"
 done
 sbom_digest="$(run_transport create --profile raw-sbom --version 0.2.6 \
@@ -172,7 +172,7 @@ sbom_digest="$(run_transport create --profile raw-sbom --version 0.2.6 \
 run_transport extract --profile raw-sbom --version 0.2.6 \
   --archive "$test_root/sbom.tar" --inventory "$test_root/sbom.inventory" \
   --expected-sha256 "$sbom_digest" --output-dir "$test_root/sbom-output"
-[ "$(find "$test_root/sbom-output" -type f | wc -l | tr -d ' ')" -eq 32 ] \
-  || fail "raw SBOM transport did not preserve exactly 32 files"
+[ "$(find "$test_root/sbom-output" -type f | wc -l | tr -d ' ')" -eq 33 ] \
+  || fail "raw SBOM transport did not preserve exactly 33 files"
 
 printf 'release file-set transport test passed\n'

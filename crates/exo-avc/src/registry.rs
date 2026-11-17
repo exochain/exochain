@@ -1236,6 +1236,8 @@ mod tests {
             created_at: ts(3),
             validation_hash: h256(0xBB),
             signature: Signature::empty(),
+            subject_attestation: None,
+            signed_payload: None,
         };
         let payload = receipt.signing_payload().unwrap();
         receipt.receipt_id = Hash256::digest(&payload);
@@ -1270,6 +1272,8 @@ mod tests {
             created_at: ts(u64::from(action_byte) + 3),
             validation_hash: h256(0xBB),
             signature: Signature::empty(),
+            subject_attestation: None,
+            signed_payload: None,
         };
         let payload = receipt.signing_payload().unwrap();
         receipt.receipt_id = Hash256::digest(&payload);
@@ -1325,6 +1329,8 @@ mod tests {
             created_at: ts(u64::from(differentiator) + 3),
             validation_hash: h256(differentiator.wrapping_add(4)),
             signature: Signature::empty(),
+            subject_attestation: None,
+            signed_payload: None,
         };
         let bytes = pre_lynk_extended_receipt_signing_payload(&receipt);
         receipt.receipt_id = Hash256::digest(&bytes);

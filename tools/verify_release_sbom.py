@@ -731,8 +731,8 @@ def main() -> None:
         and packages_by_id[package_id].get("publish") != []
     ]
     workspace_packages.sort(key=lambda package: package["name"])
-    if len(workspace_packages) != 32 or len({package["name"] for package in workspace_packages}) != 32:
-        fail("Cargo metadata must expose exactly 32 uniquely named publishable workspace crates")
+    if len(workspace_packages) != 33 or len({package["name"] for package in workspace_packages}) != 33:
+        fail("Cargo metadata must expose exactly 33 uniquely named publishable workspace crates")
     graph, normal_edges = filtered_resolve_graph(metadata)
     if set(graph) != set(packages_by_id):
         fail("Cargo resolve graph must contain exactly every Cargo metadata package")
@@ -750,8 +750,8 @@ def main() -> None:
         )
         reject_forbidden_strings(parse_json(canonical, f"canonical SBOM {name}"), forbidden, f"canonical SBOM {name}")
         outputs[f"exochain-{args.version}-{name}.cdx.json"] = canonical
-    if len(outputs) != 32:
-        fail("canonical SBOM set does not contain exactly 32 unique files")
+    if len(outputs) != 33:
+        fail("canonical SBOM set does not contain exactly 33 unique files")
     write_outputs(paths[1], outputs)
     digest = hashlib.sha256()
     for name in sorted(outputs):

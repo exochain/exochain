@@ -49,6 +49,7 @@ exo-consent = { package = "exochain-consent", path = "../exo-consent", version =
 exo-escalation = { package = "exochain-escalation", path = "../exo-escalation", version = "=0.4.0" }
 exo-legal = { package = "exochain-legal", path = "../exo-legal", version = "=0.4.0" }
 exo-avc = { package = "exochain-avc", path = "../exo-avc", version = "=0.4.0" }
+exo-verify = { package = "exochain-verify", path = "../exo-verify", version = "=0.4.0" }
 exo-authority = { package = "exochain-authority", path = "../exo-authority", version = "=0.4.0" }
 exo-economy = { package = "exochain-economy", path = "../exo-economy", version = "=0.4.0" }
 exo-root = { package = "exochain-root", path = "../exo-root", version = "=0.4.0" }
@@ -93,12 +94,6 @@ hmac = { workspace = true }
 zeroize = { workspace = true }
 frost-ed25519 = { workspace = true }
 x25519-dalek = { workspace = true }
-base64 = "=0.22.1"
-cms = { version = "=0.3.0-pre.2", default-features = false, features = ["std"] }
-const-oid = "=0.10.2"
-der = { version = "=0.8.2", features = ["std"] }
-ring = "=0.17.14"
-x509-cert = { version = "=0.3.0-rc.4", default-features = false, features = ["std"] }
 
 # Data directory
 directories = "6"
@@ -159,6 +154,7 @@ jsonschema = { version = "0.19", default-features = false }
 exacl = { version = "=0.12.0", default-features = false }
 
 [dev-dependencies]
+exo-verify = { package = "exochain-verify", path = "../exo-verify", version = "=0.4.0", features = ["test-support"] }
 static_assertions = "=1.1.0"
 tempfile = "3"
 

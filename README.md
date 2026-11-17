@@ -37,10 +37,10 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 
 | Metric | Value | Source |
 |--------|-------|--------|
-| Rust crates | 32 | `cargo metadata --no-deps --format-version 1` |
-| Rust source files | 509 | `git ls-files 'crates/**/*.rs'` |
-| Workspace tests (Linux) | 6,722 listed | Measured with `cargo test --workspace -- --list` on this head |
-| Workspace tests (macOS) | 6,726 listed | Linux inventory plus four `target_os = "macos"` tests in `crates/exo-node/src/private_file.rs` |
+| Rust crates | 33 | `cargo metadata --no-deps --format-version 1` |
+| Rust source files | 518 | `git ls-files 'crates/**/*.rs'` |
+| Workspace tests (Linux) | 6,763 listed | Measured with `cargo test --workspace -- --list` on this head |
+| Workspace tests (macOS) | 6,767 listed | Linux inventory plus four `target_os = "macos"` tests in `crates/exo-node/src/private_file.rs` |
 | CI quality gates | 23 | `.github/workflows/ci.yml` numbered gates; required aggregator is separate |
 | Last verified published release | `v0.2.7` (observed `2026-10-09T00:42:24Z`; packages listed in snapshot) | [Publication snapshot](governance/releases/published-release-snapshot.json) |
 | License | Apache-2.0 for EXOCHAIN core primitives; commercial terms for Decision Forum, LegalDyne, CyberMedica, LiveSafe, and CrossChecked products | `governance/commercial-product-licensing.json`; product license files where present |
@@ -57,7 +57,7 @@ The `v0.2.7` GitHub Release states that each native archive contains 29 legacy `
 - **Clippy clean** under `-D warnings` for all workspace targets
 - **Format clean** under `cargo +nightly-2026-09-21 fmt --all -- --check`
 - **23 numbered CI quality gates** plus the required "All Constitutional Gates" aggregator are defined; workflow runs report their status, while merge enforcement depends on current GitHub ruleset or branch-protection settings
-- **Traceability matrix** maps 119 requirements — see `governance/traceability_matrix.md`
+- **Traceability matrix** maps 120 requirements — see `governance/traceability_matrix.md`
 - **Threat model** covers 17 threats tracked: 17 implemented, 0 partial, 0 planned — see `governance/threat_matrix.md`
 - **Constitutional invariants** are enforced in the tested gatekeeper and decision-forum adjudication paths
 - **No floating-point arithmetic** — denied workspace-wide via `#[deny(clippy::float_arithmetic)]`
@@ -132,7 +132,7 @@ Catalyst is named explicitly.
 ## Architecture
 
 ```
-Layer 1: CGR Kernel         (Rust, 32 crates)
+Layer 1: CGR Kernel         (Rust, 33 crates)
          Constitutional governance runtime — deterministic, no floats,
          production Ed25519/BLAKE3 cryptography, RISC Zero execution-receipt
          verify (not production-reviewed), plus unaudited pedagogical
@@ -261,7 +261,7 @@ This repository is managed under strict **Judicial Build Governance**. All contr
 
 ### Key Governance Artifacts
 
-* [Traceability Matrix](governance/traceability_matrix.md) — 119 requirements tracked
+* [Traceability Matrix](governance/traceability_matrix.md) — 120 requirements tracked
 * [Threat Model](governance/threat_matrix.md) — 17 tracked: 17 implemented, 0 partial, 0 planned
 * [Quality Gates](governance/quality_gates.md) — 23 numbered CI gates plus required aggregator
 * [Sub-Agent Charters](governance/sub_agents.md) — 11 agent charters documented

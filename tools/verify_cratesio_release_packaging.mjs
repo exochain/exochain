@@ -209,8 +209,8 @@ if (
 const releasePackageNames = preflightPackageNames;
 const releasePackageIndexes = new Map(releasePackageNames.map((name, index) => [name, index]));
 
-if (releasePackageNames.length !== 32 || releasePackageIndexes.size !== 32) {
-  failures.push("release helpers must declare exactly 32 unique crates");
+if (releasePackageNames.length !== 33 || releasePackageIndexes.size !== 33) {
+  failures.push("release helpers must declare exactly 33 unique crates");
 }
 
 for (const pkg of packages.filter((pkg) => pkg.manifest_path.includes("/crates/"))) {

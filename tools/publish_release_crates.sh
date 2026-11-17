@@ -191,8 +191,8 @@ def reject(message: str) -> None:
 preflight_path, reproduced_path, expected_version, *expected_crates = sys.argv[1:]
 if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", expected_version):
     reject("release version must contain exactly three numeric components")
-if len(expected_crates) != 32 or len(set(expected_crates)) != 32:
-    reject("publisher must declare exactly 32 unique release crates")
+if len(expected_crates) != 33 or len(set(expected_crates)) != 33:
+    reject("publisher must declare exactly 33 unique release crates")
 
 
 def read_manifest(path: str, label: str) -> bytes:
@@ -235,8 +235,8 @@ def read_manifest(path: str, label: str) -> bytes:
     if not data.endswith(b"\n") or b"\r" in data:
         reject(f"{label} manifest must end with one complete row")
     lines = data[:-1].split(b"\n")
-    if len(lines) != 32:
-        reject(f"{label} manifest must contain exactly 32 rows")
+    if len(lines) != 33:
+        reject(f"{label} manifest must contain exactly 33 rows")
     for index, (line, expected_crate) in enumerate(zip(lines, expected_crates)):
         fields = line.split(b"\t")
         if len(fields) != 4:
@@ -709,6 +709,7 @@ CRATES=(
   exochain-dag-db-retrieval
   exochain-dag-db-exchange
   exochain-dag
+  exochain-verify
   exochain-dag-db-postgres
   exochain-gatekeeper
   exochain-proofs

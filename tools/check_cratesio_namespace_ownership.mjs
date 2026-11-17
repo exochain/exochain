@@ -29,6 +29,7 @@ const CANONICAL_CRATES = Object.freeze([
   "exochain-dag-db-retrieval",
   "exochain-dag-db-exchange",
   "exochain-dag",
+  "exochain-verify",
   "exochain-dag-db-postgres",
   "exochain-gatekeeper",
   "exochain-proofs",
@@ -334,7 +335,7 @@ function resolvePackageNames() {
   const exactTarget = process.env.EXOCHAIN_CRATES_IO_EXACT_TARGET;
   if (exactTarget !== undefined) {
     if (!CANONICAL_CRATES.includes(exactTarget)) {
-      throw new Error("EXOCHAIN_CRATES_IO_EXACT_TARGET is not one of the exact 32 release crates");
+      throw new Error("EXOCHAIN_CRATES_IO_EXACT_TARGET is not one of the exact 33 release crates");
     }
     return [exactTarget];
   }
@@ -368,8 +369,8 @@ function resolvePackageNames() {
   const actual = [...packageNames].sort();
   const expected = [...CANONICAL_CRATES].sort();
   if (
-    actual.length !== 32
-    || new Set(actual).size !== 32
+    actual.length !== 33
+    || new Set(actual).size !== 33
     || actual.some((name, index) => name !== expected[index])
   ) {
     throw new Error("publishable Cargo metadata differs from the exact 32-crate release inventory");

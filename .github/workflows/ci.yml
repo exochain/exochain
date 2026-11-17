@@ -578,8 +578,8 @@ jobs:
       - name: Validate SBOM output
         run: |
           SBOM_COUNT=$(find crates -type f -name '*.cdx.json' | wc -l)
-          if [ "$SBOM_COUNT" -ne 32 ]; then
-            echo "::error::SBOM generation produced $SBOM_COUNT files, expected 32"
+          if [ "$SBOM_COUNT" -ne 33 ]; then
+            echo "::error::SBOM generation produced $SBOM_COUNT files, expected 33"
             exit 1
           fi
           echo "✓ CycloneDX SBOM generated successfully ($SBOM_COUNT files):"

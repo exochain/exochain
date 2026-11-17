@@ -1244,7 +1244,7 @@ jobs:
             /bin/rm -f -- "$sbom_file"
             sbom_count=$((sbom_count + 1))
           done < <(/usr/bin/find "$GITHUB_WORKSPACE/crates" -type f -name '*.cdx.json' -print0 | /usr/bin/sort -z)
-          [ "$sbom_count" -eq 32 ]
+          [ "$sbom_count" -eq 33 ]
           raw_sbom_sha256="$(printf '%s' "$transport_program" | \
             /usr/bin/env -i "$python_path" -I -B - create \
               --profile raw-sbom --version "$RELEASE_VERSION" \
@@ -5321,7 +5321,7 @@ jobs:
               "exochain-gatekeeper", "exochain-gateway", "exochain-governance",
               "exochain-identity", "exochain-legal", "exochain-messaging", "exochain-node",
               "exochain-pdp", "exochain-proofs", "exochain-root", "exochain-sdk",
-              "exochain-tenant", "exochain-wasm",
+              "exochain-tenant", "exochain-verify", "exochain-wasm",
           )
           expected = {
               f"archives/{target}/exochain-{version}-{target}.tar.gz"

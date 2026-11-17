@@ -154,6 +154,7 @@ CRATES=(
   exochain-dag-db-retrieval
   exochain-dag-db-exchange
   exochain-dag
+  exochain-verify
   exochain-dag-db-postgres
   exochain-gatekeeper
   exochain-proofs

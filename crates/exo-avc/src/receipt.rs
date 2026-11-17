@@ -30,7 +30,8 @@ use crate::{
     error::AvcError,
     validation::{
         AvcActionDescriptor, AvcDecision, AvcReasonCode, AvcValidationResult,
-        avc_action_descriptor_hash,
+        DecodedAvcActionSignaturePayload, avc_action_commitment_hash_for_credential_id,
+        avc_action_descriptor_hash, decode_avc_action_signature_payload,
     },
 };
 
@@ -41,6 +42,147 @@ pub const AVC_RECEIPT_EXTERNAL_TIMESTAMP_DOMAIN: &str = "exo.avc.receipt.externa
 /// Domain tag for the receipt evidence subject sent to external timestamp
 /// authorities.
 pub const AVC_RECEIPT_EVIDENCE_SUBJECT_DOMAIN: &str = "exo.avc.receipt.evidence_subject.v1";
+/// Domain tag for the versioned signing-payload variant used only when a
+/// receipt preserves the subject (agent) action attestation. Receipts
+/// without an attestation keep their original payloads byte-for-byte.
+pub const AVC_RECEIPT_SUBJECT_ATTESTED_SIGNING_DOMAIN: &str = "exo.avc.receipt.subject_attested.v1";
+
+/// Serde helpers for raw signed bytes: lowercase hex in human-readable
+/// formats (JSON) and a CBOR byte string otherwise.
+mod raw_bytes {
+    use serde::{Deserialize, Deserializer, Serializer, de::Error as _};
+
+    pub fn serialize<S: Serializer>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
+        if serializer.is_human_readable() {
+            serializer.serialize_str(&hex::encode(bytes))
+        } else {
+            serializer.serialize_bytes(bytes)
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
+        if deserializer.is_human_readable() {
+            let text = String::deserialize(deserializer)?;
+            hex::decode(text).map_err(D::Error::custom)
+        } else {
+            let bytes: serde_bytes_compat::ByteBuf = Deserialize::deserialize(deserializer)?;
+            Ok(bytes.0)
+        }
+    }
+
+    pub mod option {
+        use serde::{Deserialize, Deserializer, Serializer};
+
+        #[derive(serde::Serialize, serde::Deserialize)]
+        struct Wrapped(#[serde(with = "super")] Vec<u8>);
+
+        #[allow(clippy::ref_option)]
+        pub fn serialize<S: Serializer>(
+            bytes: &Option<Vec<u8>>,
+            serializer: S,
+        ) -> Result<S::Ok, S::Error> {
+            match bytes {
+                Some(bytes) => super::serialize(bytes, serializer),
+                None => serializer.serialize_none(),
+            }
+        }
+
+        pub fn deserialize<'de, D: Deserializer<'de>>(
+            deserializer: D,
+        ) -> Result<Option<Vec<u8>>, D::Error> {
+            Ok(Option::<Wrapped>::deserialize(deserializer)?.map(|wrapped| wrapped.0))
+        }
+    }
+
+    /// Minimal byte-buffer visitor so the crate needs no extra dependency.
+    mod serde_bytes_compat {
+        use serde::de::{Deserialize, Deserializer, SeqAccess, Visitor};
+
+        pub struct ByteBuf(pub Vec<u8>);
+
+        impl<'de> Deserialize<'de> for ByteBuf {
+            fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                struct BytesVisitor;
+                impl<'de> Visitor<'de> for BytesVisitor {
+                    type Value = ByteBuf;
+                    fn expecting(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+                        f.write_str("a byte string")
+                    }
+                    fn visit_bytes<E>(self, v: &[u8]) -> Result<ByteBuf, E> {
+                        Ok(ByteBuf(v.to_vec()))
+                    }
+                    fn visit_byte_buf<E>(self, v: Vec<u8>) -> Result<ByteBuf, E> {
+                        Ok(ByteBuf(v))
+                    }
+                    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<ByteBuf, A::Error> {
+                        let mut out = Vec::new();
+                        while let Some(byte) = seq.next_element::<u8>()? {
+                            out.push(byte);
+                        }
+                        Ok(ByteBuf(out))
+                    }
+                }
+                deserializer.deserialize_byte_buf(BytesVisitor)
+            }
+        }
+    }
+}
+
+/// Verified subject (agent) action attestation preserved on a receipt.
+///
+/// `signed_bytes` are the exact bytes the subject signed — the canonical
+/// [`crate::validation::avc_action_signature_payload`] — so an offline
+/// verifier checks the signature over stored bytes rather than a
+/// reconstruction. `validation_now` is the subject-signed time and is kept
+/// distinct from the validator's trusted receipt `created_at`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AvcSubjectAttestation {
+    pub subject_did: Did,
+    pub subject_public_key: PublicKey,
+    pub subject_signature: Signature,
+    pub validation_now: Timestamp,
+    #[serde(with = "raw_bytes")]
+    pub signed_bytes: Vec<u8>,
+}
+
+impl AvcSubjectAttestation {
+    /// Verify the subject signature over the stored bytes and decode them.
+    ///
+    /// Checks that the signature is valid for `subject_public_key`, that the
+    /// bytes are a canonical subject action signing payload, that its actor
+    /// is `subject_did`, and that its signed time equals `validation_now`.
+    ///
+    /// # Errors
+    /// Returns [`AvcError::InvalidInput`] naming the failed check.
+    pub fn verify(&self) -> Result<DecodedAvcActionSignaturePayload, AvcError> {
+        if self.subject_signature.is_empty() {
+            return Err(AvcError::InvalidInput {
+                reason: "subject attestation signature is empty".into(),
+            });
+        }
+        if !crypto::verify(
+            &self.signed_bytes,
+            &self.subject_signature,
+            &self.subject_public_key,
+        ) {
+            return Err(AvcError::InvalidInput {
+                reason: "subject attestation signature is invalid".into(),
+            });
+        }
+        let decoded = decode_avc_action_signature_payload(&self.signed_bytes)?;
+        if decoded.action.actor_did != self.subject_did {
+            return Err(AvcError::InvalidInput {
+                reason: "subject attestation actor does not match subject DID".into(),
+            });
+        }
+        if decoded.validation_now != self.validation_now {
+            return Err(AvcError::InvalidInput {
+                reason: "subject attestation signed time does not match validation_now".into(),
+            });
+        }
+        Ok(decoded)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AvcTrustReceipt {
@@ -71,6 +213,19 @@ pub struct AvcTrustReceipt {
     pub created_at: Timestamp,
     pub validation_hash: Hash256,
     pub signature: Signature,
+    /// Verified subject (agent) attestation. Present only on receipts emitted
+    /// with the subject-attested signing payload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_attestation: Option<AvcSubjectAttestation>,
+    /// Exact bytes the validator signed. Not part of the signing payload; a
+    /// verifier must check these equal the recomputed payload whose digest
+    /// is `receipt_id`, then check `signature` over them.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "raw_bytes::option"
+    )]
+    pub signed_payload: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -367,6 +522,28 @@ struct PaymentBoundExtendedReceiptSigningPayload<'a> {
 }
 
 #[derive(Serialize)]
+struct SubjectAttestedReceiptSigningPayload<'a> {
+    domain: &'static str,
+    schema_version: u16,
+    credential_id: &'a Hash256,
+    action_id: Option<&'a Hash256>,
+    action_commitment_hash: Option<&'a Hash256>,
+    action_descriptor: Option<&'a AvcActionDescriptor>,
+    action_descriptor_hash: Option<&'a Hash256>,
+    llm_usage_evidence_hash: Option<&'a Hash256>,
+    payment_evidence_hash: Option<&'a Hash256>,
+    previous_receipt_hash: Option<&'a Hash256>,
+    timestamp_provenance: Option<&'a AvcReceiptTimestampProvenance>,
+    external_timestamp_proof: Option<&'a AvcReceiptExternalTimestampProof>,
+    subject_attestation: &'a AvcSubjectAttestation,
+    validator_did: &'a Did,
+    decision: &'a AvcDecision,
+    reason_codes: &'a [AvcReasonCode],
+    created_at: &'a Timestamp,
+    validation_hash: &'a Hash256,
+}
+
+#[derive(Serialize)]
 struct PreLynkExtendedReceiptSigningPayload<'a> {
     domain: &'static str,
     schema_version: u16,
@@ -396,6 +573,7 @@ impl AvcTrustReceipt {
             || self.previous_receipt_hash.is_some()
             || self.timestamp_provenance.is_some()
             || self.external_timestamp_proof.is_some()
+            || self.subject_attestation.is_some()
     }
 
     /// Compute the canonical signing payload bytes for this receipt.
@@ -404,7 +582,29 @@ impl AvcTrustReceipt {
     /// Returns [`AvcError::Serialization`] when CBOR encoding fails.
     pub fn signing_payload(&self) -> Result<Vec<u8>, AvcError> {
         let mut buf = Vec::new();
-        if let Some(payment_evidence_hash) = self.payment_evidence_hash.as_ref() {
+        if let Some(subject_attestation) = self.subject_attestation.as_ref() {
+            let payload = SubjectAttestedReceiptSigningPayload {
+                domain: AVC_RECEIPT_SUBJECT_ATTESTED_SIGNING_DOMAIN,
+                schema_version: self.schema_version,
+                credential_id: &self.credential_id,
+                action_id: self.action_id.as_ref(),
+                action_commitment_hash: self.action_commitment_hash.as_ref(),
+                action_descriptor: self.action_descriptor.as_ref(),
+                action_descriptor_hash: self.action_descriptor_hash.as_ref(),
+                llm_usage_evidence_hash: self.llm_usage_evidence_hash.as_ref(),
+                payment_evidence_hash: self.payment_evidence_hash.as_ref(),
+                previous_receipt_hash: self.previous_receipt_hash.as_ref(),
+                timestamp_provenance: self.timestamp_provenance.as_ref(),
+                external_timestamp_proof: self.external_timestamp_proof.as_ref(),
+                subject_attestation,
+                validator_did: &self.validator_did,
+                decision: &self.decision,
+                reason_codes: &self.reason_codes,
+                created_at: &self.created_at,
+                validation_hash: &self.validation_hash,
+            };
+            ciborium::ser::into_writer(&payload, &mut buf)?;
+        } else if let Some(payment_evidence_hash) = self.payment_evidence_hash.as_ref() {
             let payload = PaymentBoundExtendedReceiptSigningPayload {
                 domain: AVC_RECEIPT_SIGNING_DOMAIN,
                 schema_version: self.schema_version,
@@ -488,6 +688,7 @@ impl AvcTrustReceipt {
         if self.schema_version != AVC_SCHEMA_VERSION
             || !self.has_extended_evidence()
             || self.llm_usage_evidence_hash.is_some()
+            || self.subject_attestation.is_some()
         {
             return Ok(None);
         }
@@ -524,6 +725,86 @@ impl AvcTrustReceipt {
     /// Returns [`AvcError::Serialization`] when CBOR encoding fails.
     pub fn verify_id(&self) -> Result<bool, AvcError> {
         Ok(self.recompute_id()? == self.receipt_id)
+    }
+
+    /// Verify the validator signature over the stored `signed_payload`.
+    ///
+    /// Requires that `signed_payload` is present, that it equals the
+    /// recomputed canonical signing payload, that its digest is
+    /// `receipt_id`, and that `signature` verifies over it.
+    ///
+    /// # Errors
+    /// Returns [`AvcError::InvalidInput`] naming the failed check, or
+    /// [`AvcError::Serialization`] when CBOR encoding fails.
+    pub fn verify_signed_payload(&self, validator_public_key: &PublicKey) -> Result<(), AvcError> {
+        let Some(signed_payload) = self.signed_payload.as_deref() else {
+            return Err(AvcError::InvalidInput {
+                reason: "receipt does not carry its validator signed bytes".into(),
+            });
+        };
+        if self.signing_payload()? != signed_payload {
+            return Err(AvcError::InvalidInput {
+                reason: "receipt signed bytes do not match its signed fields".into(),
+            });
+        }
+        if Hash256::digest(signed_payload) != self.receipt_id {
+            return Err(AvcError::InvalidInput {
+                reason: "receipt ID is not the digest of its signed bytes".into(),
+            });
+        }
+        if self.signature.is_empty()
+            || !crypto::verify(signed_payload, &self.signature, validator_public_key)
+        {
+            return Err(AvcError::InvalidInput {
+                reason: "receipt validator signature is invalid".into(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Verify the preserved subject attestation and bind it to this receipt.
+    ///
+    /// Runs [`AvcSubjectAttestation::verify`], then requires the subject's
+    /// signed action to match this receipt's credential ID, action ID,
+    /// action commitment hash and (when present) action descriptor.
+    ///
+    /// # Errors
+    /// Returns [`AvcError::InvalidInput`] naming the failed check.
+    pub fn verify_subject_attestation(&self) -> Result<DecodedAvcActionSignaturePayload, AvcError> {
+        let Some(attestation) = self.subject_attestation.as_ref() else {
+            return Err(AvcError::InvalidInput {
+                reason: "receipt does not carry a subject attestation".into(),
+            });
+        };
+        let decoded = attestation.verify()?;
+        if decoded.credential_id != self.credential_id {
+            return Err(AvcError::InvalidInput {
+                reason: "subject attestation credential does not match receipt".into(),
+            });
+        }
+        if self.action_id != Some(decoded.action.action_id) {
+            return Err(AvcError::InvalidInput {
+                reason: "subject attestation action does not match receipt".into(),
+            });
+        }
+        let commitment = avc_action_commitment_hash_for_credential_id(
+            &decoded.credential_id,
+            &decoded.action,
+            &decoded.validation_now,
+        )?;
+        if self.action_commitment_hash != Some(commitment) {
+            return Err(AvcError::InvalidInput {
+                reason: "subject attestation does not match receipt action commitment".into(),
+            });
+        }
+        if let Some(descriptor) = self.action_descriptor.as_ref()
+            && *descriptor != AvcActionDescriptor::from_action(&decoded.action)
+        {
+            return Err(AvcError::InvalidInput {
+                reason: "subject attestation does not match receipt action descriptor".into(),
+            });
+        }
+        Ok(decoded)
     }
 }
 
@@ -574,6 +855,72 @@ pub fn create_trust_receipt_with_evidence<F>(
 where
     F: FnOnce(&[u8]) -> Signature,
 {
+    build_trust_receipt(
+        validation,
+        action_id,
+        evidence,
+        None,
+        validator_did,
+        now,
+        sign,
+    )
+}
+
+/// Build and sign a trust receipt that preserves a verified subject (agent)
+/// attestation, using the [`AVC_RECEIPT_SUBJECT_ATTESTED_SIGNING_DOMAIN`]
+/// payload variant.
+///
+/// The attestation is verified and bound to the receipt before signing.
+///
+/// # Errors
+/// Returns [`AvcError::InvalidInput`] when the attestation does not verify
+/// or does not match the receipt, or [`AvcError::Serialization`] when CBOR
+/// encoding fails.
+pub fn create_trust_receipt_with_subject_attestation<F>(
+    validation: &AvcValidationResult,
+    action_id: Option<Hash256>,
+    evidence: AvcTrustReceiptEvidence,
+    subject_attestation: AvcSubjectAttestation,
+    validator_did: Did,
+    now: Timestamp,
+    sign: F,
+) -> Result<AvcTrustReceipt, AvcError>
+where
+    F: FnOnce(&[u8]) -> Signature,
+{
+    let receipt = build_trust_receipt(
+        validation,
+        action_id,
+        evidence,
+        Some(subject_attestation),
+        validator_did,
+        now,
+        |_| Signature::empty(),
+    )?;
+    receipt.verify_subject_attestation()?;
+    let mut receipt = receipt;
+    let payload = receipt
+        .signed_payload
+        .clone()
+        .ok_or_else(|| AvcError::InvalidInput {
+            reason: "receipt signed bytes were not recorded".into(),
+        })?;
+    receipt.signature = sign(&payload);
+    Ok(receipt)
+}
+
+fn build_trust_receipt<F>(
+    validation: &AvcValidationResult,
+    action_id: Option<Hash256>,
+    evidence: AvcTrustReceiptEvidence,
+    subject_attestation: Option<AvcSubjectAttestation>,
+    validator_did: Did,
+    now: Timestamp,
+    sign: F,
+) -> Result<AvcTrustReceipt, AvcError>
+where
+    F: FnOnce(&[u8]) -> Signature,
+{
     let validation_hash = hash_structured(validation).map_err(AvcError::from)?;
     let action_descriptor_hash = evidence
         .action_descriptor
@@ -602,11 +949,14 @@ where
         created_at: now,
         validation_hash,
         signature: Signature::empty(),
+        subject_attestation,
+        signed_payload: None,
     };
 
     let payload = receipt.signing_payload()?;
     receipt.receipt_id = Hash256::digest(&payload);
     receipt.signature = sign(&payload);
+    receipt.signed_payload = Some(payload);
     Ok(receipt)
 }
 
@@ -667,6 +1017,255 @@ mod tests {
             action_name: Some("records.search.case".into()),
         };
         AvcActionDescriptor::from_action(&action)
+    }
+
+    struct AttestedFixture {
+        validation: AvcValidationResult,
+        action: AvcActionRequest,
+        attestation: AvcSubjectAttestation,
+        evidence: AvcTrustReceiptEvidence,
+        validator: KeyPair,
+    }
+
+    fn attested_fixture() -> AttestedFixture {
+        let issuer_kp = fresh_issuer();
+        let subject_kp = KeyPair::from_secret_bytes([0x22; 32]).expect("valid seed");
+        let mut registry = crate::registry::InMemoryAvcRegistry::new();
+        registry.put_public_key(did("issuer"), issuer_kp.public);
+        let credential = issue_avc(baseline_draft(), |bytes| issuer_kp.sign(bytes)).unwrap();
+        let action = AvcActionRequest {
+            action_id: Hash256::from_bytes([0x42; 32]),
+            actor_did: did("agent"),
+            requested_permission: exo_authority::permission::Permission::Read,
+            tool: Some("records.search".into()),
+            target_did: Some(did("target")),
+            data_class: None,
+            estimated_budget_minor_units: Some(125),
+            estimated_risk_bp: Some(25),
+            human_approval: Some(crate::validation::AvcHumanApproval {
+                approver_did: did("approver"),
+                approved_at: ts(1_400_000),
+                expires_at: Some(ts(1_900_000)),
+                signature: Signature::from_bytes([9u8; 64]),
+            }),
+            requires_human_approval: true,
+            action_name: Some("records.search.case".into()),
+        };
+        // Agent-signed time differs from the validator's trusted time.
+        let agent_now = ts(1_500_000);
+        let signed_bytes =
+            crate::validation::avc_action_signature_payload(&credential, &action, &agent_now)
+                .unwrap();
+        let attestation = AvcSubjectAttestation {
+            subject_did: did("agent"),
+            subject_public_key: subject_kp.public,
+            subject_signature: subject_kp.sign(&signed_bytes),
+            validation_now: agent_now,
+            signed_bytes,
+        };
+        let commitment =
+            crate::validation::avc_action_commitment_hash(&credential, &action, &agent_now)
+                .unwrap();
+        let request = AvcValidationRequest {
+            credential,
+            action: None,
+            now: ts(1_500_000),
+        };
+        let validation = validate_avc(&request, &registry).unwrap();
+        let evidence = AvcTrustReceiptEvidence {
+            action_commitment_hash: Some(commitment),
+            action_descriptor: Some(AvcActionDescriptor::from_action(&action)),
+            timestamp_provenance: Some(AvcReceiptTimestampProvenance::ExternalTimestampAuthority),
+            ..AvcTrustReceiptEvidence::default()
+        };
+        AttestedFixture {
+            validation,
+            action,
+            attestation,
+            evidence,
+            validator: KeyPair::from_secret_bytes([0x33; 32]).expect("valid seed"),
+        }
+    }
+
+    fn attested_receipt(f: &AttestedFixture) -> AvcTrustReceipt {
+        create_trust_receipt_with_subject_attestation(
+            &f.validation,
+            Some(f.action.action_id),
+            f.evidence.clone(),
+            f.attestation.clone(),
+            did("validator"),
+            ts(1_600_000),
+            |bytes| f.validator.sign(bytes),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn subject_attested_receipt_verifies_signature_and_attestation() {
+        let f = attested_fixture();
+        let receipt = attested_receipt(&f);
+        assert!(receipt.verify_id().unwrap());
+        receipt.verify_signed_payload(&f.validator.public).unwrap();
+        let decoded = receipt.verify_subject_attestation().unwrap();
+        assert!(decoded.action.human_approval.is_some());
+        let attestation = receipt.subject_attestation.as_ref().unwrap();
+        assert_ne!(attestation.validation_now, receipt.created_at);
+        let payload = receipt.signing_payload().unwrap();
+        let needle = AVC_RECEIPT_SUBJECT_ATTESTED_SIGNING_DOMAIN.as_bytes();
+        assert!(payload.windows(needle.len()).any(|w| w == needle));
+    }
+
+    #[test]
+    fn subject_attested_receipt_round_trips_json_and_cbor() {
+        let f = attested_fixture();
+        let receipt = attested_receipt(&f);
+        let json = serde_json::to_string(&receipt).unwrap();
+        let from_json: AvcTrustReceipt = serde_json::from_str(&json).unwrap();
+        assert_eq!(from_json, receipt);
+        let mut cbor = Vec::new();
+        ciborium::ser::into_writer(&receipt, &mut cbor).unwrap();
+        let from_cbor: AvcTrustReceipt = ciborium::de::from_reader(cbor.as_slice()).unwrap();
+        assert_eq!(from_cbor, receipt);
+        from_json
+            .verify_signed_payload(&f.validator.public)
+            .unwrap();
+    }
+
+    #[test]
+    fn legacy_receipt_serialization_omits_new_fields() {
+        let (validation, _) = sample_validation();
+        let mut receipt =
+            create_trust_receipt(&validation, None, did("validator"), ts(2_000), |_| {
+                fixed_signature()
+            })
+            .unwrap();
+        receipt.signed_payload = None;
+        let json = serde_json::to_value(&receipt).unwrap();
+        assert!(json.get("subject_attestation").is_none());
+        assert!(json.get("signed_payload").is_none());
+        // A stored receipt without the new fields still deserializes.
+        let decoded: AvcTrustReceipt = serde_json::from_value(json).unwrap();
+        assert_eq!(decoded.subject_attestation, None);
+        assert_eq!(decoded.signed_payload, None);
+        assert!(decoded.verify_id().unwrap());
+    }
+
+    #[test]
+    fn new_receipts_record_validator_signed_bytes() {
+        let (validation, _) = sample_validation();
+        let validator = KeyPair::from_secret_bytes([0x33; 32]).unwrap();
+        let receipt = create_trust_receipt(&validation, None, did("validator"), ts(2_000), |b| {
+            validator.sign(b)
+        })
+        .unwrap();
+        assert_eq!(
+            receipt.signed_payload.as_deref(),
+            Some(receipt.signing_payload().unwrap().as_slice())
+        );
+        receipt.verify_signed_payload(&validator.public).unwrap();
+    }
+
+    #[test]
+    fn verify_signed_payload_rejects_missing_tampered_and_wrong_key() {
+        let f = attested_fixture();
+        let receipt = attested_receipt(&f);
+
+        let mut missing = receipt.clone();
+        missing.signed_payload = None;
+        assert!(missing.verify_signed_payload(&f.validator.public).is_err());
+
+        let mut tampered = receipt.clone();
+        tampered.signed_payload.as_mut().unwrap()[10] ^= 0x01;
+        assert!(tampered.verify_signed_payload(&f.validator.public).is_err());
+
+        let mut field = receipt.clone();
+        field.created_at = ts(1_600_001);
+        assert!(field.verify_signed_payload(&f.validator.public).is_err());
+
+        let other = KeyPair::from_secret_bytes([0x44; 32]).unwrap();
+        assert!(receipt.verify_signed_payload(&other.public).is_err());
+    }
+
+    #[test]
+    fn subject_attestation_mutations_fail_verification() {
+        let f = attested_fixture();
+        let receipt = attested_receipt(&f);
+        let mutate = |edit: &dyn Fn(&mut AvcSubjectAttestation)| {
+            let mut r = receipt.clone();
+            edit(r.subject_attestation.as_mut().unwrap());
+            r.verify_subject_attestation()
+        };
+        // key
+        let other = KeyPair::from_secret_bytes([0x55; 32]).unwrap();
+        assert!(mutate(&|a| a.subject_public_key = other.public).is_err());
+        // signature
+        assert!(mutate(&|a| a.subject_signature = Signature::from_bytes([1u8; 64])).is_err());
+        assert!(mutate(&|a| a.subject_signature = Signature::empty()).is_err());
+        // payload bytes
+        assert!(
+            mutate(&|a| {
+                let last = a.signed_bytes.len() - 1;
+                a.signed_bytes[last] ^= 0x01;
+            })
+            .is_err()
+        );
+        // signed time
+        assert!(mutate(&|a| a.validation_now = ts(1_500_001)).is_err());
+        // subject identity
+        assert!(mutate(&|a| a.subject_did = did("someone-else")).is_err());
+        // Any attestation mutation also changes the validator-signed payload.
+        let mut r = receipt.clone();
+        r.subject_attestation.as_mut().unwrap().validation_now = ts(1_500_001);
+        assert!(r.verify_signed_payload(&f.validator.public).is_err());
+    }
+
+    #[test]
+    fn subject_attestation_must_match_receipt_action() {
+        let f = attested_fixture();
+        let mut evidence = f.evidence.clone();
+        evidence.action_commitment_hash = Some(Hash256::from_bytes([0x99; 32]));
+        let result = create_trust_receipt_with_subject_attestation(
+            &f.validation,
+            Some(f.action.action_id),
+            evidence,
+            f.attestation.clone(),
+            did("validator"),
+            ts(1_600_000),
+            |bytes| f.validator.sign(bytes),
+        );
+        assert!(result.is_err());
+
+        let wrong_action = create_trust_receipt_with_subject_attestation(
+            &f.validation,
+            Some(Hash256::from_bytes([0x43; 32])),
+            f.evidence.clone(),
+            f.attestation.clone(),
+            did("validator"),
+            ts(1_600_000),
+            |bytes| f.validator.sign(bytes),
+        );
+        assert!(wrong_action.is_err());
+    }
+
+    #[test]
+    fn decode_rejects_non_canonical_and_wrong_domain_bytes() {
+        let f = attested_fixture();
+        let mut bytes = f.attestation.signed_bytes.clone();
+        bytes.push(0x00);
+        assert!(crate::validation::decode_avc_action_signature_payload(&bytes).is_err());
+        let mut other_domain = Vec::new();
+        ciborium::ser::into_writer(
+            &crate::validation::DecodedAvcActionSignaturePayload {
+                domain: "exo.other.v1".into(),
+                ..crate::validation::decode_avc_action_signature_payload(
+                    &f.attestation.signed_bytes,
+                )
+                .unwrap()
+            },
+            &mut other_domain,
+        )
+        .unwrap();
+        assert!(crate::validation::decode_avc_action_signature_payload(&other_domain).is_err());
     }
 
     fn external_timestamp_proof(subject_hash: Hash256) -> AvcReceiptExternalTimestampProof {
