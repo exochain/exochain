@@ -79,6 +79,17 @@ ignore = [
     # removal when hyper and its dependents no longer pull pin-utils.
     # https://github.com/exochain/exochain/issues/894
     { id = "RUSTSEC-0000-0000", reason = "pin-utils 0.1.0 unmaintained-only via hyper 1.8.1 -> axum/axum-server/hyper-rustls/hyper-util/reqwest; not a vulnerability; https://github.com/exochain/exochain/issues/894" },
+
+    # chrono — no longer maintained (RUSTSEC-2026-0543). Unmaintained only,
+    # not a vulnerability. All versions are affected (chrono 0.4.44 is locked)
+    # and there is no patched release; the advisory recommends migrating to
+    # `jiff` or `time`. chrono is a direct workspace dependency of
+    # exochain-core, exochain-gateway, exochain-node and exochain-verify, so
+    # removal is a dedicated migration, not a dependency bump.
+    # Accepted by the maintainer on 2026-11-17; revisit when a fixed release
+    # exists or the migration lands.
+    # https://github.com/exochain/exochain/pull/914 (refs #896)
+    { id = "RUSTSEC-2026-0543", reason = "no patched release; accepted by maintainer 2026-11-17; revisit when fixed" },
 ]
 
 # ---------------------------------------------------------------------------

@@ -89,12 +89,11 @@ canonical_one="$test_root/canonical-one"
 canonical_two="$test_root/canonical-two"
 digest_one="$(run_validator "$raw_root" "$metadata_file" "$lock_file" "$canonical_one")"
 digest_two="$(run_validator "$raw_root" "$metadata_file" "$lock_file" "$canonical_two")"
-# Regenerated with cargo-cyclonedx 0.5.9 after adding the exochain-verify
-# crate (33 workspace crates). Two independent canonical validations produced
-# identical bytes and digest. The change is the new first-party package and
-# its dependency edges (RFC 3161 crates moved from exochain-node to
-# exochain-verify); no new third-party package entered Cargo.lock.
-expected_digest=772544d3d17262aa40e77256e07fa1579a7efb2bdbdcf880c6603d794399bc72
+# Regenerated with cargo-cyclonedx 0.5.9 after the advisory lock upgrades
+# (libp2p-gossipsub 0.49.5, libp2p-quic 0.13.1, quinn-udp 0.5.16, rustix
+# 1.1.6, hyper 1.12.0; pin-utils removed). Two independent canonical
+# validations produced identical bytes and digest.
+expected_digest=1e611c719342a60d1deba959599fad12d43af9ef6d36ce4e07152b099f3bebc6
 [ "$digest_one" = "$expected_digest" ] && [ "$digest_two" = "$expected_digest" ] \
   || fail "exact cargo-cyclonedx 0.5.9 corpus did not produce the reviewed canonical digest"
 /usr/bin/diff -ru "$canonical_one" "$canonical_two" >/dev/null \
