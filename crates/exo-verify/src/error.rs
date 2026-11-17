@@ -58,6 +58,12 @@ pub enum VerifyError {
     #[error("inclusion proof does not verify at position {position} of {tree_size}")]
     InclusionProofInvalid { position: u64, tree_size: u64 },
 
+    /// Property 2: the position is not bound to the receipt chain: the leaf
+    /// before the receipt is not its `previous_receipt_hash`, or the signed
+    /// chain head is not the last leaf.
+    #[error("inclusion proof is not bound to the receipt chain: {reason}")]
+    ChainBindingInvalid { reason: String },
+
     /// Property 2: the tree head signature does not verify.
     #[error("receipt tree head signature is invalid")]
     TreeHeadSignatureInvalid,
