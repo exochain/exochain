@@ -14,7 +14,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import Link from 'next/link';
 import { DocPage } from '@/components/content/DocPage';
+import { loadPublicStatus } from '@/lib/public-status';
 import { publicMetadata } from '@/lib/public-site';
 
 export const metadata = publicMetadata({
@@ -26,7 +28,7 @@ export const metadata = publicMetadata({
 const QA: { q: string; a: string }[] = [
   {
     q: 'Is EXOCHAIN a cryptocurrency?',
-    a: 'No. EXOCHAIN is a custody-native blockchain. The economic layer ships the transaction mechanism, but the launch policy resolves every active price to zero. There is no token sale and no investment offering.'
+    a: 'No. EXOCHAIN is a custody-native blockchain. The internal ledger ships a transaction mechanism whose launch policy resolves every active price to zero. That policy does not set a third-party x402 payment amount or the price of commercial licensing. There is no token sale and no investment offering.'
   },
   {
     q: 'Does EXOCHAIN claim AI has consciousness?',
@@ -39,14 +41,11 @@ const QA: { q: string; a: string }[] = [
   {
     q: 'What happens to receipts after I revoke an AVC?',
     a: 'They remain. Receipts issued before revocation continue to be valid evidence of the authorization that existed at execution time. Future actions under the revoked AVC fail-closed.'
-  },
-  {
-    q: 'Is the network a finished production release?',
-    a: 'No. EXOCHAIN 0.2.7 is a published beta library release, not general availability. The release archives are legacy Rust libraries, not server executables, and the release notes claim no runtime deployment. Validator membership, attestation, and pricing policy are subject to change. See /status for the publication record and the Trust Center for current capabilities.',
   }
 ];
 
 export default function Page() {
+  const publicStatus = loadPublicStatus();
   return (
     <DocPage title="FAQ">
       <div className="space-y-6">
@@ -56,6 +55,20 @@ export default function Page() {
             <p>{x.a}</p>
           </div>
         ))}
+        <div>
+          <h3>Does a published release mean my deployment is production-ready?</h3>
+          <p>{publicStatus.maturity_summary}</p>
+          <p>
+            Release readiness and deployment acceptance are separate. The
+            publication record lists v{publicStatus.publication.version} as{' '}
+            {publicStatus.maturity}. A deployment still needs its own acceptance
+            of configuration, enabled features, validator membership,
+            attestation, and operational controls. See the{' '}
+            <Link href="/status">publication record and capability boundaries</Link>{' '}
+            and the <Link href="/trust-center">Trust Center</Link> for the
+            evidence relevant to that assessment.
+          </p>
+        </div>
       </div>
     </DocPage>
   );

@@ -22,27 +22,29 @@ import { publicMetadata } from '@/lib/public-site';
 export const metadata = publicMetadata({
   title: 'Contact',
   description:
-    'Talk to EXOCHAIN PBC about a design-partner pilot. Legal notices go to legal@exochain.com.',
+    'Scope an enterprise deployment, platform integration, or focused pilot with EXOCHAIN PBC. Legal notices go to legal@exochain.com.',
   path: '/contact',
 });
 
 export default function Page() {
   return (
     <>
-      <Section className="pt-16 pb-8" id="pilot">
+      <Section className="pt-16 pb-8" id="deployment">
+        <span id="pilot" aria-hidden="true" />
         <Eyebrow>EXOCHAIN PBC</Eyebrow>
-        <H1 className="mt-3">Talk to us about a design-partner pilot.</H1>
+        <H1 className="mt-3">Explore enterprise deployment.</H1>
         <Lede className="mt-5 max-w-prose">
-          Tell us the workflow, the organizations involved, and what a
-          counterparty would need to verify. We will direct your message to
-          the right team. For urgent security findings, use the
+          Tell us the workflow, the organizations involved, the systems you
+          use, and what each counterparty needs to verify. Include any payment
+          or financial-assurance requirements and your intended timeline.
+          We will direct your message to the right team. For urgent security findings, use the
           responsible-disclosure channel on the security page.
         </Lede>
       </Section>
       <Section className="py-8">
         <div className="grid md:grid-cols-[1.2fr_1fr] gap-6">
           <Card>
-            <CardHeader title="Design-partner pilot" />
+            <CardHeader title="Deployment inquiry" />
             <CardBody>
               <ContactForm />
             </CardBody>

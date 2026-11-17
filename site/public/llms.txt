@@ -4,17 +4,22 @@ Site: https://exochain.com
 Mirrors with the same content: https://exochain.ai and https://exochain.net
 Canonical host: https://exochain.com
 Project: EXOCHAIN
-Purpose: Proven Agentic Action Authority. Every agent action carries proof of who authorized it, the limits it ran under, and AI guarding with an E-STOP that fails closed. Beta v0.2.7. Normative specification v2.2. Apache-2.0 core.
+Purpose: The trust fabric for autonomous commerce. Make autonomous commerce accountable by connecting agent identity, delegated authority, commercial agreements, payments, and verifiable outcomes. Apache-2.0 core.
 Publisher: EXOCHAIN PBC. Legal notices: legal@exochain.com.
+Release facts: https://exochain.com/status. Use that publication record for the version, maturity, specification, and implementation boundaries; this discovery file does not independently assign release status.
 
 Important public pages:
-- / - Proven Agentic Action Authority, Proof of Authority, and design-partner pilot.
+- / - Accountable autonomous commerce, Proof of Authority, and enterprise deployment.
+- /#transaction - Deployment workflow: authorize, agree and entrust, execute, pay, verify. A workflow explanation, not a live transaction or verification service.
 - /why - The problem: payment authorization is not legitimate decision-making authority.
 - /proof-of-authority - Working category concept, not a new cryptographic primitive or an industry standard.
 - /standards - Interoperate with MCP, A2A, x402, and AP2.
-- /developers - Intended two-call experience. The verify/attest sample is illustrative API design, not the current EXOCHAIN SDK.
+- /developers - Documented TypeScript SDK discovery and health entry points, action-boundary controls, and integration resources.
 - /ecosystem - EXOCHAIN, CrossChecked, AVC, and the AI-SDLC Institute.
-- /engagement - Pilot or implementation, platform licensing, and managed governance services. No public prices.
+- /engagement - Enterprise deployment, platform licensing, and managed governance services. Focused pilots are an entry option. No public prices.
+- /engagement#assurance - Requirements for independent bonding, insurance, and reinsurance arrangements. Coverage requires a separate provider agreement and applies only within its stated scope.
+- /contact#deployment - Deployment, platform integration, pilot, and assurance-provider inquiries.
+- /status - Canonical published release facts and bounded capabilities. A version change alone is not evidence of general availability or production deployment.
 - /lynk - EXOCHAIN LYNK Protocol discovery for receipted LLM and MCP usage.
 - /trust-receipts - Trust receipt anatomy and evidence model.
 - /docs - Public documentation index.
