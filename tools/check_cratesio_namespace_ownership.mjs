@@ -373,7 +373,7 @@ function resolvePackageNames() {
     || new Set(actual).size !== 33
     || actual.some((name, index) => name !== expected[index])
   ) {
-    throw new Error("publishable Cargo metadata differs from the exact 32-crate release inventory");
+    throw new Error("publishable Cargo metadata differs from the exact 33-crate release inventory");
   }
   return [...CANONICAL_CRATES];
 }
