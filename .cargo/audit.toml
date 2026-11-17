@@ -54,4 +54,12 @@ ignore = [
     # untrusted external input; it is an internal dependency of the vendored
     # verifier crate graph, not a logging sink this workspace configures.
     "RUSTSEC-2025-0055",
+
+    # chrono — no longer maintained (Gate 6 "unmaintained" class).
+    # All versions affected. Direct workspace dependency of
+    # exochain-core, exochain-gateway, exochain-node and exochain-verify.
+    # No patched release; accepted by maintainer 2026-11-17; revisit when fixed
+    # (or when the jiff/time migration recommended by the advisory lands).
+    # https://github.com/exochain/exochain/pull/914 (refs #896)
+    "RUSTSEC-2026-0543",
 ]
