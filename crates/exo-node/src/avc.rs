@@ -1040,6 +1040,7 @@ fn receipt_inclusion_proof(
                 tree_size,
                 root: exo_dag::mmr::root(&cache.mmr),
                 chain_head,
+                chain_id: cache.leaves[0],
                 signature: Signature::empty(),
             };
             let payload = head.signing_payload().map_err(|error| {
@@ -1061,6 +1062,7 @@ fn receipt_inclusion_proof(
     let last = cache.leaves.len() - 1;
     let previous_leaf_path = position.checked_sub(1).map(leaf_path).transpose()?;
     let chain_head_path = (position < last).then(|| leaf_path(last)).transpose()?;
+    let genesis_path = (position >= 2).then(|| leaf_path(0)).transpose()?;
     Ok(Some(ReceiptInclusionProof {
         receipt_id: *receipt_id,
         leaf_index: u64::try_from(position)?,
@@ -1070,6 +1072,7 @@ fn receipt_inclusion_proof(
         tree_head,
         previous_leaf_path,
         chain_head_path,
+        genesis_path,
     }))
 }
 
@@ -3959,6 +3962,23 @@ fn verify_subject_action_signature(
     })
 }
 
+/// Refuse to issue an externally timestamped receipt whose subject-signed
+/// time is later than the trusted receipt time: offline verification would
+/// reject it. Local-clock receipts never pass offline verification, so the
+/// check does not apply to them.
+fn reject_subject_time_after_trusted_time(
+    attestation: &AvcSubjectAttestation,
+    trusted_now: Timestamp,
+) -> ApiResult<()> {
+    if attestation.validation_now > trusted_now {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "subject action time is after the trusted receipt time".into(),
+        ));
+    }
+    Ok(())
+}
+
 fn verify_llm_usage_evidence_signature(
     registry: &InMemoryAvcRegistry,
     envelope: &LlmUsageEvidenceEnvelope,
@@ -4199,6 +4219,7 @@ async fn handle_emit_receipt(
     };
     let timestamp_evidence = trusted_receipt_timestamp_evidence(&state, &evidence_subject).await?;
     let trusted_now = timestamp_evidence.trusted_now;
+    let externally_timestamped = timestamp_evidence.external_timestamp_proof.is_some();
     let finality_store = state.finality_store.clone();
     let anchor_store = finality_store.clone();
     let anchor_signer = Arc::clone(&receipt_signer);
@@ -4213,6 +4234,9 @@ async fn handle_emit_receipt(
                 &subject_signature,
                 subject_public_key,
             )?;
+            if externally_timestamped {
+                reject_subject_time_after_trusted_time(&subject_attestation, trusted_now)?;
+            }
             let mut validation_request = submitted_request;
             validation_request.now = trusted_now;
             let validation = validate_avc(&validation_request, registry).map_err(map_avc_error)?;
@@ -4402,6 +4426,7 @@ async fn handle_llm_usage_emit_receipt(
     };
     let timestamp_evidence = trusted_receipt_timestamp_evidence(&state, &evidence_subject).await?;
     let trusted_now = timestamp_evidence.trusted_now;
+    let externally_timestamped = timestamp_evidence.external_timestamp_proof.is_some();
     let finality_store = state.finality_store.clone();
     let anchor_store = finality_store.clone();
     let anchor_signer = Arc::clone(&receipt_signer);
@@ -4426,6 +4451,9 @@ async fn handle_llm_usage_emit_receipt(
                 &subject_signature,
                 subject_public_key,
             )?;
+            if externally_timestamped {
+                reject_subject_time_after_trusted_time(&subject_attestation, trusted_now)?;
+            }
             let mut validation_request = submitted_request;
             validation_request.now = trusted_now;
             let validation = validate_avc(&validation_request, registry).map_err(map_avc_error)?;
@@ -8014,6 +8042,50 @@ mod tests {
         serde_json::from_slice(&read_body(response).await).unwrap()
     }
 
+    #[tokio::test]
+    async fn emit_rejects_subject_time_after_trusted_time() {
+        let state = fresh_state();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(baseline_credential())
+            .unwrap();
+        let mut action = baseline_action(Did::new("did:exo:agent").unwrap());
+        action.action_id = Hash256::from_bytes([0x6c; 32]);
+        // The test timestamp authority answers 1_600_000; the agent claims later.
+        let validation = AvcValidationRequest {
+            credential: baseline_credential(),
+            action: Some(action),
+            now: Timestamp::new(1_600_001, 0),
+        };
+        let request = EmitReceiptRequest {
+            subject_signature: sign_action(&validation, &subject_keypair()),
+            validation,
+            subject_public_key: None,
+        };
+        let response = avc_router(Arc::clone(&state))
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/avc/receipts/emit")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            state
+                .registry
+                .lock()
+                .unwrap()
+                .receipt_chain_head()
+                .is_none()
+        );
+    }
+
     fn assert_inclusion_verifies(
         proof: &ReceiptInclusionProof,
         receipt: &AvcTrustReceipt,
@@ -8095,6 +8167,15 @@ mod tests {
             0,
             2,
         );
+
+        // A third receipt needs the genesis path; every head names the chain
+        // by its first receipt.
+        let third = emit_action_for_inclusion(&state, 0x63).await;
+        let third_proof = third.receipt_inclusion.as_ref().unwrap();
+        assert_inclusion_verifies(third_proof, &third.receipt, 2, 3);
+        assert!(third_proof.genesis_path.is_some());
+        assert_eq!(third_proof.tree_head.chain_id, first.receipt.receipt_id);
+        assert_eq!(second_proof.tree_head.chain_id, first.receipt.receipt_id);
     }
 
     #[tokio::test]
@@ -8140,6 +8221,7 @@ mod tests {
                 ..Default::default()
             },
             latest_tree_head: None,
+            expected_chain_id: None,
         };
         let bundle = exo_verify::ReceiptBundle {
             format: exo_verify::RECEIPT_BUNDLE_FORMAT_V2.into(),

@@ -85,6 +85,12 @@ pub struct TrustInputs {
     /// validator signed that head, not that it still is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_tree_head: Option<crate::inclusion::ReceiptTreeHead>,
+    /// The chain the caller expects: the receipt ID of its genesis receipt.
+    /// When set, a tree head for any other chain fails with
+    /// [`VerifyError::ChainIdMismatch`], even if the same validator key
+    /// signs several chains.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_chain_id: Option<Hash256>,
 }
 
 /// Facts established by a successful verification.
@@ -95,6 +101,8 @@ pub struct VerifiedReceipt {
     pub leaf_index: u64,
     /// Chain size at the signed tree head the position was proven against.
     pub tree_size: u64,
+    /// Chain the receipt was proven in: the receipt ID of its genesis receipt.
+    pub chain_id: Hash256,
     /// Time asserted by the RFC 3161 timestamp authority. The token covers
     /// the receipt's action evidence (credential, action, action commitment,
     /// descriptor hash and previous receipt) and equals the receipt time.
@@ -224,6 +232,11 @@ pub fn verify_receipt_bundle(
     }
     proof.tree_head.verify_signature(&validator.public_key)?;
     proof.verify_path(receipt.previous_receipt_hash.as_ref())?;
+    if let Some(expected) = trust.expected_chain_id
+        && expected != proof.tree_head.chain_id
+    {
+        return Err(VerifyError::ChainIdMismatch);
+    }
     if let Some(latest) = trust.latest_tree_head.as_ref()
         && latest != &proof.tree_head
     {
@@ -237,6 +250,7 @@ pub fn verify_receipt_bundle(
         receipt_id: receipt.receipt_id,
         leaf_index: proof.leaf_index,
         tree_size: proof.tree_head.tree_size,
+        chain_id: proof.tree_head.chain_id,
         trusted_time,
         subject_signed_at: attestation.validation_now,
         validator_did: receipt.validator_did.to_string(),

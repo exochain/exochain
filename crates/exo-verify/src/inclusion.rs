@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::VerifyError;
 
 /// Domain tag for the validator-signed receipt tree head.
-pub const AVC_RECEIPT_TREE_HEAD_DOMAIN: &str = "exo.avc.receipt.tree_head.v1";
+pub const AVC_RECEIPT_TREE_HEAD_DOMAIN: &str = "exo.avc.receipt.tree_head.v2";
 
 /// Validator-signed commitment to the receipt MMR at a given size.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,6 +46,9 @@ pub struct ReceiptTreeHead {
     pub root: Hash256,
     /// Receipt ID of the last leaf (the chain head at this size).
     pub chain_head: Hash256,
+    /// Receipt ID of the first leaf (the genesis receipt), identifying the
+    /// chain this head belongs to.
+    pub chain_id: Hash256,
     /// Validator signature over [`ReceiptTreeHead::signing_payload`].
     pub signature: Signature,
 }
@@ -57,6 +60,7 @@ struct TreeHeadSigningPayload<'a> {
     tree_size: u64,
     root: &'a Hash256,
     chain_head: &'a Hash256,
+    chain_id: &'a Hash256,
 }
 
 impl ReceiptTreeHead {
@@ -73,6 +77,7 @@ impl ReceiptTreeHead {
                 tree_size: self.tree_size,
                 root: &self.root,
                 chain_head: &self.chain_head,
+                chain_id: &self.chain_id,
             },
             &mut buf,
         )
@@ -110,10 +115,11 @@ pub struct LeafPath {
 /// Proof that a receipt is the leaf at `leaf_index` of the receipt MMR
 /// committed to by `tree_head`.
 ///
-/// Two extra paths bind the position to the linear receipt chain under the
-/// same root: `previous_leaf_path` proves that the leaf before the receipt
-/// is the receipt's `previous_receipt_hash`, and `chain_head_path` proves
-/// that the signed `chain_head` is the last leaf.
+/// Extra paths bind the position to the linear receipt chain under the same
+/// root: `previous_leaf_path` proves that the leaf before the receipt is the
+/// receipt's `previous_receipt_hash`, `chain_head_path` proves that the
+/// signed `chain_head` is the last leaf, and `genesis_path` proves that the
+/// signed `chain_id` is the first leaf.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReceiptInclusionProof {
     /// Receipt the proof is for.
@@ -136,6 +142,11 @@ pub struct ReceiptInclusionProof {
     /// the last leaf and absent otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chain_head_path: Option<LeafPath>,
+    /// Path for the leaf at index 0. Required when `leaf_index >= 2`; for
+    /// index 0 the chain ID is the receipt and for index 1 it is the
+    /// previous receipt, both already proven.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub genesis_path: Option<LeafPath>,
 }
 
 impl ReceiptInclusionProof {
@@ -149,7 +160,8 @@ impl ReceiptInclusionProof {
     /// Returns [`VerifyError::InclusionProofInvalid`] when the path, position
     /// or peaks do not reproduce the tree head root, and
     /// [`VerifyError::ChainBindingInvalid`] when the previous leaf is not
-    /// `previous_receipt_hash` or the signed chain head is not the last leaf.
+    /// `previous_receipt_hash`, the signed chain head is not the last leaf, or
+    /// the signed chain ID is not the first leaf.
     pub fn verify_path(&self, previous_receipt_hash: Option<&Hash256>) -> Result<(), VerifyError> {
         let invalid = || VerifyError::InclusionProofInvalid {
             position: self.leaf_index,
@@ -197,6 +209,20 @@ impl ReceiptInclusionProof {
                 ));
             }
             (_, Some(_), None) => return Err(chain("previous leaf path is missing")),
+        }
+        let chain_id = &self.tree_head.chain_id;
+        match (position, previous_receipt_hash, &self.genesis_path) {
+            (0, _, None) if chain_id == &self.receipt_id => {}
+            (1, Some(previous), None) if chain_id == previous => {}
+            (0 | 1, _, _) => {
+                return Err(chain("chain ID is not the first leaf"));
+            }
+            (_, _, Some(path)) => {
+                if !self.leaf_proves(chain_id, 0, path, leaf_count) {
+                    return Err(chain("chain ID is not the first leaf"));
+                }
+            }
+            (_, _, None) => return Err(chain("genesis path is missing")),
         }
         if position + 1 == leaf_count {
             if self.tree_head.chain_head != self.receipt_id {
@@ -326,8 +352,9 @@ mod tests {
     use super::*;
 
     const TREE_HEAD_VECTOR_HEX: &str = concat!(
-        "a566646f6d61696e781c65786f2e6176632e726563656970742e747265655f686561642e76316d76616c696461746f725f646964716469643a65786f3a76616c696461746f7269747265655f73697a650564726f6f749820111111111111111111111",
-        "11111111111111111111111111111111111111111116a636861696e5f68656164982018221822182218221822182218221822182218221822182218221822182218221822182218221822182218221822182218221822182218221822182218221822",
+        "a666646f6d61696e781c65786f2e6176632e726563656970742e747265655f686561642e76326d76616c696461746f725f646964716469643a65786f3a76616c696461746f7269747265655f73697a650564726f6f74982011111",
+        "111111111111111111111111111111111111111111111111111111111116a636861696e5f686561649820182218221822182218221822182218221822182218221822182218221822182218221822182218221822182218221822",
+        "1822182218221822182218221822182268636861696e5f6964982018331833183318331833183318331833183318331833183318331833183318331833183318331833183318331833183318331833183318331833183318331833",
     );
 
     fn leaf(i: u8) -> Hash256 {
@@ -346,6 +373,7 @@ mod tests {
             tree_size: u64::try_from(leaves.len()).unwrap(),
             root: mmr::root(tree),
             chain_head: *leaves.last().unwrap(),
+            chain_id: leaves[0],
             signature: Signature::empty(),
         };
         head.signature = validator.sign(&head.signing_payload().unwrap());
@@ -365,6 +393,7 @@ mod tests {
             tree_head: head,
             previous_leaf_path: (position > 0).then(|| path(position - 1)),
             chain_head_path: (position + 1 < leaves.len()).then(|| path(leaves.len() - 1)),
+            genesis_path: (position >= 2).then(|| path(0)),
         }
     }
 
@@ -487,6 +516,19 @@ mod tests {
         no_head.chain_head_path = None;
         assert!(chain_err(&no_head, Some(&leaves[2])));
 
+        // Signed chain ID is not the first leaf.
+        let mut wrong_chain = proof.clone();
+        wrong_chain.tree_head.chain_id = leaves[1];
+        assert!(chain_err(&wrong_chain, Some(&leaves[2])));
+        let mut no_genesis = proof.clone();
+        no_genesis.genesis_path = None;
+        assert!(chain_err(&no_genesis, Some(&leaves[2])));
+        let second = proof_from_dag(&tree, &leaves, 1, &validator);
+        second.verify_path(Some(&leaves[0])).unwrap();
+        let mut second_wrong = second.clone();
+        second_wrong.tree_head.chain_id = leaves[3];
+        assert!(chain_err(&second_wrong, Some(&leaves[0])));
+
         // First leaf must not claim a predecessor.
         let first = proof_from_dag(&tree, &leaves, 0, &validator);
         first.verify_path(None).unwrap();
@@ -505,6 +547,7 @@ mod tests {
             tree_size: 5,
             root: Hash256::from_bytes([0x11; 32]),
             chain_head: Hash256::from_bytes([0x22; 32]),
+            chain_id: Hash256::from_bytes([0x33; 32]),
             signature: Signature::empty(),
         };
         let payload = head.signing_payload().unwrap();
@@ -524,7 +567,8 @@ mod tests {
             head.verify_signature(&other.public),
             Err(VerifyError::TreeHeadSignatureInvalid)
         );
-        let mutations: [fn(&mut ReceiptTreeHead); 5] = [
+        let mutations: [fn(&mut ReceiptTreeHead); 6] = [
+            |h| h.chain_id = Hash256::from_bytes([7; 32]),
             |h| h.tree_size += 1,
             |h| h.root = Hash256::from_bytes([5; 32]),
             |h| h.chain_head = Hash256::from_bytes([6; 32]),

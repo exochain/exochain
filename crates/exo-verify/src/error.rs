@@ -79,6 +79,11 @@ pub enum VerifyError {
     #[error("receipt tree head validator does not match the receipt validator")]
     TreeHeadValidatorMismatch,
 
+    /// Property 2: the tree head is for a different chain than the caller
+    /// expects.
+    #[error("receipt tree head is for a different chain than expected")]
+    ChainIdMismatch,
+
     /// Property 2: the proof is not against the caller's latest trusted tree
     /// head (for example, the bundle predates a rollback). Re-fetch the
     /// proof against the latest head.

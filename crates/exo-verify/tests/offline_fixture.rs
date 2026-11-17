@@ -529,6 +529,7 @@ fn receipt_moved_into_an_unrelated_tree_fails() {
         tree_size: 4,
         root: mmr::root(&tree),
         chain_head: leaves[3],
+        chain_id: leaves[0],
         signature: exo_core::Signature::empty(),
     };
     resign(&mut head, &attacker);
@@ -541,6 +542,7 @@ fn receipt_moved_into_an_unrelated_tree_fails() {
         tree_head: head,
         previous_leaf_path: Some(path(0)),
         chain_head_path: Some(path(3)),
+        genesis_path: None,
     };
     assert_eq!(
         verify(&bundle, &trust),
@@ -556,6 +558,30 @@ fn receipt_moved_into_an_unrelated_tree_fails() {
         .inclusion_proof
         .verify_path(bundle.receipt.previous_receipt_hash.as_ref())
         .unwrap();
+    // Its first leaf is not the real genesis receipt, so a caller pinning the
+    // chain ID rejects it even under a receipt-validator signature.
+    assert_ne!(
+        Some(bundle.inclusion_proof.tree_head.chain_id),
+        trust.expected_chain_id
+    );
+}
+
+#[test]
+fn tree_head_for_another_chain_fails() {
+    let (bundle, mut trust) = fixture();
+    let verified = verify_receipt_bundle(&bundle, &trust).unwrap();
+    assert_eq!(Some(verified.chain_id), trust.expected_chain_id);
+
+    trust.expected_chain_id = Some(Hash256::digest(b"another-chain"));
+    assert_eq!(verify(&bundle, &trust), Err(VerifyError::ChainIdMismatch));
+
+    // The signed chain ID must be proven as the first leaf.
+    let (mut bundle, trust) = fixture();
+    bundle.inclusion_proof.genesis_path = None;
+    assert!(matches!(
+        verify(&bundle, &trust),
+        Err(VerifyError::ChainBindingInvalid { .. })
+    ));
 }
 
 /// The position must be bound to the receipt chain under the signed root:

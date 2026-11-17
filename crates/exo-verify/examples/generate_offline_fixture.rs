@@ -512,6 +512,7 @@ fn main() -> Result<()> {
         tree_size: 5,
         root: mmr::root(&tree),
         chain_head: fifth.receipt_id,
+        chain_id: first.receipt_id,
         signature: Signature::empty(),
     };
     tree_head.signature = parties.validator.sign(&tree_head.signing_payload()?);
@@ -527,6 +528,7 @@ fn main() -> Result<()> {
             tree_head,
             previous_leaf_path: Some(leaf_path(&tree, 1)?),
             chain_head_path: Some(leaf_path(&tree, 4)?),
+            genesis_path: Some(leaf_path(&tree, 0)?),
         },
     };
     let entry = |label: &str, key: &KeyPair, role: KeyRole| KeyBundleEntry {
@@ -551,6 +553,7 @@ fn main() -> Result<()> {
             allowed_policy_oids: vec![TEST_TSA_POLICY_OID.into()],
         },
         latest_tree_head: None,
+        expected_chain_id: Some(first.receipt_id),
     };
     let verified = verify_receipt_bundle(&bundle, &trust)?;
     assert!(verified.human_approval_present_unverified);
