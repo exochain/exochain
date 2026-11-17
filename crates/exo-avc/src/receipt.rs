@@ -797,11 +797,21 @@ impl AvcTrustReceipt {
                 reason: "subject attestation does not match receipt action commitment".into(),
             });
         }
+        let signed_descriptor = AvcActionDescriptor::from_action(&decoded.action);
         if let Some(descriptor) = self.action_descriptor.as_ref()
-            && *descriptor != AvcActionDescriptor::from_action(&decoded.action)
+            && *descriptor != signed_descriptor
         {
             return Err(AvcError::InvalidInput {
                 reason: "subject attestation does not match receipt action descriptor".into(),
+            });
+        }
+        // The descriptor hash is what the RFC 3161 evidence subject covers, so
+        // it must be the hash of the descriptor the subject actually signed.
+        if let Some(descriptor_hash) = self.action_descriptor_hash
+            && descriptor_hash != avc_action_descriptor_hash(&signed_descriptor)?
+        {
+            return Err(AvcError::InvalidInput {
+                reason: "receipt action descriptor hash does not match the signed action".into(),
             });
         }
         Ok(decoded)
@@ -1248,6 +1258,24 @@ mod tests {
     }
 
     #[test]
+    fn descriptor_hash_must_be_the_hash_of_the_signed_action() {
+        let f = attested_fixture();
+        let receipt = attested_receipt(&f);
+        receipt.verify_subject_attestation().unwrap();
+
+        // Descriptor matches the signed action, but the hash the timestamp
+        // authority covered is for a different descriptor.
+        let mut swapped = receipt.clone();
+        swapped.action_descriptor_hash = Some(Hash256::from_bytes([0x5a; 32]));
+        let error = swapped.verify_subject_attestation().unwrap_err();
+        assert!(error.to_string().contains("descriptor hash"), "{error}");
+
+        let mut hash_only = swapped;
+        hash_only.action_descriptor = None;
+        assert!(hash_only.verify_subject_attestation().is_err());
+    }
+
+    #[test]
     fn decode_rejects_non_canonical_and_wrong_domain_bytes() {
         let f = attested_fixture();
         let mut bytes = f.attestation.signed_bytes.clone();
@@ -1277,6 +1305,154 @@ mod tests {
             |bytes| authority.sign(bytes),
         )
         .unwrap()
+    }
+
+    /// Payload digests and lengths for every historical receipt variant,
+    /// built from fixed inputs.
+    fn historical_payload_vectors() -> Vec<(&'static str, String, usize)> {
+        let (validation, action_id) = sample_validation();
+        let validator = KeyPair::from_secret_bytes([0x21; 32]).expect("valid seed");
+        let validator_did = did("golden-validator");
+        let now = ts(1_700_000);
+        let sign = |bytes: &[u8]| validator.sign(bytes);
+        let mut out = Vec::new();
+        let mut record = |name: &'static str, receipt: &AvcTrustReceipt, bytes: Vec<u8>| {
+            assert_eq!(Hash256::digest(&bytes), receipt.receipt_id, "{name}");
+            assert_eq!(
+                receipt.signing_payload_matching_receipt_id().unwrap(),
+                Some(bytes.clone()),
+                "{name}"
+            );
+            out.push((name, receipt.receipt_id.to_string(), bytes.len()));
+        };
+
+        let legacy = create_trust_receipt(
+            &validation,
+            Some(action_id),
+            validator_did.clone(),
+            now,
+            sign,
+        )
+        .unwrap();
+        record("legacy", &legacy, legacy.signing_payload().unwrap());
+
+        let evidence = AvcTrustReceiptEvidence {
+            action_commitment_hash: Some(Hash256::from_bytes([0x61; 32])),
+            action_descriptor: Some(sample_action_descriptor()),
+            previous_receipt_hash: Some(Hash256::from_bytes([0x62; 32])),
+            timestamp_provenance: Some(AvcReceiptTimestampProvenance::ExternalTimestampAuthority),
+            external_timestamp_proof: Some(external_timestamp_proof(Hash256::from_bytes(
+                [0x63; 32],
+            ))),
+            ..AvcTrustReceiptEvidence::default()
+        };
+        let extended = create_trust_receipt_with_evidence(
+            &validation,
+            Some(action_id),
+            evidence.clone(),
+            validator_did.clone(),
+            now,
+            sign,
+        )
+        .unwrap();
+        record("extended", &extended, extended.signing_payload().unwrap());
+
+        let llm = create_trust_receipt_with_evidence(
+            &validation,
+            Some(action_id),
+            AvcTrustReceiptEvidence {
+                llm_usage_evidence_hash: Some(Hash256::from_bytes([0x64; 32])),
+                ..evidence.clone()
+            },
+            validator_did.clone(),
+            now,
+            sign,
+        )
+        .unwrap();
+        record("llm_usage", &llm, llm.signing_payload().unwrap());
+
+        let payment = create_trust_receipt_with_evidence(
+            &validation,
+            Some(action_id),
+            AvcTrustReceiptEvidence {
+                payment_evidence_hash: Some(Hash256::from_bytes([0x65; 32])),
+                ..evidence
+            },
+            validator_did,
+            now,
+            sign,
+        )
+        .unwrap();
+        record(
+            "payment_bound",
+            &payment,
+            payment.signing_payload().unwrap(),
+        );
+
+        let mut pre_lynk = extended.clone();
+        let mut pre_lynk_bytes = Vec::new();
+        ciborium::ser::into_writer(
+            &PreLynkExtendedReceiptSigningPayload {
+                domain: AVC_RECEIPT_SIGNING_DOMAIN,
+                schema_version: pre_lynk.schema_version,
+                credential_id: &pre_lynk.credential_id,
+                action_id: pre_lynk.action_id.as_ref(),
+                action_commitment_hash: pre_lynk.action_commitment_hash.as_ref(),
+                action_descriptor: pre_lynk.action_descriptor.as_ref(),
+                action_descriptor_hash: pre_lynk.action_descriptor_hash.as_ref(),
+                previous_receipt_hash: pre_lynk.previous_receipt_hash.as_ref(),
+                timestamp_provenance: pre_lynk.timestamp_provenance.as_ref(),
+                external_timestamp_proof: pre_lynk.external_timestamp_proof.as_ref(),
+                validator_did: &pre_lynk.validator_did,
+                decision: &pre_lynk.decision,
+                reason_codes: &pre_lynk.reason_codes,
+                created_at: &pre_lynk.created_at,
+                validation_hash: &pre_lynk.validation_hash,
+            },
+            &mut pre_lynk_bytes,
+        )
+        .unwrap();
+        pre_lynk.receipt_id = Hash256::digest(&pre_lynk_bytes);
+        record("pre_lynk", &pre_lynk, pre_lynk_bytes);
+        out
+    }
+
+    /// Fixed vectors captured from `main` before issue #897. Every historical
+    /// receipt variant must keep its exact payload bytes and receipt ID.
+    #[test]
+    fn historical_payload_vectors_match_pre_897_main() {
+        let expected = [
+            (
+                "legacy",
+                "294c8d35520225ea8c86498041b4d8cafc845b73d0e8e169560bf808c40a0f62",
+                384,
+            ),
+            (
+                "extended",
+                "96768a7eb7499f20a8191f606baed8669e65cc4c4fc8352e67bfca1026d1f87c",
+                1403,
+            ),
+            (
+                "llm_usage",
+                "1d1a9fb7c1cf0e04c826b61a64a41a21916d977594211fdea8c2cfa7b431669d",
+                1468,
+            ),
+            (
+                "payment_bound",
+                "b0e0ca3b9ae9334ac4b4ac02a8842e9d79bfbb734a7c150359859057ed6fbcd2",
+                1491,
+            ),
+            (
+                "pre_lynk",
+                "2a870a40c59bfffc5c6f25d476012f8287012d7c901595843d663599cbe9e648",
+                1378,
+            ),
+        ];
+        let actual = historical_payload_vectors();
+        assert_eq!(actual.len(), expected.len());
+        for ((name, id, len), (want_name, want_id, want_len)) in actual.iter().zip(expected) {
+            assert_eq!((*name, id.as_str(), *len), (want_name, want_id, want_len));
+        }
     }
 
     #[test]
