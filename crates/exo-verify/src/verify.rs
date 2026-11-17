@@ -58,6 +58,10 @@ pub struct TsaTrust {
     /// SPKI of CAs trusted to issue TSA signing certificates.
     #[serde(default)]
     pub issuing_ca_spki_der_hex: Vec<String>,
+    /// TSA policy OIDs the caller accepts. When empty, any policy is
+    /// accepted (the policy is still covered by the validator signature).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_policy_oids: Vec<String>,
 }
 
 /// Caller-supplied trust inputs.
@@ -75,24 +79,30 @@ pub struct VerifiedReceipt {
     pub leaf_index: u64,
     /// Chain size at the signed tree head the position was proven against.
     pub tree_size: u64,
-    /// Time asserted by the RFC 3161 timestamp authority.
+    /// Time asserted by the RFC 3161 timestamp authority. The token covers
+    /// the receipt's action evidence (credential, action, action commitment,
+    /// descriptor hash and previous receipt) and equals the receipt time.
+    /// The decision and reason codes are attested by the validator
+    /// signature, not by the timestamp authority.
     pub trusted_time: Timestamp,
     /// Time the subject (agent) signed, distinct from `trusted_time`.
     pub subject_signed_at: Timestamp,
     pub validator_did: String,
     pub subject_did: String,
-    /// Whether the subject's signed action carried a human approval. Its
-    /// signature is not verified offline here (post-GA follow-up).
-    pub human_approval_present: bool,
+    /// Whether the subject's signed action carried a human approval. This is
+    /// presence only: the approval signature is NOT verified (see #911), so
+    /// do not treat it as an approval check.
+    pub human_approval_present_unverified: bool,
 }
 
 /// Verify all four level-3 properties of a receipt bundle offline.
 ///
 /// Every property must pass. Checks run in this order and the first failure
-/// is returned: legacy-receipt material, signer identity (property 3), RFC
-/// 3161 trusted time (property 4), signatures over the exact stored bytes
-/// (property 1), and inclusion and position under a signed tree head
-/// (property 2). Time is checked before the validator signature so a
+/// is returned: legacy-receipt material, validator identity at the receipt
+/// time (property 3), RFC 3161 trusted time (property 4), agent identity at
+/// the trusted time and at its signed time (property 3), signatures over the
+/// exact stored bytes (property 1), and inclusion and chain position under a
+/// tree head signed by the receipt validator (property 2). Time is checked before the validator signature so a
 /// missing or bad timestamp reports as such, even though the timestamp proof
 /// is also covered by the validator's signed bytes.
 ///
@@ -122,21 +132,28 @@ pub fn verify_receipt_bundle(
         });
     };
 
-    // Property 3: both signers resolve to known identities.
+    // Property 3: the validator key is valid at the receipt time. The
+    // receipt time is bound to the RFC 3161 time below.
     let validator = trust.key_bundle.resolve(
         &receipt.validator_did,
         KeyRole::Validator,
         Some(&receipt.created_at),
     )?;
-    trust.key_bundle.require_key(
-        &attestation.subject_did,
-        &attestation.subject_public_key,
-        KeyRole::Agent,
-        Some(&attestation.validation_now),
-    )?;
 
     // Property 4: RFC 3161 trusted time over this receipt's evidence.
     let trusted_time = verify_trusted_time(receipt, &trust.tsa)?;
+
+    // Property 3: the agent key must be valid at the trusted time, not only
+    // at the time the agent asserted in its own signed bytes, so an expired
+    // key cannot backdate `validation_now` into its validity window.
+    for at in [&trusted_time, &attestation.validation_now] {
+        trust.key_bundle.require_key(
+            &attestation.subject_did,
+            &attestation.subject_public_key,
+            KeyRole::Agent,
+            Some(at),
+        )?;
+    }
 
     // Property 1: validator signature over the exact stored bytes.
     let recomputed = receipt
@@ -172,20 +189,13 @@ pub fn verify_receipt_bundle(
     if proof.receipt_id != receipt.receipt_id {
         return Err(VerifyError::InclusionProofReceiptMismatch);
     }
-    let tree_head_signer =
-        trust
-            .key_bundle
-            .resolve(&proof.tree_head.validator_did, KeyRole::Validator, None)?;
-    proof
-        .tree_head
-        .verify_signature(&tree_head_signer.public_key)?;
-    proof.verify_path()?;
-    if (proof.leaf_index == 0) != receipt.previous_receipt_hash.is_none() {
-        return Err(VerifyError::InclusionProofInvalid {
-            position: proof.leaf_index,
-            tree_size: proof.tree_head.tree_size,
-        });
+    // The tree head must be signed by the receipt's own validator, with the
+    // same key that is valid at the receipt time.
+    if proof.tree_head.validator_did != receipt.validator_did {
+        return Err(VerifyError::TreeHeadValidatorMismatch);
     }
+    proof.tree_head.verify_signature(&validator.public_key)?;
+    proof.verify_path(receipt.previous_receipt_hash.as_ref())?;
 
     Ok(VerifiedReceipt {
         receipt_id: receipt.receipt_id,
@@ -195,7 +205,7 @@ pub fn verify_receipt_bundle(
         subject_signed_at: attestation.validation_now,
         validator_did: receipt.validator_did.to_string(),
         subject_did: attestation.subject_did.to_string(),
-        human_approval_present: decoded.action.human_approval.is_some(),
+        human_approval_present_unverified: decoded.action.human_approval.is_some(),
     })
 }
 
@@ -225,6 +235,16 @@ fn verify_trusted_time(
     {
         return Err(VerifyError::TimestampNotRfc3161 {
             kind: format!("provenance {:?}", receipt.timestamp_provenance),
+        });
+    }
+
+    if !tsa.allowed_policy_oids.is_empty() && !tsa.allowed_policy_oids.contains(&rfc3161.policy_oid)
+    {
+        return Err(VerifyError::TimestampInvalid {
+            reason: format!(
+                "TSA policy {} is not in the caller's allowed policies",
+                rfc3161.policy_oid
+            ),
         });
     }
 

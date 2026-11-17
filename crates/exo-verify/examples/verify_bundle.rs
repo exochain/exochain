@@ -67,7 +67,7 @@ fn main() -> ExitCode {
             );
             println!(
                 "  human approval present: {} (signature not verified offline; see #911)",
-                verified.human_approval_present
+                verified.human_approval_present_unverified
             );
             ExitCode::SUCCESS
         }

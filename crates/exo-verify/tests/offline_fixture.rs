@@ -23,8 +23,12 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
-use exo_core::{Did, Hash256, PublicKey, Timestamp};
-use exo_verify::{KeyRole, ReceiptBundle, TrustInputs, VerifyError, verify_receipt_bundle};
+use exo_core::{Did, Hash256, PublicKey, Timestamp, crypto::KeyPair};
+use exo_dag::mmr;
+use exo_verify::{
+    KeyRole, LeafPath, ReceiptBundle, ReceiptInclusionProof, ReceiptTreeHead, TrustInputs,
+    VerifyError, verify_receipt_bundle,
+};
 
 const BUNDLE_JSON: &str = include_str!("../fixtures/offline-bundle/receipt-bundle.json");
 const TRUST_JSON: &str = include_str!("../fixtures/offline-bundle/trust-inputs.json");
@@ -55,7 +59,7 @@ fn fixture_verifies_all_four_properties_offline() {
     assert_eq!(verified.tree_size, 5);
     assert_eq!(verified.trusted_time, bundle.receipt.created_at);
     assert_ne!(verified.subject_signed_at, verified.trusted_time);
-    assert!(verified.human_approval_present);
+    assert!(verified.human_approval_present_unverified);
     let approval = bundle
         .receipt
         .verify_subject_attestation()
@@ -400,4 +404,192 @@ fn fixture_signers_are_did_exo_identities() {
         bundle.receipt.validator_did,
         Did::new("did:exo:fixture-validator").unwrap()
     );
+}
+
+// --- Adversarial review regressions (PR #912) ------------------------------
+
+fn agent_entry(trust: &mut TrustInputs) -> &mut exo_verify::KeyBundleEntry {
+    trust
+        .key_bundle
+        .keys
+        .iter_mut()
+        .find(|entry| entry.roles.contains(&KeyRole::Agent))
+        .unwrap()
+}
+
+/// An agent key that expired after the agent's self-asserted
+/// `validation_now` but before the RFC 3161 time must not pass: the agent
+/// could otherwise backdate its signed time into the key's window.
+#[test]
+fn expired_agent_key_cannot_backdate_validation_now() {
+    let (bundle, mut trust) = fixture();
+    let subject_at = bundle
+        .receipt
+        .subject_attestation
+        .as_ref()
+        .unwrap()
+        .validation_now;
+    let trusted_at = bundle.receipt.created_at;
+    let expiry = subject_at.physical_ms + 1;
+    assert!(expiry <= trusted_at.physical_ms);
+    agent_entry(&mut trust).valid_until = Some(Timestamp::new(expiry, 0));
+    assert!(matches!(
+        verify(&bundle, &trust),
+        Err(VerifyError::SignerKeyNotValidAtTime { did }) if did.contains("fixture-agent")
+    ));
+}
+
+/// The agent key must also be valid at the time the agent signed.
+#[test]
+fn agent_key_not_yet_valid_at_signing_time_fails() {
+    let (bundle, mut trust) = fixture();
+    let subject_at = bundle
+        .receipt
+        .subject_attestation
+        .as_ref()
+        .unwrap()
+        .validation_now;
+    agent_entry(&mut trust).valid_from = Some(Timestamp::new(subject_at.physical_ms + 1, 0));
+    assert!(matches!(
+        verify(&bundle, &trust),
+        Err(VerifyError::SignerKeyNotValidAtTime { .. })
+    ));
+}
+
+fn add_second_validator(trust: &mut TrustInputs, valid: Option<(u64, u64)>) -> KeyPair {
+    let attacker = KeyPair::from_secret_bytes([0x5e; 32]).unwrap();
+    trust.key_bundle.keys.push(exo_verify::KeyBundleEntry {
+        did: Did::new("did:exo:second-validator").unwrap(),
+        public_key: attacker.public,
+        roles: vec![KeyRole::Validator],
+        valid_from: valid.map(|(from, _)| Timestamp::new(from, 0)),
+        valid_until: valid.map(|(_, until)| Timestamp::new(until, 0)),
+    });
+    attacker
+}
+
+fn resign(head: &mut ReceiptTreeHead, key: &KeyPair) {
+    head.signature = key.sign(&head.signing_payload().unwrap());
+}
+
+/// A second trusted validator re-signs the honest Merkle path for the
+/// receipt. Includes a key whose validity window excludes the receipt time.
+#[test]
+fn tree_head_signed_by_another_validator_fails() {
+    for window in [None, Some((1, 2))] {
+        let (mut bundle, mut trust) = fixture();
+        let attacker = add_second_validator(&mut trust, window);
+        let head = &mut bundle.inclusion_proof.tree_head;
+        head.validator_did = Did::new("did:exo:second-validator").unwrap();
+        resign(head, &attacker);
+        assert_eq!(
+            verify(&bundle, &trust),
+            Err(VerifyError::TreeHeadValidatorMismatch),
+            "window {window:?}"
+        );
+
+        // Claiming the receipt validator's DID with the other key fails too.
+        let (mut bundle, mut trust) = fixture();
+        let attacker = add_second_validator(&mut trust, window);
+        resign(&mut bundle.inclusion_proof.tree_head, &attacker);
+        assert_eq!(
+            verify(&bundle, &trust),
+            Err(VerifyError::TreeHeadSignatureInvalid)
+        );
+    }
+}
+
+/// The receipt moved to index 1 of a fresh 4-leaf tree whose signed chain
+/// head is unrelated to the receipt chain, signed by a second validator.
+#[test]
+fn receipt_moved_into_an_unrelated_tree_fails() {
+    let (mut bundle, mut trust) = fixture();
+    let attacker = add_second_validator(&mut trust, None);
+    let receipt_id = bundle.receipt.receipt_id;
+    let leaves = [
+        bundle.receipt.previous_receipt_hash.unwrap(),
+        receipt_id,
+        Hash256::digest(b"filler"),
+        Hash256::digest(b"unrelated-chain-head"),
+    ];
+    let mut tree = mmr::MerkleMountainRange::new();
+    for leaf in leaves {
+        mmr::append(&mut tree, leaf);
+    }
+    let path = |at: usize| {
+        let p = mmr::prove(&tree, at).unwrap();
+        LeafPath {
+            siblings: p.siblings,
+            peak_index: u64::try_from(p.peak_index).unwrap(),
+        }
+    };
+    let dag = mmr::prove(&tree, 1).unwrap();
+    let mut head = ReceiptTreeHead {
+        validator_did: Did::new("did:exo:second-validator").unwrap(),
+        tree_size: 4,
+        root: mmr::root(&tree),
+        chain_head: leaves[3],
+        signature: exo_core::Signature::empty(),
+    };
+    resign(&mut head, &attacker);
+    bundle.inclusion_proof = ReceiptInclusionProof {
+        receipt_id,
+        leaf_index: 1,
+        siblings: dag.siblings,
+        peak_index: u64::try_from(dag.peak_index).unwrap(),
+        peaks: dag.peaks,
+        tree_head: head,
+        previous_leaf_path: Some(path(0)),
+        chain_head_path: Some(path(3)),
+    };
+    assert_eq!(
+        verify(&bundle, &trust),
+        Err(VerifyError::TreeHeadValidatorMismatch)
+    );
+}
+
+/// The position must be bound to the receipt chain under the signed root:
+/// the previous leaf and the signed chain head both need their own paths.
+#[test]
+fn position_must_be_bound_to_the_receipt_chain() {
+    let (mut bundle, trust) = fixture();
+    bundle.inclusion_proof.previous_leaf_path = None;
+    assert!(matches!(
+        verify(&bundle, &trust),
+        Err(VerifyError::ChainBindingInvalid { .. })
+    ));
+
+    let (mut bundle, trust) = fixture();
+    bundle.inclusion_proof.chain_head_path = None;
+    assert!(matches!(
+        verify(&bundle, &trust),
+        Err(VerifyError::ChainBindingInvalid { .. })
+    ));
+
+    // Swap the two paths: neither proves its leaf at its position.
+    let (mut bundle, trust) = fixture();
+    let proof = &mut bundle.inclusion_proof;
+    std::mem::swap(&mut proof.previous_leaf_path, &mut proof.chain_head_path);
+    assert!(matches!(
+        verify(&bundle, &trust),
+        Err(VerifyError::ChainBindingInvalid { .. })
+    ));
+
+    // A receipt whose previous hash is not the leaf before it.
+    let (mut bundle, trust) = fixture();
+    bundle.inclusion_proof.previous_leaf_path = bundle.inclusion_proof.chain_head_path.clone();
+    assert!(matches!(
+        verify(&bundle, &trust),
+        Err(VerifyError::ChainBindingInvalid { .. })
+    ));
+}
+
+#[test]
+fn timestamp_policy_outside_caller_allowlist_fails() {
+    let (bundle, mut trust) = fixture();
+    trust.tsa.allowed_policy_oids = vec!["1.2.3.4".into()];
+    assert!(matches!(
+        verify(&bundle, &trust),
+        Err(VerifyError::TimestampInvalid { reason }) if reason.contains("allowed policies")
+    ));
 }
