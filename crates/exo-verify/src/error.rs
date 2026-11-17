@@ -88,7 +88,7 @@ pub enum VerifyError {
     /// head (for example, the bundle predates a rollback). Re-fetch the
     /// proof against the latest head.
     #[error(
-        "inclusion proof is against tree size {proof_tree_size}, not the latest trusted head of size {latest_tree_size}"
+        "inclusion proof tree head (size {proof_tree_size}) differs from the latest trusted head (size {latest_tree_size}); sizes can match when the root, chain ID or signature differ"
     )]
     StaleTreeHead {
         proof_tree_size: u64,

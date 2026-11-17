@@ -38,7 +38,9 @@ use crate::{
 pub const RECEIPT_BUNDLE_FORMAT_V1: &str = "exo.verify.receipt_bundle.v1";
 
 /// Format tag for [`ReceiptBundle`] version 2: inclusion proofs carry the
-/// previous-leaf and chain-head paths that bind the position to the chain.
+/// previous-leaf, chain-head and (from index 2) genesis paths that bind the
+/// position to the chain, and the tree head carries a required `chain_id`
+/// under domain `exo.avc.receipt.tree_head.v2`.
 pub const RECEIPT_BUNDLE_FORMAT_V2: &str = "exo.verify.receipt_bundle.v2";
 
 /// Everything needed to verify one receipt offline, apart from the caller's
