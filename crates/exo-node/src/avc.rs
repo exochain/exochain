@@ -8139,9 +8139,10 @@ mod tests {
                 signer_spki_der_hex: vec!["00".into()],
                 ..Default::default()
             },
+            latest_tree_head: None,
         };
         let bundle = exo_verify::ReceiptBundle {
-            format: exo_verify::RECEIPT_BUNDLE_FORMAT_V1.into(),
+            format: exo_verify::RECEIPT_BUNDLE_FORMAT_V2.into(),
             receipt: emitted.receipt,
             inclusion_proof: emitted.receipt_inclusion.unwrap(),
         };

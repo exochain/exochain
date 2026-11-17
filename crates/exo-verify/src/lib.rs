@@ -41,6 +41,6 @@ pub use inclusion::{
 };
 pub use key_bundle::{KEY_BUNDLE_FORMAT_V1, KeyBundle, KeyBundleEntry, KeyRole};
 pub use verify::{
-    RECEIPT_BUNDLE_FORMAT_V1, ReceiptBundle, TrustInputs, TsaTrust, VerifiedReceipt,
-    verify_receipt_bundle,
+    RECEIPT_BUNDLE_FORMAT_V1, RECEIPT_BUNDLE_FORMAT_V2, ReceiptBundle, TrustInputs, TsaTrust,
+    VerifiedReceipt, verify_receipt_bundle,
 };

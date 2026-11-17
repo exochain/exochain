@@ -33,8 +33,13 @@ use crate::{
     },
 };
 
-/// Format tag for [`ReceiptBundle`] version 1.
+/// Format tag for [`ReceiptBundle`] version 1. Version 1 bundles predate
+/// the mandatory previous-leaf and chain-head paths and are rejected.
 pub const RECEIPT_BUNDLE_FORMAT_V1: &str = "exo.verify.receipt_bundle.v1";
+
+/// Format tag for [`ReceiptBundle`] version 2: inclusion proofs carry the
+/// previous-leaf and chain-head paths that bind the position to the chain.
+pub const RECEIPT_BUNDLE_FORMAT_V2: &str = "exo.verify.receipt_bundle.v2";
 
 /// Everything needed to verify one receipt offline, apart from the caller's
 /// trust inputs. The receipt carries its raw validator signed bytes, the
@@ -42,7 +47,7 @@ pub const RECEIPT_BUNDLE_FORMAT_V1: &str = "exo.verify.receipt_bundle.v1";
 /// token.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReceiptBundle {
-    /// Must be [`RECEIPT_BUNDLE_FORMAT_V1`].
+    /// Must be [`RECEIPT_BUNDLE_FORMAT_V2`].
     pub format: String,
     pub receipt: AvcTrustReceipt,
     pub inclusion_proof: ReceiptInclusionProof,
@@ -69,6 +74,17 @@ pub struct TsaTrust {
 pub struct TrustInputs {
     pub key_bundle: KeyBundle,
     pub tsa: TsaTrust,
+    /// The latest tree head the caller trusts for this validator's chain,
+    /// for example one fetched from the node just before verification.
+    ///
+    /// When set, the bundle's proof must be against exactly this head. A
+    /// receipt removed by a rollback cannot be proven under a later head,
+    /// so an older bundle fails with [`VerifyError::StaleTreeHead`] and the
+    /// caller must re-fetch the proof. When absent, the bundle's own head is
+    /// accepted: the result then means the receipt was in the chain when the
+    /// validator signed that head, not that it still is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_tree_head: Option<crate::inclusion::ReceiptTreeHead>,
 }
 
 /// Facts established by a successful verification.
@@ -102,7 +118,9 @@ pub struct VerifiedReceipt {
 /// time (property 3), RFC 3161 trusted time (property 4), agent identity at
 /// the trusted time and at its signed time (property 3), signatures over the
 /// exact stored bytes (property 1), and inclusion and chain position under a
-/// tree head signed by the receipt validator (property 2). Time is checked before the validator signature so a
+/// tree head signed by the receipt validator (property 2). The agent's signed
+/// time may not be later than the trusted time, and when the caller pins a
+/// latest tree head the proof must be against exactly that head. Time is checked before the validator signature so a
 /// missing or bad timestamp reports as such, even though the timestamp proof
 /// is also covered by the validator's signed bytes.
 ///
@@ -112,7 +130,12 @@ pub fn verify_receipt_bundle(
     bundle: &ReceiptBundle,
     trust: &TrustInputs,
 ) -> Result<VerifiedReceipt, VerifyError> {
-    if bundle.format != RECEIPT_BUNDLE_FORMAT_V1 {
+    if bundle.format == RECEIPT_BUNDLE_FORMAT_V1 {
+        return Err(VerifyError::UnsupportedBundleVersion {
+            format: bundle.format.clone(),
+        });
+    }
+    if bundle.format != RECEIPT_BUNDLE_FORMAT_V2 {
         return Err(VerifyError::MalformedBundle {
             reason: format!("unsupported receipt bundle format {:?}", bundle.format),
         });
@@ -153,6 +176,11 @@ pub fn verify_receipt_bundle(
             KeyRole::Agent,
             Some(at),
         )?;
+    }
+    // The agent cannot have signed after the timestamp authority saw the
+    // evidence that commits to its signed action.
+    if attestation.validation_now > trusted_time {
+        return Err(VerifyError::SubjectTimeAfterTrustedTime);
     }
 
     // Property 1: validator signature over the exact stored bytes.
@@ -196,6 +224,14 @@ pub fn verify_receipt_bundle(
     }
     proof.tree_head.verify_signature(&validator.public_key)?;
     proof.verify_path(receipt.previous_receipt_hash.as_ref())?;
+    if let Some(latest) = trust.latest_tree_head.as_ref()
+        && latest != &proof.tree_head
+    {
+        return Err(VerifyError::StaleTreeHead {
+            proof_tree_size: proof.tree_head.tree_size,
+            latest_tree_size: latest.tree_size,
+        });
+    }
 
     Ok(VerifiedReceipt {
         receipt_id: receipt.receipt_id,

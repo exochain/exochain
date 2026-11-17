@@ -1,5 +1,5 @@
 {
-  "format": "exo.verify.receipt_bundle.v1",
+  "format": "exo.verify.receipt_bundle.v2",
   "receipt": {
     "schema_version": 1,
     "receipt_id": [

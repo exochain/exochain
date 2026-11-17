@@ -53,7 +53,7 @@ use exo_avc::{
 use exo_core::{Did, Hash256, Signature, Timestamp, crypto::KeyPair};
 use exo_dag::mmr;
 use exo_verify::{
-    KEY_BUNDLE_FORMAT_V1, KeyBundle, KeyBundleEntry, KeyRole, LeafPath, RECEIPT_BUNDLE_FORMAT_V1,
+    KEY_BUNDLE_FORMAT_V1, KeyBundle, KeyBundleEntry, KeyRole, LeafPath, RECEIPT_BUNDLE_FORMAT_V2,
     ReceiptBundle, ReceiptInclusionProof, ReceiptTreeHead, TrustInputs, TsaTrust,
     rfc3161::{
         Rfc3161TrustAnchorKind, Rfc3161TrustAnchors, build_timestamp_request,
@@ -516,7 +516,7 @@ fn main() -> Result<()> {
     };
     tree_head.signature = parties.validator.sign(&tree_head.signing_payload()?);
     let bundle = ReceiptBundle {
-        format: RECEIPT_BUNDLE_FORMAT_V1.into(),
+        format: RECEIPT_BUNDLE_FORMAT_V2.into(),
         receipt,
         inclusion_proof: ReceiptInclusionProof {
             receipt_id: chain[2],
@@ -550,6 +550,7 @@ fn main() -> Result<()> {
             issuing_ca_spki_der_hex: vec![ca_spki],
             allowed_policy_oids: vec![TEST_TSA_POLICY_OID.into()],
         },
+        latest_tree_head: None,
     };
     let verified = verify_receipt_bundle(&bundle, &trust)?;
     assert!(verified.human_approval_present_unverified);

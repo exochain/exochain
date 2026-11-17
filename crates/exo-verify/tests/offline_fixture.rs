@@ -546,6 +546,16 @@ fn receipt_moved_into_an_unrelated_tree_fails() {
         verify(&bundle, &trust),
         Err(VerifyError::TreeHeadValidatorMismatch)
     );
+
+    // The alternate tree is well formed under the Merkle checks: its prior
+    // leaf is the real previous receipt and its chain head is proven last.
+    // Only the signer binding rejects it here. A receipt-validator signature
+    // over such a tree is validator equivocation; the caller detects it by
+    // pinning the latest head (see `proof_must_be_against_latest_trusted_head`).
+    bundle
+        .inclusion_proof
+        .verify_path(bundle.receipt.previous_receipt_hash.as_ref())
+        .unwrap();
 }
 
 /// The position must be bound to the receipt chain under the signed root:
@@ -592,4 +602,54 @@ fn timestamp_policy_outside_caller_allowlist_fails() {
         verify(&bundle, &trust),
         Err(VerifyError::TimestampInvalid { reason }) if reason.contains("allowed policies")
     ));
+}
+
+/// Bundles from before the chain-binding paths use format v1 and are
+/// rejected with a version error rather than a proof failure.
+#[test]
+fn v1_bundles_are_rejected_with_a_version_error() {
+    let (mut bundle, trust) = fixture();
+    bundle.format = exo_verify::RECEIPT_BUNDLE_FORMAT_V1.into();
+    assert!(matches!(
+        verify(&bundle, &trust),
+        Err(VerifyError::UnsupportedBundleVersion { format }) if format.ends_with(".v1")
+    ));
+}
+
+/// The agent's signed time may not be later than the RFC 3161 time.
+#[test]
+fn subject_time_after_trusted_time_fails() {
+    let (mut bundle, trust) = fixture();
+    let trusted = bundle.receipt.created_at;
+    bundle
+        .receipt
+        .subject_attestation
+        .as_mut()
+        .unwrap()
+        .validation_now = Timestamp::new(trusted.physical_ms + 1, 0);
+    assert_eq!(
+        verify(&bundle, &trust),
+        Err(VerifyError::SubjectTimeAfterTrustedTime)
+    );
+}
+
+/// With a caller-pinned latest head, a proof against any other head (for
+/// example one issued before a rollback) is stale.
+#[test]
+fn proof_must_be_against_latest_trusted_head() {
+    let (bundle, mut trust) = fixture();
+    trust.latest_tree_head = Some(bundle.inclusion_proof.tree_head.clone());
+    verify(&bundle, &trust).unwrap();
+
+    let mut later = bundle.inclusion_proof.tree_head.clone();
+    later.tree_size += 1;
+    later.root = Hash256::digest(b"later-root");
+    trust.latest_tree_head = Some(later);
+    assert_eq!(
+        verify(&bundle, &trust),
+        Err(VerifyError::StaleTreeHead {
+            proof_tree_size: 5,
+            latest_tree_size: 6,
+        })
+    );
 }

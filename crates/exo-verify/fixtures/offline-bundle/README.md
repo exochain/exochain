@@ -6,7 +6,7 @@ disabled. It covers the four level-3 properties (#910) for issue #897.
 
 | File | What it is |
 |---|---|
-| `receipt-bundle.json` | The receipt and its inclusion proof (`exo.verify.receipt_bundle.v1`). The receipt embeds the validator's raw signed bytes (`signed_payload`), the subject attestation with the subject's raw signed bytes, and the RFC 3161 token. |
+| `receipt-bundle.json` | The receipt and its inclusion proof (`exo.verify.receipt_bundle.v2`). The receipt embeds the validator's raw signed bytes (`signed_payload`), the subject attestation with the subject's raw signed bytes, and the RFC 3161 token. |
 | `trust-inputs.json` | Caller trust inputs: the versioned `did:exo` key bundle (`exo.verify.key_bundle.v1`), the pinned TSA issuing-CA SPKI, and the accepted TSA policy OID. |
 | `validator-signed-bytes.cbor` | Copy of the bytes the validator signed. |
 | `subject-signed-bytes.cbor` | Copy of the bytes the subject (agent) signed. |
