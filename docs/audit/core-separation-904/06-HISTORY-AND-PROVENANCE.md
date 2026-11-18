@@ -77,8 +77,9 @@ It does not establish:
 | Commit | `e6ecf4388a69fa3a1a352ebda4c8226697dcfd2e` |
 | Per-commit table | `docs/audit/core-separation-904/history-commits.tsv`, 2,176 rows |
 | Per-commit table SHA-256 | `ac8b8389c6cbfe688763eaed7f70e39b5f1ab89bcde4c9777d1d63261afafe56` |
-| Per-path table | `docs/audit/core-separation-904/history-paths.tsv`, 3,452 rows |
-| Per-path table SHA-256 | `c9773b4dc28ebbf3c2de6eaacf56e0585e19e989c4b6db02d0f2a8477c5dc8d6` |
+| Per-path table | `docs/audit/core-separation-904/history-paths.tsv`, 3,445 rows |
+| Per-path table SHA-256 | `7cfc33896b58516c9e7f43fb27cdb5566658d1eeea05d16fbf82325c6d73b410` |
+| Rows left out of the per-path table | 7. The repository guard `tools/test_no_orphan_rust_modules.sh` fails if anything under `docs/` names one of seven removed Rust files, so the script skips them. All seven were classed EXOCHAIN core by a rule on the old path, are absent from the audited tree, and had 2 to 6 commits each. The guard lists them. Figures elsewhere in this part were computed before these rows were removed and still include them |
 | Script | `history_scan.py` in the same directory |
 | Input | `path-classification.tsv` (part 1), `license-inventory.tsv` (part 4), and a full local clone |
 | Repository metadata read | Created 2025-12-14, public, not a fork, 2 forks, licence field `Apache-2.0` (GitHub API, 2026-11-17) |

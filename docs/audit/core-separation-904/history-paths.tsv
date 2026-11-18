@@ -457,7 +457,6 @@ crates/exo-core/Cargo.toml	1	EXOCHAIN core	inventory	11	2025-12-15	2026-07-14	1	
 crates/exo-core/src/bcts.rs	1	EXOCHAIN core	inventory	7	2026-03-18	2026-05-10	1	Bob Stewart	8089b6aa1d31	
 crates/exo-core/src/crypto.rs	1	EXOCHAIN core	inventory	9	2025-12-15	2026-05-10	1	Bob Stewart	f09c610b8326	
 crates/exo-core/src/error.rs	1	EXOCHAIN core	inventory	6	2026-03-18	2026-05-10	1	Bob Stewart	8089b6aa1d31	
-crates/exo-core/src/event.rs	0	EXOCHAIN core	rule-on-old-path	6	2025-12-15	2026-04-26	1	Bob Stewart	f09c610b8326	
 crates/exo-core/src/events.rs	1	EXOCHAIN core	inventory	11	2026-03-18	2026-05-10	1	Bob Stewart	8089b6aa1d31	
 crates/exo-core/src/hash.rs	1	EXOCHAIN core	inventory	7	2026-03-18	2026-05-19	1	Bob Stewart	8089b6aa1d31	
 crates/exo-core/src/hlc.rs	1	EXOCHAIN core	inventory	16	2025-12-15	2026-10-22	2	Bob Stewart; Cursor Agent	f09c610b8326	
@@ -646,7 +645,6 @@ crates/exo-dag/src/error.rs	1	EXOCHAIN core	inventory	10	2026-03-18	2026-05-10	1
 crates/exo-dag/src/lib.rs	1	EXOCHAIN core	inventory	7	2025-12-15	2026-05-10	1	Bob Stewart	f09c610b8326	
 crates/exo-dag/src/mmr.rs	1	EXOCHAIN core	inventory	7	2025-12-15	2026-05-10	1	Bob Stewart	f09c610b8326	
 crates/exo-dag/src/pg_store.rs	1	EXOCHAIN core	inventory	9	2026-04-15	2026-05-15	1	Bob Stewart	d6b9e2d39962	
-crates/exo-dag/src/proof.rs	0	EXOCHAIN core	rule-on-old-path	5	2025-12-15	2026-04-26	1	Bob Stewart	f09c610b8326	
 crates/exo-dag/src/smt.rs	1	EXOCHAIN core	inventory	8	2025-12-15	2026-05-10	1	Bob Stewart	f09c610b8326	
 crates/exo-dag/src/store.rs	1	EXOCHAIN core	inventory	7	2025-12-15	2026-05-10	1	Bob Stewart	f09c610b8326	
 crates/exo-economy/Cargo.toml	1	EXOCHAIN core	inventory	13	2026-05-03	2026-11-01	1	Bob Stewart	02a542733c80	
@@ -693,7 +691,6 @@ crates/exo-gatekeeper/src/kernel.rs	1	EXOCHAIN core	inventory	21	2026-03-16	2026
 crates/exo-gatekeeper/src/lib.rs	1	EXOCHAIN core	inventory	10	2025-12-15	2026-08-17	2	Bob Stewart; mstewartbz	f09c610b8326	
 crates/exo-gatekeeper/src/mcp.rs	1	EXOCHAIN core	inventory	7	2026-03-18	2026-05-10	1	Bob Stewart	8089b6aa1d31	
 crates/exo-gatekeeper/src/mcp_audit.rs	1	EXOCHAIN core	inventory	8	2026-03-20	2026-05-10	1	Bob Stewart	4a14b1ebd2ae	
-crates/exo-gatekeeper/src/proof.rs	0	EXOCHAIN core	rule-on-old-path	2	2026-03-16	2026-04-26	1	Bob Stewart	d39e83b1efd1	
 crates/exo-gatekeeper/src/tee.rs	1	EXOCHAIN core	inventory	13	2026-03-16	2026-07-04	1	Bob Stewart	d39e83b1efd1	
 crates/exo-gatekeeper/src/types.rs	1	EXOCHAIN core	inventory	17	2026-03-18	2026-07-14	2	Bob Stewart; mstewartbz	8089b6aa1d31	
 crates/exo-gateway/Cargo.toml	1	core runtime adapter	inventory	34	2026-03-14	2026-11-01	2	Bob Stewart; mstewartbz	86ae8e0e3b2e	
@@ -734,7 +731,6 @@ crates/exo-gateway/tests/dagdb_writeback_db_authority_integration.rs	1	core runt
 crates/exo-gateway/tests/decision_forum_integration.rs	1	core runtime adapter	inventory	10	2026-03-30	2026-05-10	1	Bob Stewart	0ab6c0f63d18	
 crates/exo-gateway/tests/spline_amber_hygiene.rs	1	core runtime adapter	inventory	2	2026-04-25	2026-05-10	1	Bob Stewart	459489740ea2	
 crates/exo-governance/Cargo.toml	1	EXOCHAIN core	inventory	20	2026-03-14	2026-11-01	1	Bob Stewart	2567ff50dc1e	
-crates/exo-governance/src/anchor.rs	0	EXOCHAIN core	rule-on-old-path	2	2026-03-16	2026-04-26	1	Bob Stewart	d39e83b1efd1	
 crates/exo-governance/src/audit.rs	1	EXOCHAIN core	inventory	10	2026-03-14	2026-05-10	1	Bob Stewart	2567ff50dc1e	
 crates/exo-governance/src/challenge.rs	1	EXOCHAIN core	inventory	13	2026-03-14	2026-05-10	1	Bob Stewart	2567ff50dc1e	
 crates/exo-governance/src/clearance.rs	1	EXOCHAIN core	inventory	8	2026-03-16	2026-05-10	1	Bob Stewart	d39e83b1efd1	
@@ -742,10 +738,8 @@ crates/exo-governance/src/conflict.rs	1	EXOCHAIN core	inventory	9	2026-03-14	202
 crates/exo-governance/src/constitution.rs	1	EXOCHAIN core	inventory	11	2026-03-14	2026-05-10	1	Bob Stewart	2567ff50dc1e	
 crates/exo-governance/src/crosscheck.rs	1	EXOCHAIN core	inventory	9	2026-03-16	2026-08-28	1	Bob Stewart	d39e83b1efd1	
 crates/exo-governance/src/custody.rs	1	EXOCHAIN core	inventory	8	2026-03-16	2026-05-10	1	Bob Stewart	d39e83b1efd1	
-crates/exo-governance/src/decision.rs	0	EXOCHAIN core	rule-on-old-path	3	2026-03-14	2026-04-26	1	Bob Stewart	2567ff50dc1e	
 crates/exo-governance/src/delegation.rs	1	EXOCHAIN core	inventory	7	2026-03-14	2026-05-10	1	Bob Stewart	2567ff50dc1e	
 crates/exo-governance/src/deliberation.rs	1	EXOCHAIN core	inventory	14	2026-03-18	2026-05-19	1	Bob Stewart	8089b6aa1d31	
-crates/exo-governance/src/emergency.rs	0	EXOCHAIN core	rule-on-old-path	3	2026-03-14	2026-04-26	1	Bob Stewart	2567ff50dc1e	
 crates/exo-governance/src/error.rs	0	EXOCHAIN core	rule-on-old-path	4	2026-03-18	2026-03-30	1	Bob Stewart	8089b6aa1d31	
 crates/exo-governance/src/errors.rs	1	EXOCHAIN core	inventory	8	2026-03-14	2026-05-10	1	Bob Stewart	2567ff50dc1e	
 crates/exo-governance/src/lib.rs	1	EXOCHAIN core	inventory	10	2026-03-14	2026-05-10	1	Bob Stewart	2567ff50dc1e	
@@ -756,7 +750,6 @@ crates/exo-identity/Cargo.toml	1	EXOCHAIN core	inventory	25	2025-12-15	2026-11-0
 crates/exo-identity/src/did.rs	1	EXOCHAIN core	inventory	21	2025-12-15	2026-09-14	1	Bob Stewart	f09c610b8326	
 crates/exo-identity/src/did_verification.rs	1	EXOCHAIN core	inventory	10	2026-03-21	2026-09-14	1	Bob Stewart	f9148ff995a0	
 crates/exo-identity/src/error.rs	1	EXOCHAIN core	inventory	13	2026-03-18	2026-05-10	1	Bob Stewart	8089b6aa1d31	
-crates/exo-identity/src/key.rs	0	EXOCHAIN core	rule-on-old-path	4	2025-12-15	2026-04-26	1	Bob Stewart	f09c610b8326	
 crates/exo-identity/src/key_management.rs	1	EXOCHAIN core	inventory	7	2026-03-18	2026-05-10	1	Bob Stewart	8089b6aa1d31	
 crates/exo-identity/src/lib.rs	1	EXOCHAIN core	inventory	8	2025-12-15	2026-05-10	1	Bob Stewart	f09c610b8326	
 crates/exo-identity/src/pace.rs	1	EXOCHAIN core	inventory	7	2026-03-16	2026-05-10	1	Bob Stewart	d39e83b1efd1	
