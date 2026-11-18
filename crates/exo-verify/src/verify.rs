@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     error::VerifyError,
-    inclusion::ReceiptInclusionProof,
+    inclusion::{LeafPath, ReceiptInclusionProof, ReceiptTreeHead},
     key_bundle::{KeyBundle, KeyRole},
     rfc3161::{
         Rfc3161TrustAnchors, deterministic_nonce_hex, verify_timestamp_token_with_trust_anchors,
@@ -140,16 +140,7 @@ pub fn verify_receipt_bundle(
     bundle: &ReceiptBundle,
     trust: &TrustInputs,
 ) -> Result<VerifiedReceipt, VerifyError> {
-    if bundle.format == RECEIPT_BUNDLE_FORMAT_V1 {
-        return Err(VerifyError::UnsupportedBundleVersion {
-            format: bundle.format.clone(),
-        });
-    }
-    if bundle.format != RECEIPT_BUNDLE_FORMAT_V2 {
-        return Err(VerifyError::MalformedBundle {
-            reason: format!("unsupported receipt bundle format {:?}", bundle.format),
-        });
-    }
+    check_bundle_format(&bundle.format)?;
     trust.key_bundle.validate()?;
     let receipt = &bundle.receipt;
 
@@ -224,15 +215,168 @@ pub fn verify_receipt_bundle(
 
     // Property 2: inclusion and position under a signed tree head.
     let proof = &bundle.inclusion_proof;
+    check_inclusion(receipt, proof, &validator.public_key, trust)?;
+
+    Ok(VerifiedReceipt {
+        receipt_id: receipt.receipt_id,
+        leaf_index: proof.leaf_index,
+        tree_size: proof.tree_head.tree_size,
+        chain_id: proof.tree_head.chain_id,
+        trusted_time,
+        subject_signed_at: attestation.validation_now,
+        validator_did: receipt.validator_did.to_string(),
+        subject_did: attestation.subject_did.to_string(),
+        human_approval_present_unverified: decoded.action.human_approval.is_some(),
+    })
+}
+
+/// Decode a receipt bundle, checking its format tag before any
+/// version-specific field.
+///
+/// Takes any self-describing serde deserializer, for example
+/// `serde_json::Deserializer::from_str`. A version 1 bundle, which lacks
+/// fields that version 2 requires, returns
+/// [`VerifyError::UnsupportedBundleVersion`] instead of a field error, so
+/// callers can tell the holder to re-fetch the proof as version 2.
+///
+/// # Errors
+/// [`VerifyError::UnsupportedBundleVersion`] for a version 1 bundle, and
+/// [`VerifyError::MalformedBundle`] for a missing or unknown format tag or a
+/// version 2 bundle that does not decode.
+pub fn decode_receipt_bundle<'de, D>(deserializer: D) -> Result<ReceiptBundle, VerifyError>
+where
+    D: serde::Deserializer<'de>,
+{
+    let wire = WireReceiptBundle::deserialize(deserializer).map_err(|error| {
+        VerifyError::MalformedBundle {
+            reason: format!("receipt bundle does not decode: {error}"),
+        }
+    })?;
+    check_bundle_format(&wire.format)?;
+    let proof = wire.inclusion_proof;
+    let head = proof.tree_head;
+    let chain_id = head.chain_id.ok_or_else(|| VerifyError::MalformedBundle {
+        reason: format!(
+            "{} bundle tree head is missing the required chain_id",
+            wire.format
+        ),
+    })?;
+    Ok(ReceiptBundle {
+        format: wire.format,
+        receipt: wire.receipt,
+        inclusion_proof: ReceiptInclusionProof {
+            receipt_id: proof.receipt_id,
+            leaf_index: proof.leaf_index,
+            siblings: proof.siblings,
+            peak_index: proof.peak_index,
+            peaks: proof.peaks,
+            tree_head: ReceiptTreeHead {
+                validator_did: head.validator_did,
+                tree_size: head.tree_size,
+                root: head.root,
+                chain_head: head.chain_head,
+                chain_id,
+                signature: head.signature,
+            },
+            previous_leaf_path: proof.previous_leaf_path,
+            chain_head_path: proof.chain_head_path,
+            genesis_path: proof.genesis_path,
+        },
+    })
+}
+
+/// Wire shape shared by bundle versions 1 and 2: only the fields that
+/// version 2 added as required are optional here, so the format tag can be
+/// checked before they are required.
+#[derive(Deserialize)]
+struct WireReceiptBundle {
+    format: String,
+    receipt: AvcTrustReceipt,
+    inclusion_proof: WireInclusionProof,
+}
+
+#[derive(Deserialize)]
+struct WireInclusionProof {
+    receipt_id: Hash256,
+    leaf_index: u64,
+    siblings: Vec<Hash256>,
+    peak_index: u64,
+    peaks: Vec<Hash256>,
+    tree_head: WireTreeHead,
+    #[serde(default)]
+    previous_leaf_path: Option<LeafPath>,
+    #[serde(default)]
+    chain_head_path: Option<LeafPath>,
+    #[serde(default)]
+    genesis_path: Option<LeafPath>,
+}
+
+#[derive(Deserialize)]
+struct WireTreeHead {
+    validator_did: exo_core::Did,
+    tree_size: u64,
+    root: Hash256,
+    chain_head: Hash256,
+    #[serde(default)]
+    chain_id: Option<Hash256>,
+    signature: exo_core::Signature,
+}
+
+/// Verify property 2 alone: the receipt's inclusion and position in its
+/// chain under a tree head signed by the receipt's own validator, with the
+/// validator key that is valid at the receipt time. The caller's optional
+/// chain ID and pinned latest head apply as in [`verify_receipt_bundle`].
+///
+/// This does not check the receipt's signed bytes, its timestamp or the
+/// agent's identity; use [`verify_receipt_bundle`] for a level-3 result.
+///
+/// # Errors
+/// Returns the [`VerifyError`] variant for the first failed check.
+pub fn verify_receipt_inclusion(
+    receipt: &AvcTrustReceipt,
+    proof: &ReceiptInclusionProof,
+    trust: &TrustInputs,
+) -> Result<(), VerifyError> {
+    trust.key_bundle.validate()?;
+    let validator = trust.key_bundle.resolve(
+        &receipt.validator_did,
+        KeyRole::Validator,
+        Some(&receipt.created_at),
+    )?;
+    check_inclusion(receipt, proof, &validator.public_key, trust)
+}
+
+fn check_bundle_format(format: &str) -> Result<(), VerifyError> {
+    if format == RECEIPT_BUNDLE_FORMAT_V1 {
+        return Err(VerifyError::UnsupportedBundleVersion {
+            format: format.to_owned(),
+        });
+    }
+    if format != RECEIPT_BUNDLE_FORMAT_V2 {
+        return Err(VerifyError::MalformedBundle {
+            reason: format!("unsupported receipt bundle format {format:?}"),
+        });
+    }
+    Ok(())
+}
+
+fn check_inclusion(
+    receipt: &AvcTrustReceipt,
+    proof: &ReceiptInclusionProof,
+    validator_public_key: &exo_core::PublicKey,
+    trust: &TrustInputs,
+) -> Result<(), VerifyError> {
     if proof.receipt_id != receipt.receipt_id {
         return Err(VerifyError::InclusionProofReceiptMismatch);
     }
     // The tree head must be signed by the receipt's own validator, with the
-    // same key that is valid at the receipt time.
+    // same key that is valid at the receipt time. After a validator
+    // rotation the node serves older receipts under the last head their
+    // own validator signed, so this rule holds without a delegation.
     if proof.tree_head.validator_did != receipt.validator_did {
         return Err(VerifyError::TreeHeadValidatorMismatch);
     }
-    proof.tree_head.verify_signature(&validator.public_key)?;
+    proof.tree_head.verify_signature(validator_public_key)?;
     proof.verify_path(receipt.previous_receipt_hash.as_ref())?;
     if let Some(expected) = trust.expected_chain_id
         && expected != proof.tree_head.chain_id
@@ -247,18 +391,7 @@ pub fn verify_receipt_bundle(
             latest_tree_size: latest.tree_size,
         });
     }
-
-    Ok(VerifiedReceipt {
-        receipt_id: receipt.receipt_id,
-        leaf_index: proof.leaf_index,
-        tree_size: proof.tree_head.tree_size,
-        chain_id: proof.tree_head.chain_id,
-        trusted_time,
-        subject_signed_at: attestation.validation_now,
-        validator_did: receipt.validator_did.to_string(),
-        subject_did: attestation.subject_did.to_string(),
-        human_approval_present_unverified: decoded.action.human_approval.is_some(),
-    })
+    Ok(())
 }
 
 fn subject_mismatch(reason: &str) -> VerifyError {

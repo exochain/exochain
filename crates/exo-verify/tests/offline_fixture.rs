@@ -642,6 +642,68 @@ fn v1_bundles_are_rejected_with_a_version_error() {
     ));
 }
 
+const V1_BUNDLE_JSON: &str = include_str!("../fixtures/v1-bundle/receipt-bundle.json");
+
+fn decode_json(text: &str) -> Result<ReceiptBundle, VerifyError> {
+    exo_verify::decode_receipt_bundle(&mut serde_json::Deserializer::from_str(text))
+}
+
+/// A real version 1 bundle (the fixture from before version 2, unchanged)
+/// lacks the version 2 `chain_id`. Decoding it at the JSON boundary must
+/// report the version, not the missing field.
+#[test]
+fn real_v1_bundle_json_reports_unsupported_version() {
+    assert!(
+        serde_json::from_str::<ReceiptBundle>(V1_BUNDLE_JSON)
+            .unwrap_err()
+            .to_string()
+            .contains("chain_id"),
+        "the stored v1 bundle must lack the v2 chain_id"
+    );
+    assert!(matches!(
+        decode_json(V1_BUNDLE_JSON),
+        Err(VerifyError::UnsupportedBundleVersion { format }) if format == exo_verify::RECEIPT_BUNDLE_FORMAT_V1
+    ));
+}
+
+/// The decoder reads the version 2 fixture exactly as plain serde does.
+#[test]
+fn v2_bundle_json_decodes_and_verifies() {
+    let (expected, trust) = fixture();
+    let decoded = decode_json(BUNDLE_JSON).unwrap();
+    assert_eq!(decoded, expected);
+    verify(&decoded, &trust).unwrap();
+}
+
+#[test]
+fn bundle_json_without_a_known_format_is_malformed() {
+    let mut value: serde_json::Value = serde_json::from_str(BUNDLE_JSON).unwrap();
+    value["format"] = serde_json::Value::String("exo.verify.receipt_bundle.v9".into());
+    assert!(matches!(
+        decode_json(&value.to_string()),
+        Err(VerifyError::MalformedBundle { .. })
+    ));
+    value.as_object_mut().unwrap().remove("format");
+    assert!(matches!(
+        decode_json(&value.to_string()),
+        Err(VerifyError::MalformedBundle { .. })
+    ));
+    assert!(matches!(
+        decode_json("[1, 2, 3]"),
+        Err(VerifyError::MalformedBundle { .. })
+    ));
+    // A v2 bundle missing its required chain_id is malformed, not v1.
+    let mut value: serde_json::Value = serde_json::from_str(BUNDLE_JSON).unwrap();
+    value["inclusion_proof"]["tree_head"]
+        .as_object_mut()
+        .unwrap()
+        .remove("chain_id");
+    assert!(matches!(
+        decode_json(&value.to_string()),
+        Err(VerifyError::MalformedBundle { reason }) if reason.contains("chain_id")
+    ));
+}
+
 /// The agent's signed time may not be later than the RFC 3161 time.
 #[test]
 fn subject_time_after_trusted_time_fails() {
