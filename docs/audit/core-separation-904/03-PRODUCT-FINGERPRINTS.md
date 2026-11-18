@@ -230,7 +230,7 @@ Proposed disposition: `patch`, form to be chosen by the Architecture panel.
 described as "Commitment-only CrossChecked anchor wire types". Its fixture
 directory `fixtures/crosschecked-anchor-v1/` has 13 files: five CBOR files,
 six raw key, hash and signature files, a README and a manifest. There is an
-example and four test files.
+example, three test files and a test support module.
 
 `crates/exo-node` adds `crosschecked_anchor_http` and
 `crosschecked_anchor_store` (`src/lib.rs:21-22`), an owner CLI command
@@ -245,7 +245,8 @@ CrossChecked anchor routes against that credential before any other rule
 `ci.yml:1045`; its manifest comment says it is a compatibility name that
 enables nothing.
 
-The term has 768 content matches in three crates. CrossChecked is in the
+The term has 768 content matches in the text files of three crates; the
+binary CBOR fixtures were not searched. CrossChecked is in the
 licensing register as an "external proprietary product".
 
 Proposed disposition: `patch`, form to be chosen by the Architecture panel
@@ -372,8 +373,8 @@ types (`crates/exo-catapult/src/agent.rs:66-67`, `83`), and
 `commandbase_profile_name` is a public function
 (`src/integration.rs:159-163`). Three modules describe themselves as a
 "Paperclip concept adapted for ExoChain" (`budget.rs:17`, `goal.rs:17`,
-`heartbeat.rs:17`). `crates/exochain-wasm/src/catapult_bindings.rs` passes
-the field through.
+`heartbeat.rs:17`). `crates/exochain-wasm/src/catapult_bindings.rs` sets
+the field to `None` (lines 194 and 215).
 
 This is the evidence part 2 (F-6) asked for: one optional field and one
 helper function named for an adjacent product. It does not show the crate
@@ -384,7 +385,7 @@ if the panel leaves it out.
 
 ### F-15. A gateway unit test reads files from five adjacent trees
 
-Two tests in `crates/exo-gateway/src/dagdb.rs` (test module from line 9335),
+Two tests in `crates/exo-gateway/src/dagdb.rs` (test module from line 9334),
 `dagdb_full_migration_source_hygiene_guard` and
 `dagdb_full_migration_coverage_gate_contract`, read through a `repo_file`
 helper:

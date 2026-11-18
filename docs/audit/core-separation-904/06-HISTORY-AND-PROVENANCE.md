@@ -383,7 +383,7 @@ headers stays conditional on that answer, as in F-22. **Blocking** for an
 Copying the files is not blocked; the licence claim made about the copy is
 what stays open.
 
-### F-45. 221 commits name an AI tool or agent as author or co-author
+### F-45. 221 non-merge commits name an AI tool or agent as author or co-author
 
 Of the 1,601 non-merge commits, 221 have an author name or a
 `Co-authored-by` trailer that names an AI tool or agent account. 204 of them
@@ -545,9 +545,11 @@ receipts". One records a contribution named "Archon" with
 (lines 152-156), the other one named "Paperclip" with
 `source_uri: "https://github.com/paperclip-ui/paperclip"` and
 `license: "MIT"` (lines 185-189). The receipts mark the contributions as
-requiring attribution and as in material use. So the core's own code states
-that EXOCHAIN work materially uses two outside MIT-licensed projects. That
-is a statement in the code, not evidence that source from either project is
+requiring attribution and as in material use. Each names its receiving
+system as an adjacent product (`ExoForge` and `CommandBase`), has status
+`Proposed` and legal effect `VoluntaryRecognitionOnly`. So the core's own
+code states that two adjacent products materially use two outside
+MIT-licensed projects. That is a statement in the code, not evidence that source from either project is
 in the tree, and no attribution notice for either was found (part 4: there
 is no `NOTICE` file).
 
@@ -691,13 +693,13 @@ No filter was specified or run, so these are expected effects:
 | F-41 | Two unrelated histories joined on 2026-03-18; 7,925 build-output paths were committed and later removed | `no_change` to history; inspection pending | Only for a history option that keeps those objects |
 | F-42 | 95 commits change core and product paths together | Pending, split plan | Only for a filtered-history option |
 | F-43 | Licence statements changed: the `LICENSE` text was edited; AGPL in the root manifest for two days and in a demo package until May, inside two tags; 204 `command-base/` files Apache-headed for two months, inside three tags | Pending, legal owner | Yes: claims about legal effect, "always Apache-2.0", or standard licence text |
-| F-44 | One author name on 1,380 of 1,479 core commits; other parties credited in trailers; no sign-off, separate agreement or holder record found | Pending, legal owner | Yes: Apache-2.0 claim over the 290 headerless files |
-| F-45 | 221 commits name an AI tool or agent (lower bound) | Pending, legal owner; disclose | Yes: any wholly-human-authored claim |
+| F-44 | One author name on 1,380 of 1,479 non-merge commits that touch core or adapter paths; other parties credited in trailers; no sign-off, separate agreement or holder record found | Pending, legal owner | Yes: Apache-2.0 claim over the 290 headerless files |
+| F-45 | 221 non-merge commits name an AI tool or agent (lower bound) | Pending, legal owner; disclose | Yes: any wholly-human-authored claim |
 | F-46 | 1,235 unsigned commits and 575 merges against rules requiring signatures and linear history | `patch` rules or enforcement | Yes: claims that all commits are signed or verified |
-| F-47 | 502 commit references and 792 pull-request links in core records point at the legacy repository; this audit's tables add more | `patch` under the split plan | Yes: cutover |
+| F-47 | 502 commit references and 792 pull-request links in core and adapter records point at the legacy repository; this audit's tables add more | `patch` under the split plan | Yes: cutover |
 | F-48 | Release attestations and publication are tied to the current repository's identity (inferred) | Pending, release owner | Yes: first release from the new repository |
 | F-49 | Core code states material use of two outside MIT projects, with no notice found; Archon comparison open; built bundles show no third-party banners; proof fixtures lack a generation record | Pending; `no_change`; `patch` | No; "notices complete" stays conditional |
-| F-50 | A public file marked CONFIDENTIAL under an Apache header; two specification PDFs with no author or terms identified | `patch`; pending | Yes (precaution): for those three files |
+| F-50 | A public file marked CONFIDENTIAL under an Apache header; a specification PDF and a whitepaper PDF with no author or terms identified | `patch`; pending | Yes (precaution): for those three files |
 | F-51 | 17 tracked files named as health-record requests, not opened | Pending, LiveSafe owner and security panel | Yes: any "free of personal data" statement |
 
 ## Items earlier parts sent here

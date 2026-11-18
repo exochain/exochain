@@ -175,7 +175,7 @@ one and this record suggests none (8 rows).
 | F-35 | Four CI jobs run two tests that read 19 product files | `patch` | core maintainers † | cutover (inferred) |
 | F-36 | Only tracked node deployment runs through the LiveSafe workflow | `patch`; `adjacent_patch`; hosting pending | operations owner, Security panel | cutover |
 | F-37 | Images copy only proposed-core paths | `no_change`; `patch` dead config | core maintainers † | none |
-| F-38 | Three toolchains, little `--locked`, images by tag | `patch` | core maintainers † | claim |
+| F-38 | Three compiler versions (and a nightly for formatting), little `--locked`, images by tag | `patch` | core maintainers † | claim |
 | F-39 | Release names no product tree; inherits CI couplings | `no_change`; contents pending | release owner † | conditional |
 | F-40 | No CI job builds or tests the core without the sibling trees; the deploy image build compiles two binaries from `crates/` alone but runs no tests | `patch` (CI job) | core maintainers, Build Lead | cutover |
 
@@ -209,10 +209,10 @@ one and this record suggests none (8 rows).
 | F-41 | Two histories joined; 7,925 build-output paths committed, later removed | `no_change` to history; inspection pending | split plan owner † | conditional |
 | F-42 | 95 commits change core and product paths together | pending | split plan owner | conditional |
 | F-43 | Licence statements changed over time, inside tags | pending | legal owner | claim |
-| F-44 | One author name on 1,380 of 1,479 core commits; no holder record found | pending | legal owner | claim |
-| F-45 | 221 commits name an AI tool or agent (lower bound) | pending; disclose | legal owner | claim |
+| F-44 | One author name on 1,380 of 1,479 non-merge commits that touch core or adapter paths; no holder record found | pending | legal owner | claim |
+| F-45 | 221 non-merge commits name an AI tool or agent (lower bound) | pending; disclose | legal owner | claim |
 | F-46 | 1,235 unsigned commits and 575 merges against the stated rules | `patch` | core maintainers | claim |
-| F-47 | 502 commit references and 792 pull-request links point at the legacy repository | `patch` under the split plan | split plan owner | cutover |
+| F-47 | 502 commit references and 792 pull-request links in core and adapter records point at the legacy repository | `patch` under the split plan | split plan owner | cutover |
 | F-48 | Release attestations tied to the current repository identity (inferred) | pending | release owner | release |
 | F-50 | A public file marked CONFIDENTIAL; two PDFs with no author or terms | `patch`; pending | document owner, legal owner | cutover (those three files, under an Apache-2.0 claim) |
 | F-51 | 17 tracked files named as health-record requests, not opened | pending | LiveSafe owner, Security panel | claim |
@@ -261,10 +261,10 @@ statements that the findings rule out today, and what each would need.
 | "Third-party notices are complete" | No NOTICE file; two outside projects are named as sources without a notice; one comparison is open | F-24, F-49 |
 | "Published packages carry the right licence files" | Package contents were not inspected; that needs a release dry run | F-26, F-39 |
 | "The core builds and passes tests on its own" | No test run without the sibling trees exists. The deploy image build compiles two binaries from `crates/` alone; its runs were not inspected | F-40 |
-| "Builds are reproducible" | Three toolchains, little `--locked`, images by tag | F-38 |
+| "Builds are reproducible" | Three compiler versions (and a nightly for formatting), little `--locked`, images by tag | F-38 |
 | "CI gates are enforced on `main`" | No required checks were visible to the account used | F-32 |
 | "All commits are signed or verified" | 1,235 commits carry no signature field; none was verified | F-46 |
-| "The code is wholly human-authored" | 221 commits name an AI tool or agent, a lower bound | F-45 |
+| "The code is wholly human-authored" | 221 non-merge commits name an AI tool or agent, a lower bound | F-45 |
 | "The tree or its history holds no personal data or secrets" | 17 files named as health-record requests were not opened; history was searched by file name only | F-51, O-38 |
 | "The new repository can publish and attest releases as the current one does" | Attestations and publication are tied to the current repository identity (inferred; no attestation or registry setting was read) | F-48 |
 | "This register certifies the split" | It is a list of proposals and open questions, checked for form only | this record |

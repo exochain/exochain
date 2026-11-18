@@ -561,7 +561,7 @@ criterion.
 | F-35 | Four CI jobs run two tests that read 19 product files (inferred) | `patch` | Yes: green core tests |
 | F-36 | The only tracked automated node deployment runs through the LiveSafe workflow and hosting project | `patch`, `adjacent_patch`; hosting pending | Yes, until an independent mechanism is confirmed |
 | F-37 | Images copy only proposed-core paths (which include LiveSafe schema) | `no_change`; `patch` dead config | No |
-| F-38 | Three toolchains, little `--locked`, images by tag | `patch` | Blocks a "reproducible" claim only |
+| F-38 | Three compiler versions (and a nightly for formatting), little `--locked`, images by tag | `patch` | Blocks a "reproducible" claim only |
 | F-39 | Release names no product tree; inherits CI couplings | `no_change`; contents pending | Through F-31, F-33 to F-35 |
 | F-40 | No CI job builds or tests the core without the sibling trees; the deploy image build compiles two binaries from `crates/` alone but runs no tests | `patch` (CI job) | Yes: acceptance criterion |
 
