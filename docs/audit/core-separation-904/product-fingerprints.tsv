@@ -1,0 +1,1056 @@
+path	proposed_class	term	matches	first_line
+.dockerignore	core runtime adapter	pathref:web	1	20
+.env.example	core runtime adapter	livesafe	2	40
+.exochain/honorgood.yml	EXOCHAIN core	path-name:honorgood	1	0
+.exochain/honorgood.yml	EXOCHAIN core	commandbase	2	33
+.exochain/honorgood.yml	EXOCHAIN core	honorgood	3	17
+.exochain/honorgood.yml	EXOCHAIN core	exoforge	2	36
+.exochain/honorgood.yml	EXOCHAIN core	pathref:command-base	1	35
+.exochain/honorgood.yml	EXOCHAIN core	pathref:exoforge	1	38
+.exochain/mcp.example.json	EXOCHAIN core	honorgood	3	2
+.exochain/mission_economics.yml	EXOCHAIN core	apex-velocity	1	19
+.exochain/provenance.yml	EXOCHAIN core	commandbase	2	21
+.exochain/provenance.yml	EXOCHAIN core	honorgood	1	18
+.exochain/provenance.yml	EXOCHAIN core	exoforge	2	20
+.exochain/provenance.yml	EXOCHAIN core	archon	2	20
+.exochain/provenance.yml	EXOCHAIN core	paperclip	2	21
+.github/CODEOWNERS	EXOCHAIN core	decision-forum-name	1	39
+.github/CODEOWNERS	EXOCHAIN core	pathref:demo	1	49
+.github/workflows/ci.yml	core runtime adapter	livesafe	4	408
+.github/workflows/ci.yml	core runtime adapter	commandbase	2	410
+.github/workflows/ci.yml	core runtime adapter	crosschecked	1	1045
+.github/workflows/ci.yml	core runtime adapter	honorgood	2	954
+.github/workflows/ci.yml	core runtime adapter	zerodentity	13	818
+.github/workflows/ci.yml	core runtime adapter	archon	2	540
+.github/workflows/ci.yml	core runtime adapter	sybil-cli	1	505
+.github/workflows/ci.yml	core runtime adapter	decision-forum-name	2	952
+.github/workflows/ci.yml	core runtime adapter	lynk	10	85
+.github/workflows/ci.yml	core runtime adapter	syntaxis	4	520
+.github/workflows/ci.yml	core runtime adapter	pathref:demo	4	380
+.github/workflows/ci.yml	core runtime adapter	pathref:web	2	380
+.github/workflows/release.yml	core runtime adapter	decision-forum-name	1	5320
+.github/workflows/release.yml	core runtime adapter	lynk	19	3120
+.gitignore	EXOCHAIN core	commandbase	6	38
+.gitignore	EXOCHAIN core	vitallock	2	33
+.gitignore	EXOCHAIN core	pathref:command-base	5	39
+.gitignore	EXOCHAIN core	pathref:demo	4	32
+.gitignore	EXOCHAIN core	pathref:web	3	35
+AGENTS.md	EXOCHAIN core	livesafe	4	177
+AGENTS.md	EXOCHAIN core	commandbase	3	177
+AGENTS.md	EXOCHAIN core	crosschecked	3	177
+AGENTS.md	EXOCHAIN core	customer-zero	4	169
+AGENTS.md	EXOCHAIN core	decision-forum-name	2	97
+AGENTS.md	EXOCHAIN core	syntaxis	6	102
+AGENTS.md	EXOCHAIN core	pathref:livesafe	1	684
+AVC_MISSION_ECONOMICS_COMPACT.md	EXOCHAIN core	apex-velocity	2	19
+CHANGELOG.md	EXOCHAIN core	livesafe	9	173
+CHANGELOG.md	EXOCHAIN core	cybermedica	3	247
+CHANGELOG.md	EXOCHAIN core	commandbase	3	249
+CHANGELOG.md	EXOCHAIN core	crosschecked	1	259
+CHANGELOG.md	EXOCHAIN core	legaldyne	1	259
+CHANGELOG.md	EXOCHAIN core	exoforge	11	436
+CHANGELOG.md	EXOCHAIN core	zerodentity	1	237
+CHANGELOG.md	EXOCHAIN core	archon	1	488
+CHANGELOG.md	EXOCHAIN core	decision-forum-name	5	258
+CHANGELOG.md	EXOCHAIN core	lynk	10	43
+CHANGELOG.md	EXOCHAIN core	syntaxis	2	447
+CHANGELOG.md	EXOCHAIN core	pathref:cybermedica	1	298
+CHANGELOG.md	EXOCHAIN core	pathref:command-base	1	440
+CHANGELOG.md	EXOCHAIN core	pathref:web	2	517
+CONTRIBUTING.md	EXOCHAIN core	exoforge	5	97
+CONTRIBUTING.md	EXOCHAIN core	archon	2	106
+CONTRIBUTING.md	EXOCHAIN core	syntaxis	1	95
+Cargo.lock	third-party/vendor	decision-forum-name	4	1898
+Cargo.toml	EXOCHAIN core	livesafe	3	53
+Cargo.toml	EXOCHAIN core	cybermedica	2	53
+Cargo.toml	EXOCHAIN core	decision-forum-name	1	41
+Cargo.toml	EXOCHAIN core	pathref:livesafe	1	53
+Cargo.toml	EXOCHAIN core	pathref:cybermedica	1	53
+Dockerfile	core runtime adapter	decision-forum-name	1	19
+EXOCHAIN-FABRIC-PLATFORM.md	EXOCHAIN core	zerodentity	4	91
+EXOCHAIN-FABRIC-PLATFORM.md	EXOCHAIN core	hipaa-phi	11	92
+EXOCHAIN-FABRIC-PLATFORM.md	EXOCHAIN core	pathref:web	1	451
+EXOCHAIN_AVC_Rust_PRD.md	EXOCHAIN core	commandbase	5	21
+EXOCHAIN_AVC_Rust_PRD.md	EXOCHAIN core	decision-forum-name	1	144
+EXOCHAIN_Custody_Native_Economy_Rust_PRD.md	EXOCHAIN core	commandbase	2	203
+EXOCHAIN_Specification_v2.2.pdf	EXOCHAIN core	binary-not-scanned	1	-
+EXOCHAIN_Whitepaper_v1.0.pdf	EXOCHAIN core	binary-not-scanned	1	-
+GAP-REGISTRY.md	EXOCHAIN core	crosschecked	21	128
+GAP-REGISTRY.md	EXOCHAIN core	honorgood	1	1603
+GAP-REGISTRY.md	EXOCHAIN core	zerodentity	31	186
+GAP-REGISTRY.md	EXOCHAIN core	decision-forum-name	1	662
+GAP-REGISTRY.md	EXOCHAIN core	pathref:Initiatives	2	703
+HONOR_GOOD_COMPACT.md	EXOCHAIN core	path-name:honorgood	1	0
+HONOR_GOOD_COMPACT.md	EXOCHAIN core	honorgood	6	19
+INTEGRATION.md	core runtime adapter	commandbase	1	53
+INTEGRATION.md	core runtime adapter	exoforge	1	53
+INTEGRATION.md	core runtime adapter	lynk	3	108
+Initiatives/fix-mcp-authority-simulation-tools.md	EXOCHAIN core	pathref:Initiatives	1	29
+Initiatives/fix-mcp-cgr-proof-verification-stub.md	EXOCHAIN core	pathref:Initiatives	2	29
+Initiatives/fix-mcp-consent-read-store-refusal.md	EXOCHAIN core	pathref:Initiatives	1	37
+Initiatives/fix-mcp-legal-simulation-tools.md	EXOCHAIN core	pathref:Initiatives	1	30
+Initiatives/fix-mcp-simulation-tools.md	EXOCHAIN core	pathref:Initiatives	1	29
+README.md	EXOCHAIN core	livesafe	5	46
+README.md	EXOCHAIN core	cybermedica	5	46
+README.md	EXOCHAIN core	commandbase	6	123
+README.md	EXOCHAIN core	crosschecked	2	46
+README.md	EXOCHAIN core	legaldyne	2	46
+README.md	EXOCHAIN core	honorgood	6	116
+README.md	EXOCHAIN core	exoforge	11	75
+README.md	EXOCHAIN core	archon	4	277
+README.md	EXOCHAIN core	decision-forum-name	7	46
+README.md	EXOCHAIN core	apex-velocity	2	116
+README.md	EXOCHAIN core	lynk	4	105
+README.md	EXOCHAIN core	syntaxis	1	310
+README.md	EXOCHAIN core	cognitiveplane	1	145
+README.md	EXOCHAIN core	pathref:livesafe	4	374
+README.md	EXOCHAIN core	pathref:cybermedica	4	375
+README.md	EXOCHAIN core	pathref:command-base	3	144
+README.md	EXOCHAIN core	pathref:exoforge	2	154
+README.md	EXOCHAIN core	pathref:demo	2	300
+SECURITY.md	EXOCHAIN core	pathref:demo	2	98
+SUPPORT.md	EXOCHAIN core	exoforge	4	38
+VERSIONING.md	EXOCHAIN core	exoforge	1	212
+VERSIONING.md	EXOCHAIN core	lynk	1	126
+agents/governance-constitutional-engineer/AGENTS.md	EXOCHAIN core	decision-forum-name	3	31
+agents/graphql-engineer/AGENTS.md	EXOCHAIN core	paperclip	2	92
+agents/identity-gateway-engineer/AGENTS.md	EXOCHAIN core	exoforge	1	67
+command-base/app/package-lock.json	third-party/vendor	path-name:commandbase	1	0
+crates/README.md	EXOCHAIN core	decision-forum-name	6	52
+crates/decision-forum/Cargo.toml	EXOCHAIN core	path-name:decision-forum-name	1	0
+crates/decision-forum/Cargo.toml	EXOCHAIN core	decision-forum-name	3	18
+crates/decision-forum/docs/audit-report-2026-03-15.md	EXOCHAIN core	path-name:decision-forum-name	1	0
+crates/decision-forum/docs/audit-report-2026-03-15.md	EXOCHAIN core	decision-forum-name	2	19
+crates/decision-forum/docs/bayesian-policy-spec.md	EXOCHAIN core	path-name:decision-forum-name	1	0
+crates/decision-forum/docs/bayesian-policy-spec.md	EXOCHAIN core	decision-forum-name	2	49
+crates/decision-forum/src/accountability.rs	EXOCHAIN core	path-name:decision-forum-name	1	0
+crates/decision-forum/src/authority.rs	EXOCHAIN core	path-name:decision-forum-name	1	0
+crates/decision-forum/src/authority.rs	EXOCHAIN core	decision-forum-name	1	31
+crates/decision-forum/src/authority_matrix.rs	EXOCHAIN core	path-name:decision-forum-name	1	0
+crates/decision-forum/src/authority_matrix.rs	EXOCHAIN core	decision-forum-name	2	36
+crates/decision-forum/src/constitution.rs	EXOCHAIN core	path-name:decision-forum-name	1	0
+crates/decision-forum/src/constitution.rs	EXOCHAIN core	decision-forum-name	4	35
+crates/decision-forum/src/contestation.rs	EXOCHAIN core	path-name:decision-forum-name	1	0
+crates/decision-forum/src/decision_object.rs	EXOCHAIN core	path-name:decision-forum-name	1	0
+crates/decision-forum/src/decision_object.rs	EXOCHAIN core	decision-forum-name	1	17
+crates/decision-forum/src/emergency.rs	EXOCHAIN core	path-name:decision-forum-name	1	0
+crates/decision-forum/src/error.rs	EXOCHAIN core	path-name:decision-forum-name	1	0
+crates/decision-forum/src/error.rs	EXOCHAIN core	decision-forum-name	2	17
+crates/decision-forum/src/fiduciary_package.rs	EXOCHAIN core	path-name:decision-forum-name	1	0
+crates/decision-forum/src/fiduciary_package.rs	EXOCHAIN core	decision-forum-name	1	48
+crates/decision-forum/src/human_gate.rs	EXOCHAIN core	path-name:decision-forum-name	1	0
+crates/decision-forum/src/lib.rs	EXOCHAIN core	path-name:decision-forum-name	1	0
+crates/decision-forum/src/lib.rs	EXOCHAIN core	decision-forum-name	2	17
+crates/decision-forum/src/lib.rs	EXOCHAIN core	syntaxis	1	37
+crates/decision-forum/src/metrics.rs	EXOCHAIN core	path-name:decision-forum-name	1	0
+crates/decision-forum/src/quorum.rs	EXOCHAIN core	path-name:decision-forum-name	1	0
+crates/decision-forum/src/self_governance.rs	EXOCHAIN core	path-name:decision-forum-name	1	0
+crates/decision-forum/src/terms.rs	EXOCHAIN core	path-name:decision-forum-name	1	0
+crates/decision-forum/src/tnc_enforcer.rs	EXOCHAIN core	path-name:decision-forum-name	1	0
+crates/decision-forum/src/workflow.rs	EXOCHAIN core	path-name:decision-forum-name	1	0
+crates/decision-forum/src/workflow.rs	EXOCHAIN core	decision-forum-name	1	32
+crates/decision-forum/src/workflow.rs	EXOCHAIN core	syntaxis	1	17
+crates/decision-forum/tests/governance_kernel_integration.rs	EXOCHAIN core	path-name:decision-forum-name	1	0
+crates/decision-forum/tests/governance_kernel_integration.rs	EXOCHAIN core	decision-forum-name	5	17
+crates/exo-api/examples/generate_crosschecked_anchor_fixtures.rs	core runtime adapter	path-name:crosschecked	1	0
+crates/exo-api/examples/generate_crosschecked_anchor_fixtures.rs	core runtime adapter	crosschecked	4	6
+crates/exo-api/fixtures/crosschecked-anchor-v1/MANIFEST.sha256	core runtime adapter	path-name:crosschecked	1	0
+crates/exo-api/fixtures/crosschecked-anchor-v1/README.md	core runtime adapter	path-name:crosschecked	1	0
+crates/exo-api/fixtures/crosschecked-anchor-v1/README.md	core runtime adapter	crosschecked	4	1
+crates/exo-api/fixtures/crosschecked-anchor-v1/authority-public-key.ed25519	core runtime adapter	path-name:crosschecked	1	0
+crates/exo-api/fixtures/crosschecked-anchor-v1/idempotency-key.blake3-256	core runtime adapter	path-name:crosschecked	1	0
+crates/exo-api/fixtures/crosschecked-anchor-v1/nested-trust-receipt.cbor	core runtime adapter	path-name:crosschecked	1	0
+crates/exo-api/fixtures/crosschecked-anchor-v1/nested-trust-receipt.cbor	core runtime adapter	binary-not-scanned	1	-
+crates/exo-api/fixtures/crosschecked-anchor-v1/node-public-key.ed25519	core runtime adapter	path-name:crosschecked	1	0
+crates/exo-api/fixtures/crosschecked-anchor-v1/request-hash.blake3-256	core runtime adapter	path-name:crosschecked	1	0
+crates/exo-api/fixtures/crosschecked-anchor-v1/request-signature.ed25519	core runtime adapter	path-name:crosschecked	1	0
+crates/exo-api/fixtures/crosschecked-anchor-v1/request-signing-preimage.cbor	core runtime adapter	path-name:crosschecked	1	0
+crates/exo-api/fixtures/crosschecked-anchor-v1/request-signing-preimage.cbor	core runtime adapter	binary-not-scanned	1	-
+crates/exo-api/fixtures/crosschecked-anchor-v1/request.cbor	core runtime adapter	path-name:crosschecked	1	0
+crates/exo-api/fixtures/crosschecked-anchor-v1/request.cbor	core runtime adapter	binary-not-scanned	1	-
+crates/exo-api/fixtures/crosschecked-anchor-v1/response-signature.ed25519	core runtime adapter	path-name:crosschecked	1	0
+crates/exo-api/fixtures/crosschecked-anchor-v1/response-signing-preimage.cbor	core runtime adapter	path-name:crosschecked	1	0
+crates/exo-api/fixtures/crosschecked-anchor-v1/response-signing-preimage.cbor	core runtime adapter	binary-not-scanned	1	-
+crates/exo-api/fixtures/crosschecked-anchor-v1/response.cbor	core runtime adapter	path-name:crosschecked	1	0
+crates/exo-api/fixtures/crosschecked-anchor-v1/response.cbor	core runtime adapter	binary-not-scanned	1	-
+crates/exo-api/src/crosschecked_anchor.rs	core runtime adapter	path-name:crosschecked	1	0
+crates/exo-api/src/crosschecked_anchor.rs	core runtime adapter	crosschecked	26	17
+crates/exo-api/src/lib.rs	core runtime adapter	crosschecked	1	21
+crates/exo-api/tests/crosschecked_anchor_fixtures.rs	core runtime adapter	path-name:crosschecked	1	0
+crates/exo-api/tests/crosschecked_anchor_fixtures.rs	core runtime adapter	crosschecked	28	6
+crates/exo-api/tests/crosschecked_anchor_request.rs	core runtime adapter	path-name:crosschecked	1	0
+crates/exo-api/tests/crosschecked_anchor_request.rs	core runtime adapter	crosschecked	23	7
+crates/exo-api/tests/crosschecked_anchor_response.rs	core runtime adapter	path-name:crosschecked	1	0
+crates/exo-api/tests/crosschecked_anchor_response.rs	core runtime adapter	crosschecked	23	7
+crates/exo-api/tests/support/crosschecked_anchor_fixture_reference.rs	core runtime adapter	path-name:crosschecked	1	0
+crates/exo-api/tests/support/crosschecked_anchor_fixture_reference.rs	core runtime adapter	crosschecked	13	7
+crates/exo-avc/src/lib.rs	EXOCHAIN core	livesafe	97	109
+crates/exo-avc/src/livesafe_public_output_ceremony.rs	EXOCHAIN core	path-name:livesafe	1	0
+crates/exo-avc/src/livesafe_public_output_ceremony.rs	EXOCHAIN core	livesafe	73	17
+crates/exo-avc/src/llm_usage_receipt.rs	EXOCHAIN core	lynk	20	17
+crates/exo-avc/src/public_output_authorization.rs	EXOCHAIN core	livesafe	100	17
+crates/exo-avc/src/receipt.rs	EXOCHAIN core	lynk	2	246
+crates/exo-avc/src/registry.rs	EXOCHAIN core	lynk	3	2281
+crates/exo-avc/src/validation.rs	EXOCHAIN core	lynk	4	63
+crates/exo-avc/tests/livesafe_public_output_ceremony_tests.rs	EXOCHAIN core	path-name:livesafe	1	0
+crates/exo-avc/tests/livesafe_public_output_ceremony_tests.rs	EXOCHAIN core	livesafe	65	6
+crates/exo-catapult/src/agent.rs	EXOCHAIN core	commandbase	9	66
+crates/exo-catapult/src/budget.rs	EXOCHAIN core	paperclip	1	17
+crates/exo-catapult/src/goal.rs	EXOCHAIN core	paperclip	1	17
+crates/exo-catapult/src/heartbeat.rs	EXOCHAIN core	paperclip	1	17
+crates/exo-catapult/src/integration.rs	EXOCHAIN core	commandbase	8	159
+crates/exo-catapult/src/newco.rs	EXOCHAIN core	commandbase	1	455
+crates/exo-cgr-prover/fixtures/cgr_identity_envelope.cbor	EXOCHAIN core	binary-not-scanned	1	-
+crates/exo-cgr-prover/fixtures/cgr_identity_receipt.cbor	EXOCHAIN core	binary-not-scanned	1	-
+crates/exo-consensus/Cargo.toml	EXOCHAIN core	decision-forum-name	3	42
+crates/exo-consensus/tests/presidential_c2_bridge.rs	EXOCHAIN core	decision-forum-name	1	18
+crates/exo-consent/src/contract.rs	EXOCHAIN core	cybermedica	2	1237
+crates/exo-core/src/events.rs	EXOCHAIN core	decision-forum-name	2	232
+crates/exo-dag-db-api/src/lib.rs	core runtime adapter	hipaa-phi	2	65
+crates/exo-dag-db-core/fixtures/metadata/safe_metadata_golden.json	core runtime adapter	hipaa-phi	2	41
+crates/exo-dag-db-core/src/metadata.rs	core runtime adapter	hipaa-phi	10	13
+crates/exo-dag-db-lab/src/graph_refinement.rs	core runtime adapter	hipaa-phi	1	1342
+crates/exo-dag-db-postgres/migrations/20260623000003_create_zerodentity_record_schema.sql	core runtime adapter	path-name:zerodentity	1	0
+crates/exo-dag-db-postgres/migrations/20260623000003_create_zerodentity_record_schema.sql	core runtime adapter	zerodentity	9	1
+crates/exo-dag-db-postgres/migrations/20260623000004_create_gateway_state_records_schema.sql	core runtime adapter	livesafe	1	15
+crates/exo-dag-db-postgres/migrations/20260623000005_create_gateway_legacy_table_contracts.sql	core runtime adapter	livesafe	1	129
+crates/exo-dag-db-postgres/migrations/20260623000005_create_gateway_legacy_table_contracts.sql	core runtime adapter	zerodentity	1	131
+crates/exo-dag-db-postgres/migrations/20260623000006_add_dagdb_operational_event_types_and_rls_expansion.sql	core runtime adapter	zerodentity	1	30
+crates/exo-dag-db-postgres/src/postgres/mod.rs	core runtime adapter	zerodentity	1	45
+crates/exo-dag-db-postgres/tests/dagdb_tenant_rls_live_path_contract.rs	core runtime adapter	zerodentity	5	34
+crates/exo-dag-db-postgres/tests/migration_contract.rs	core runtime adapter	livesafe	1	581
+crates/exo-dag-db-postgres/tests/migration_contract.rs	core runtime adapter	zerodentity	9	62
+crates/exo-economy/src/adoption.rs	EXOCHAIN core	commandbase	2	492
+crates/exo-economy/src/bailment.rs	EXOCHAIN core	honorgood	1	316
+crates/exo-economy/src/honorgood.rs	EXOCHAIN core	path-name:honorgood	1	0
+crates/exo-economy/src/honorgood.rs	EXOCHAIN core	commandbase	7	113
+crates/exo-economy/src/honorgood.rs	EXOCHAIN core	honorgood	13	17
+crates/exo-economy/src/honorgood.rs	EXOCHAIN core	exoforge	7	79
+crates/exo-economy/src/honorgood.rs	EXOCHAIN core	archon	13	79
+crates/exo-economy/src/honorgood.rs	EXOCHAIN core	paperclip	14	113
+crates/exo-economy/src/honorgood.rs	EXOCHAIN core	apex-velocity	19	17
+crates/exo-economy/src/lib.rs	EXOCHAIN core	commandbase	2	132
+crates/exo-economy/src/lib.rs	EXOCHAIN core	honorgood	7	95
+crates/exo-economy/src/lib.rs	EXOCHAIN core	exoforge	2	131
+crates/exo-economy/src/lib.rs	EXOCHAIN core	archon	2	131
+crates/exo-economy/src/lib.rs	EXOCHAIN core	paperclip	2	132
+crates/exo-economy/src/lib.rs	EXOCHAIN core	apex-velocity	3	130
+crates/exo-economy/src/mission.rs	EXOCHAIN core	commandbase	1	178
+crates/exo-economy/src/mission.rs	EXOCHAIN core	apex-velocity	4	42
+crates/exo-economy/src/price.rs	EXOCHAIN core	commandbase	1	231
+crates/exo-economy/src/quote.rs	EXOCHAIN core	commandbase	1	232
+crates/exo-economy/src/ruleset.rs	EXOCHAIN core	honorgood	12	17
+crates/exo-economy/src/ruleset.rs	EXOCHAIN core	apex-velocity	3	73
+crates/exo-economy/src/settlement.rs	EXOCHAIN core	honorgood	23	38
+crates/exo-economy/src/store.rs	EXOCHAIN core	honorgood	20	18
+crates/exo-economy/src/store.rs	EXOCHAIN core	exoforge	4	625
+crates/exo-economy/src/store.rs	EXOCHAIN core	archon	4	625
+crates/exo-economy/src/value_contribution.rs	EXOCHAIN core	honorgood	9	19
+crates/exo-gateway/Cargo.toml	core runtime adapter	decision-forum-name	3	36
+crates/exo-gateway/migrations/20260316000001_initial_schema.sql	core runtime adapter	livesafe	2	114
+crates/exo-gateway/migrations/20260316000001_initial_schema.sql	core runtime adapter	zerodentity	1	117
+crates/exo-gateway/migrations/20260316000001_initial_schema.sql	core runtime adapter	decision-forum-name	1	1
+crates/exo-gateway/migrations/20260426000001_livesafe_composite_basis_points.sql	core runtime adapter	path-name:livesafe	1	0
+crates/exo-gateway/migrations/20260426000001_livesafe_composite_basis_points.sql	core runtime adapter	livesafe	3	1
+crates/exo-gateway/migrations/20260426000001_livesafe_composite_basis_points.sql	core runtime adapter	zerodentity	2	5
+crates/exo-gateway/src/dagdb.rs	core runtime adapter	livesafe	1	9487
+crates/exo-gateway/src/dagdb.rs	core runtime adapter	cybermedica	1	9528
+crates/exo-gateway/src/dagdb.rs	core runtime adapter	commandbase	24	9413
+crates/exo-gateway/src/dagdb.rs	core runtime adapter	crosschecked	1	9482
+crates/exo-gateway/src/dagdb.rs	core runtime adapter	vitallock	1	9489
+crates/exo-gateway/src/dagdb.rs	core runtime adapter	decision-forge	1	9483
+crates/exo-gateway/src/dagdb.rs	core runtime adapter	pathref:cybermedica	1	9528
+crates/exo-gateway/src/dagdb.rs	core runtime adapter	pathref:command-base	8	9413
+crates/exo-gateway/src/dagdb.rs	core runtime adapter	pathref:demo	2	9491
+crates/exo-gateway/src/dagdb.rs	core runtime adapter	pathref:web	3	9498
+crates/exo-gateway/src/dagdb.rs	core runtime adapter	pathref:site	1	9465
+crates/exo-gateway/src/db.rs	core runtime adapter	livesafe	27	163
+crates/exo-gateway/src/db.rs	core runtime adapter	zerodentity	6	1438
+crates/exo-gateway/src/db.rs	core runtime adapter	decision-forum-name	1	17
+crates/exo-gateway/src/graphql.rs	core runtime adapter	pathref:Initiatives	3	835
+crates/exo-gateway/src/handlers.rs	core runtime adapter	decision-forum-name	1	401
+crates/exo-gateway/src/server.rs	core runtime adapter	livesafe	2	2782
+crates/exo-gateway/src/server.rs	core runtime adapter	zerodentity	1	7921
+crates/exo-gateway/src/server.rs	core runtime adapter	decision-forum-name	1	719
+crates/exo-gateway/src/server.rs	core runtime adapter	pathref:Initiatives	4	1247
+crates/exo-gateway/tests/decision_forum_integration.rs	core runtime adapter	decision-forum-name	1	17
+crates/exo-gateway/tests/spline_amber_hygiene.rs	core runtime adapter	livesafe	14	91
+crates/exo-gateway/tests/spline_amber_hygiene.rs	core runtime adapter	zerodentity	5	127
+crates/exo-governance/src/custody.rs	EXOCHAIN core	decision-forum-name	2	17
+crates/exo-governance/src/types.rs	EXOCHAIN core	decision-forum-name	1	17
+crates/exo-identity/tests/livesafe_integration.rs	EXOCHAIN core	path-name:livesafe	1	0
+crates/exo-identity/tests/livesafe_integration.rs	EXOCHAIN core	livesafe	31	17
+crates/exo-legal/src/bundle.rs	EXOCHAIN core	decision-forum-name	3	913
+crates/exo-legal/src/cert_902_11.rs	EXOCHAIN core	decision-forum-name	1	327
+crates/exo-messaging/src/compose.rs	EXOCHAIN core	vitallock	1	40
+crates/exo-messaging/src/envelope.rs	EXOCHAIN core	vitallock	1	17
+crates/exo-messaging/src/kex.rs	EXOCHAIN core	vitallock	1	180
+crates/exo-messaging/src/open.rs	EXOCHAIN core	vitallock	1	36
+crates/exo-node/Cargo.toml	core runtime adapter	crosschecked	2	210
+crates/exo-node/Cargo.toml	core runtime adapter	zerodentity	7	163
+crates/exo-node/Cargo.toml	core runtime adapter	telegram	1	136
+crates/exo-node/fixtures/lynk/rust_action_receipt_v1.json	core runtime adapter	path-name:lynk	1	0
+crates/exo-node/fixtures/lynk/rust_receipt_emit_response_v1.json	core runtime adapter	path-name:lynk	1	0
+crates/exo-node/fixtures/lynk/rust_receipt_emit_response_v1.json	core runtime adapter	lynk	2	17
+crates/exo-node/fixtures/lynk/typescript_receipt_emit_request_v1.json	core runtime adapter	path-name:lynk	1	0
+crates/exo-node/fixtures/lynk/typescript_receipt_emit_request_v1.json	core runtime adapter	lynk	3	19
+crates/exo-node/src/api.rs	core runtime adapter	crosschecked	68	73
+crates/exo-node/src/api.rs	core runtime adapter	pathref:Initiatives	2	596
+crates/exo-node/src/auth.rs	core runtime adapter	livesafe	47	27
+crates/exo-node/src/auth.rs	core runtime adapter	crosschecked	56	30
+crates/exo-node/src/auth.rs	core runtime adapter	exoforge	11	233
+crates/exo-node/src/auth.rs	core runtime adapter	zerodentity	15	25
+crates/exo-node/src/auth.rs	core runtime adapter	pathref:livesafe	6	46
+crates/exo-node/src/avc.rs	core runtime adapter	livesafe	115	35
+crates/exo-node/src/avc.rs	core runtime adapter	crosschecked	6	238
+crates/exo-node/src/avc.rs	core runtime adapter	zerodentity	3	13533
+crates/exo-node/src/avc.rs	core runtime adapter	lynk	45	34
+crates/exo-node/src/avc.rs	core runtime adapter	pathref:livesafe	4	35
+crates/exo-node/src/cli.rs	core runtime adapter	livesafe	37	276
+crates/exo-node/src/cli.rs	core runtime adapter	crosschecked	17	208
+crates/exo-node/src/crosschecked_anchor_authority_admin_cli.rs	core runtime adapter	path-name:crosschecked	1	0
+crates/exo-node/src/crosschecked_anchor_authority_admin_cli.rs	core runtime adapter	crosschecked	17	17
+crates/exo-node/src/crosschecked_anchor_http.rs	core runtime adapter	path-name:crosschecked	1	0
+crates/exo-node/src/crosschecked_anchor_http.rs	core runtime adapter	crosschecked	95	4
+crates/exo-node/src/crosschecked_anchor_store.rs	core runtime adapter	path-name:crosschecked	1	0
+crates/exo-node/src/crosschecked_anchor_store.rs	core runtime adapter	crosschecked	103	17
+crates/exo-node/src/economy.rs	core runtime adapter	commandbase	2	1661
+crates/exo-node/src/economy.rs	core runtime adapter	honorgood	28	53
+crates/exo-node/src/economy.rs	core runtime adapter	exoforge	2	1402
+crates/exo-node/src/economy.rs	core runtime adapter	archon	2	1402
+crates/exo-node/src/economy.rs	core runtime adapter	apex-velocity	10	1401
+crates/exo-node/src/exoforge.rs	core runtime adapter	path-name:exoforge	1	0
+crates/exo-node/src/exoforge.rs	core runtime adapter	exoforge	32	17
+crates/exo-node/src/exoforge.rs	core runtime adapter	zerodentity	29	194
+crates/exo-node/src/exoforge.rs	core runtime adapter	telegram	1	741
+crates/exo-node/src/holons.rs	core runtime adapter	archon	5	1122
+crates/exo-node/src/holons.rs	core runtime adapter	pathref:Initiatives	2	52
+crates/exo-node/src/lib.rs	core runtime adapter	crosschecked	2	21
+crates/exo-node/src/livesafe_public_output_ceremony_cli.rs	core runtime adapter	path-name:livesafe	1	0
+crates/exo-node/src/livesafe_public_output_ceremony_cli.rs	core runtime adapter	livesafe	40	1
+crates/exo-node/src/main.rs	core runtime adapter	livesafe	29	52
+crates/exo-node/src/main.rs	core runtime adapter	crosschecked	57	46
+crates/exo-node/src/main.rs	core runtime adapter	honorgood	1	1394
+crates/exo-node/src/main.rs	core runtime adapter	exoforge	8	49
+crates/exo-node/src/main.rs	core runtime adapter	zerodentity	61	70
+crates/exo-node/src/main.rs	core runtime adapter	telegram	11	68
+crates/exo-node/src/main.rs	core runtime adapter	pathref:Initiatives	1	965
+crates/exo-node/src/mcp/tools/authority.rs	core runtime adapter	pathref:Initiatives	3	95
+crates/exo-node/src/mcp/tools/consent.rs	core runtime adapter	pathref:Initiatives	1	28
+crates/exo-node/src/mcp/tools/escalation.rs	core runtime adapter	pathref:Initiatives	1	129
+crates/exo-node/src/mcp/tools/governance.rs	core runtime adapter	pathref:Initiatives	3	86
+crates/exo-node/src/mcp/tools/identity.rs	core runtime adapter	pathref:Initiatives	1	79
+crates/exo-node/src/mcp/tools/ledger.rs	core runtime adapter	pathref:Initiatives	1	62
+crates/exo-node/src/mcp/tools/legal.rs	core runtime adapter	pathref:Initiatives	1	34
+crates/exo-node/src/mcp/tools/mod.rs	core runtime adapter	pathref:Initiatives	1	62
+crates/exo-node/src/mcp/tools/proofs.rs	core runtime adapter	pathref:Initiatives	1	37
+crates/exo-node/src/passport.rs	core runtime adapter	zerodentity	63	49
+crates/exo-node/src/public-status.json	core runtime adapter	crosschecked	2	40
+crates/exo-node/src/public-status.json	core runtime adapter	zerodentity	3	50
+crates/exo-node/src/reactor.rs	core runtime adapter	archon	21	2391
+crates/exo-node/src/sentinels.rs	core runtime adapter	zerodentity	118	32
+crates/exo-node/src/sentinels.rs	core runtime adapter	telegram	3	22
+crates/exo-node/src/store.rs	core runtime adapter	crosschecked	1	930
+crates/exo-node/src/store.rs	core runtime adapter	honorgood	1	1475
+crates/exo-node/src/store.rs	core runtime adapter	exoforge	2	1661
+crates/exo-node/src/store.rs	core runtime adapter	archon	2	1661
+crates/exo-node/src/store.rs	core runtime adapter	apex-velocity	3	1660
+crates/exo-node/src/telegram.rs	core runtime adapter	path-name:telegram	1	0
+crates/exo-node/src/telegram.rs	core runtime adapter	zerodentity	139	53
+crates/exo-node/src/telegram.rs	core runtime adapter	telegram	167	17
+crates/exo-node/src/zerodentity/api.rs	core runtime adapter	path-name:zerodentity	1	0
+crates/exo-node/src/zerodentity/api.rs	core runtime adapter	zerodentity	143	17
+crates/exo-node/src/zerodentity/attestation.rs	core runtime adapter	path-name:zerodentity	1	0
+crates/exo-node/src/zerodentity/attestation.rs	core runtime adapter	zerodentity	6	24
+crates/exo-node/src/zerodentity/behavioral.rs	core runtime adapter	path-name:zerodentity	1	0
+crates/exo-node/src/zerodentity/dashboard.rs	core runtime adapter	path-name:zerodentity	1	0
+crates/exo-node/src/zerodentity/dashboard.rs	core runtime adapter	zerodentity	26	17
+crates/exo-node/src/zerodentity/fingerprint.rs	core runtime adapter	path-name:zerodentity	1	0
+crates/exo-node/src/zerodentity/fingerprint.rs	core runtime adapter	zerodentity	1	34
+crates/exo-node/src/zerodentity/mod.rs	core runtime adapter	path-name:zerodentity	1	0
+crates/exo-node/src/zerodentity/mod.rs	core runtime adapter	zerodentity	22	17
+crates/exo-node/src/zerodentity/onboarding.rs	core runtime adapter	path-name:zerodentity	1	0
+crates/exo-node/src/zerodentity/onboarding.rs	core runtime adapter	zerodentity	103	17
+crates/exo-node/src/zerodentity/onboarding.rs	core runtime adapter	pathref:Initiatives	1	508
+crates/exo-node/src/zerodentity/onboarding_ui.rs	core runtime adapter	path-name:zerodentity	1	0
+crates/exo-node/src/zerodentity/onboarding_ui.rs	core runtime adapter	zerodentity	35	17
+crates/exo-node/src/zerodentity/otp.rs	core runtime adapter	path-name:zerodentity	1	0
+crates/exo-node/src/zerodentity/otp.rs	core runtime adapter	zerodentity	6	17
+crates/exo-node/src/zerodentity/scoring.rs	core runtime adapter	path-name:zerodentity	1	0
+crates/exo-node/src/zerodentity/scoring.rs	core runtime adapter	zerodentity	16	17
+crates/exo-node/src/zerodentity/session_auth.rs	core runtime adapter	path-name:zerodentity	1	0
+crates/exo-node/src/zerodentity/session_auth.rs	core runtime adapter	zerodentity	15	17
+crates/exo-node/src/zerodentity/session_clock.rs	core runtime adapter	path-name:zerodentity	1	0
+crates/exo-node/src/zerodentity/session_clock.rs	core runtime adapter	zerodentity	2	17
+crates/exo-node/src/zerodentity/store.rs	core runtime adapter	path-name:zerodentity	1	0
+crates/exo-node/src/zerodentity/store.rs	core runtime adapter	zerodentity	234	17
+crates/exo-node/src/zerodentity/tests.rs	core runtime adapter	path-name:zerodentity	1	0
+crates/exo-node/src/zerodentity/tests.rs	core runtime adapter	zerodentity	196	17
+crates/exo-node/src/zerodentity/types.rs	core runtime adapter	path-name:zerodentity	1	0
+crates/exo-node/src/zerodentity/types.rs	core runtime adapter	zerodentity	8	17
+crates/exo-node/tests/crosschecked_anchor_authority_admin.rs	core runtime adapter	path-name:crosschecked	1	0
+crates/exo-node/tests/crosschecked_anchor_authority_admin.rs	core runtime adapter	crosschecked	54	6
+crates/exo-node/tests/crosschecked_anchor_http.rs	core runtime adapter	path-name:crosschecked	1	0
+crates/exo-node/tests/crosschecked_anchor_http.rs	core runtime adapter	crosschecked	79	6
+crates/exo-node/tests/crosschecked_anchor_persistence.rs	core runtime adapter	path-name:crosschecked	1	0
+crates/exo-node/tests/crosschecked_anchor_persistence.rs	core runtime adapter	crosschecked	77	6
+crates/exo-node/tests/support/crosschecked_anchor_governance.rs	core runtime adapter	path-name:crosschecked	1	0
+crates/exo-node/tests/support/crosschecked_anchor_governance.rs	core runtime adapter	crosschecked	9	9
+crates/exo-pdp/src/x402.rs	EXOCHAIN core	zerodentity	2	136
+crates/exo-tenant/src/metering.rs	EXOCHAIN core	honorgood	1	28
+crates/exo-verify/fixtures/offline-bundle/rfc3161-timestamp-token.der	EXOCHAIN core	binary-not-scanned	1	-
+crates/exo-verify/fixtures/offline-bundle/subject-signed-bytes.cbor	EXOCHAIN core	binary-not-scanned	1	-
+crates/exo-verify/fixtures/offline-bundle/validator-signed-bytes.cbor	EXOCHAIN core	binary-not-scanned	1	-
+crates/exochain-sdk/src/avc.rs	core runtime adapter	livesafe	23	41
+crates/exochain-sdk/src/economy.rs	core runtime adapter	commandbase	2	91
+crates/exochain-sdk/src/economy.rs	core runtime adapter	honorgood	2	76
+crates/exochain-sdk/src/economy.rs	core runtime adapter	exoforge	2	90
+crates/exochain-sdk/src/economy.rs	core runtime adapter	archon	2	90
+crates/exochain-sdk/src/economy.rs	core runtime adapter	paperclip	2	91
+crates/exochain-sdk/src/economy.rs	core runtime adapter	apex-velocity	3	88
+crates/exochain-sdk/src/identity.rs	core runtime adapter	zerodentity	1	547
+crates/exochain-wasm/Cargo.toml	core runtime adapter	decision-forum-name	3	44
+crates/exochain-wasm/src/catapult_bindings.rs	core runtime adapter	commandbase	2	194
+crates/exochain-wasm/src/catapult_bindings.rs	core runtime adapter	pathref:Initiatives	1	470
+crates/exochain-wasm/src/decision_forum_bindings.rs	core runtime adapter	decision-forum-name	4	17
+crates/exochain-wasm/src/economy_bindings.rs	core runtime adapter	honorgood	8	17
+crates/exochain-wasm/src/economy_bindings.rs	core runtime adapter	archon	6	239
+crates/exochain-wasm/src/lib.rs	core runtime adapter	decision-forum-name	4	21
+crates/exochain-wasm/src/pdp_bindings.rs	core runtime adapter	commandbase	1	19
+crates/exochain-wasm/tests/wasm_bindings_test.rs	core runtime adapter	decision-forum-name	5	205
+cybermedica/package-lock.json	third-party/vendor	path-name:cybermedica	1	0
+cybermedica/package-lock.json	third-party/vendor	cybermedica	2	2
+cybermedica/package-lock.json	third-party/vendor	pathref:cybermedica	2	2
+demo/apps/crosschecked/package-lock.json	third-party/vendor	path-name:crosschecked	1	0
+demo/apps/crosschecked/package-lock.json	third-party/vendor	crosschecked	2	2
+demo/apps/livesafe/package-lock.json	third-party/vendor	path-name:livesafe	1	0
+demo/apps/livesafe/package-lock.json	third-party/vendor	livesafe	2	2
+demo/apps/vitallock/package-lock.json	third-party/vendor	path-name:vitallock	1	0
+demo/apps/vitallock/package-lock.json	third-party/vendor	vitallock	2	2
+demo/coverage/clover.xml	third-party/vendor	archon	24	7
+demo/coverage/clover.xml	third-party/vendor	decision-forge	2	476
+demo/coverage/clover.xml	third-party/vendor	pathref:demo	12	7
+demo/coverage/clover.xml	third-party/vendor	pathref:web	2	1125
+demo/coverage/coverage-final.json	third-party/vendor	archon	49	1
+demo/coverage/coverage-final.json	third-party/vendor	decision-forge	2	6
+demo/coverage/coverage-final.json	third-party/vendor	pathref:demo	24	1
+demo/coverage/coverage-final.json	third-party/vendor	pathref:web	4	11
+demo/coverage/favicon.png	third-party/vendor	binary-not-scanned	1	-
+demo/coverage/index.html	third-party/vendor	decision-forge	3	142
+demo/coverage/index.html	third-party/vendor	pathref:web	3	217
+demo/coverage/packages/exochain-wasm/test.mjs.html	third-party/vendor	decision-forum-name	3	628
+demo/coverage/services/decision-forge/src/index.html	third-party/vendor	path-name:decision-forge	1	0
+demo/coverage/services/decision-forge/src/index.html	third-party/vendor	decision-forge	2	6
+demo/coverage/services/decision-forge/src/index.js.html	third-party/vendor	path-name:decision-forge	1	0
+demo/coverage/services/decision-forge/src/index.js.html	third-party/vendor	decision-forge	5	6
+demo/coverage/services/gateway-api/src/index.js.html	third-party/vendor	exoforge	10	916
+demo/coverage/sort-arrow-sprite.png	third-party/vendor	binary-not-scanned	1	-
+demo/coverage/web/src/App.jsx.html	third-party/vendor	exoforge	4	2890
+demo/coverage/web/src/App.jsx.html	third-party/vendor	archon	27	2992
+demo/coverage/web/src/App.jsx.html	third-party/vendor	syntaxis	15	2844
+demo/coverage/web/src/App.jsx.html	third-party/vendor	pathref:web	2	6
+demo/coverage/web/src/index.html	third-party/vendor	pathref:web	2	6
+demo/coverage/web/src/main.jsx.html	third-party/vendor	pathref:web	2	6
+demo/package-lock.json	third-party/vendor	livesafe	4	761
+demo/package-lock.json	third-party/vendor	crosschecked	4	737
+demo/package-lock.json	third-party/vendor	vitallock	4	773
+demo/package-lock.json	third-party/vendor	decision-forge	4	741
+deploy/RAILWAY-HANDOFF.md	core runtime adapter	exoforge	2	167
+deploy/RAILWAY-HANDOFF.md	core runtime adapter	decision-forum-name	1	31
+docker-compose.yml	core runtime adapter	livesafe	5	57
+docs/0DENTITY-APP-SPEC.md	EXOCHAIN core	path-name:zerodentity	1	0
+docs/0DENTITY-APP-SPEC.md	EXOCHAIN core	zerodentity	127	19
+docs/0DENTITY-APP-SPEC.md	EXOCHAIN core	telegram	2	2193
+docs/ASI-REPORT-FEATURE.md	EXOCHAIN core	syntaxis	2	197
+docs/INDEX.md	EXOCHAIN core	livesafe	3	76
+docs/INDEX.md	EXOCHAIN core	commandbase	2	185
+docs/INDEX.md	EXOCHAIN core	honorgood	5	71
+docs/INDEX.md	EXOCHAIN core	exoforge	6	55
+docs/INDEX.md	EXOCHAIN core	heartfield	2	70
+docs/INDEX.md	EXOCHAIN core	archon	3	55
+docs/INDEX.md	EXOCHAIN core	decision-forum-name	5	168
+docs/INDEX.md	EXOCHAIN core	syntaxis	2	155
+docs/INDEX.md	EXOCHAIN core	pathref:demo	4	176
+docs/adr/ADR-001-authority-of-text.md	EXOCHAIN core	decision-forum-name	2	55
+docs/architecture/ARCHITECTURE.md	EXOCHAIN core	decision-forum-name	7	51
+docs/architecture/THREAT-MODEL.md	EXOCHAIN core	decision-forum-name	4	95
+docs/audit/CLAIMS-REMEDIATION-2026-05-09.md	EXOCHAIN core	commandbase	2	35
+docs/audit/CLAIMS-REMEDIATION-2026-05-09.md	EXOCHAIN core	pathref:command-base	1	35
+docs/audit/CLAIMS-REMEDIATION-2026-05-09.md	EXOCHAIN core	pathref:demo	3	27
+docs/audit/GAUNTLET-AUTHZ-MCP-VALIDATION-2026-05-15.md	EXOCHAIN core	livesafe	1	85
+docs/audit/GAUNTLET-AUTHZ-MCP-VALIDATION-2026-05-15.md	EXOCHAIN core	commandbase	1	85
+docs/audit/GAUNTLET-AUTHZ-MCP-VALIDATION-2026-05-15.md	EXOCHAIN core	crosschecked	1	85
+docs/audit/GAUNTLET-CRYPTO-CANONICAL-VALIDATION-2026-05-15.md	EXOCHAIN core	commandbase	2	70
+docs/audit/GAUNTLET-CRYPTO-CANONICAL-VALIDATION-2026-05-15.md	EXOCHAIN core	pathref:command-base	2	70
+docs/audit/GAUNTLET-CURRENT-MAIN-VALIDATION-2026-05-15.md	EXOCHAIN core	decision-forum-name	2	73
+docs/audit/GAUNTLET-DETERMINISM-VALIDATION-2026-05-15.md	EXOCHAIN core	zerodentity	2	41
+docs/audit/GAUNTLET-EDGE-CASE-VALIDATION-2026-05-15.md	EXOCHAIN core	zerodentity	2	44
+docs/audit/GAUNTLET-GATEWAY-SURFACE-VALIDATION-2026-05-15.md	EXOCHAIN core	decision-forum-name	1	41
+docs/audit/GAUNTLET-RESILIENCE-VALIDATION-2026-05-15.md	EXOCHAIN core	commandbase	3	46
+docs/audit/GAUNTLET-RESILIENCE-VALIDATION-2026-05-15.md	EXOCHAIN core	telegram	7	39
+docs/audit/GAUNTLET-RESILIENCE-VALIDATION-2026-05-15.md	EXOCHAIN core	pathref:command-base	1	46
+docs/audit/GAUNTLET-SUPPLY-CHAIN-VALIDATION-2026-05-15.md	EXOCHAIN core	commandbase	3	43
+docs/audit/GAUNTLET-SUPPLY-CHAIN-VALIDATION-2026-05-15.md	EXOCHAIN core	pathref:command-base	3	43
+docs/audit/GAUNTLET-ZERODENTITY-ERROR-PROPAGATION-VALIDATION-2026-05-15.md	EXOCHAIN core	path-name:zerodentity	1	0
+docs/audit/GAUNTLET-ZERODENTITY-ERROR-PROPAGATION-VALIDATION-2026-05-15.md	EXOCHAIN core	zerodentity	7	19
+docs/audit/REPO-TRUTH-BASELINE.md	EXOCHAIN core	decision-forum-name	1	83
+docs/audit/REPO-TRUTH-BASELINE.md	EXOCHAIN core	decision-forge	1	40
+docs/audit/REPO-TRUTH-BASELINE.md	EXOCHAIN core	pathref:demo	1	41
+docs/audit/REPO-TRUTH-BASELINE.md	EXOCHAIN core	pathref:web	2	41
+docs/audit/REVIEW-2026-04-19-PLAN.md	EXOCHAIN core	pathref:web	3	62
+docs/audit/REVIEW-2026-04-19.md	EXOCHAIN core	livesafe	1	36
+docs/audit/REVIEW-2026-04-19.md	EXOCHAIN core	zerodentity	1	87
+docs/audit/REVIEW-2026-04-19.md	EXOCHAIN core	decision-forum-name	1	70
+docs/audit/REVIEW-2026-04-19.md	EXOCHAIN core	pathref:web	7	30
+docs/audit/TIER-ONE-READINESS-AUDIT.md	EXOCHAIN core	exoforge	2	26
+docs/audit/TIER-ONE-READINESS-AUDIT.md	EXOCHAIN core	decision-forum-name	4	140
+docs/audit/WO-009-no-admin-bypass-audit.md	EXOCHAIN core	decision-forum-name	2	44
+docs/audit/codex-security-findings-2026-05-16-triage.md	EXOCHAIN core	exoforge	26	107
+docs/audit/codex-security-findings-2026-05-16-triage.md	EXOCHAIN core	heartfield	4	36
+docs/audit/codex-security-findings-2026-05-16-triage.md	EXOCHAIN core	zerodentity	9	87
+docs/audit/codex-security-findings-2026-05-16-triage.md	EXOCHAIN core	archon	11	107
+docs/audit/codex-security-findings-2026-05-16-triage.md	EXOCHAIN core	decision-forum-name	1	622
+docs/audit/codex-security-findings-2026-05-16-triage.md	EXOCHAIN core	pathref:exoforge	1	726
+docs/audit/codex-security-findings-2026-05-16-triage.md	EXOCHAIN core	pathref:demo	3	100
+docs/audit/codex-security-findings-2026-05-20-0857-validation.md	EXOCHAIN core	commandbase	4	42
+docs/audit/codex-security-findings-2026-05-20-0857-validation.md	EXOCHAIN core	exoforge	1	43
+docs/audit/codex-security-findings-2026-05-20-0857-validation.md	EXOCHAIN core	syntaxis	1	47
+docs/audit/codex-security-findings-2026-05-20-0857-validation.md	EXOCHAIN core	pathref:command-base	2	81
+docs/audit/codex-security-findings-2026-05-20-validation.md	EXOCHAIN core	livesafe	3	73
+docs/audit/codex-security-findings-2026-05-20-validation.md	EXOCHAIN core	commandbase	6	38
+docs/audit/codex-security-findings-2026-05-20-validation.md	EXOCHAIN core	crosschecked	3	72
+docs/audit/codex-security-findings-2026-05-20-validation.md	EXOCHAIN core	exoforge	6	70
+docs/audit/codex-security-findings-2026-05-20-validation.md	EXOCHAIN core	zerodentity	5	68
+docs/audit/codex-security-findings-2026-05-20-validation.md	EXOCHAIN core	vitallock	4	57
+docs/audit/codex-security-findings-2026-05-20-validation.md	EXOCHAIN core	syntaxis	3	42
+docs/audit/codex-security-findings-2026-05-20-validation.md	EXOCHAIN core	pathref:command-base	2	38
+docs/audit/codex-security-findings-2026-05-20-validation.md	EXOCHAIN core	pathref:demo	5	57
+docs/audit/codex-security-findings-2026-05-20-validation.md	EXOCHAIN core	pathref:web	1	143
+docs/audit/exochain-code-review-report-run4-design-evidence-2026-09-04.md	EXOCHAIN core	livesafe	3	59
+docs/audit/exochain-code-review-report-run4-design-evidence-2026-09-04.md	EXOCHAIN core	crosschecked	6	85
+docs/audit/exochain-code-review-report-run4-design-evidence-2026-09-04.md	EXOCHAIN core	exoforge	2	87
+docs/audit/exochain-code-review-report-run4-design-evidence-2026-09-04.md	EXOCHAIN core	zerodentity	5	58
+docs/audit/exochain-code-review-report-run4-formal-evidence-2026-09-04.md	EXOCHAIN core	livesafe	12	56
+docs/audit/exochain-code-review-report-run4-formal-evidence-2026-09-04.md	EXOCHAIN core	crosschecked	3	92
+docs/audit/exochain-code-review-report-run4-formal-evidence-2026-09-04.md	EXOCHAIN core	zerodentity	24	103
+docs/audit/exochain-code-review-report-run4-formal-evidence-2026-09-04.md	EXOCHAIN core	lynk	2	171
+docs/audit/exochain-code-review-report-run4-formal-evidence-2026-09-04.md	EXOCHAIN core	pathref:livesafe	9	129
+docs/audit/exochain-code-review-report-run4-validation-2026-08-28.md	EXOCHAIN core	livesafe	15	70
+docs/audit/exochain-code-review-report-run4-validation-2026-08-28.md	EXOCHAIN core	zerodentity	1	324
+docs/audit/exochain-code-review-report-run4-validation-2026-08-28.md	EXOCHAIN core	lynk	2	238
+docs/audit/exochain-code-review-report-run4-validation-2026-08-28.md	EXOCHAIN core	pathref:livesafe	2	70
+docs/avc/README.md	EXOCHAIN core	livesafe	3	67
+docs/avc/README.md	EXOCHAIN core	lynk	5	72
+docs/avc/livesafe-public-output-ceremony.md	EXOCHAIN core	path-name:livesafe	1	0
+docs/avc/livesafe-public-output-ceremony.md	EXOCHAIN core	livesafe	34	1
+docs/c2/AI-IRB-COHORT.md	EXOCHAIN core	decision-forum-name	1	42
+docs/c2/CCIR.md	EXOCHAIN core	exoforge	1	38
+docs/c2/CCIR.md	EXOCHAIN core	decision-forum-name	1	44
+docs/c2/CHAIRMAN-ESCALATION.md	EXOCHAIN core	commandbase	1	37
+docs/c2/CROSSCHECK-RECEIPTS.md	EXOCHAIN core	crosschecked	2	41
+docs/c2/CROSSCHECK-RECEIPTS.md	EXOCHAIN core	decision-forum-name	2	26
+docs/c2/DAILY-ATTENTION-PROTOCOL.md	EXOCHAIN core	archon	1	28
+docs/c2/DAILY-ATTENTION-PROTOCOL.md	EXOCHAIN core	decision-forum-name	2	28
+docs/c2/DOGFOOD-REHEARSAL-2026-07-12.md	EXOCHAIN core	commandbase	3	71
+docs/c2/DOGFOOD-REHEARSAL-2026-07-12.md	EXOCHAIN core	exoforge	1	34
+docs/c2/DOGFOOD-REHEARSAL-2026-07-12.md	EXOCHAIN core	decision-forum-name	1	85
+docs/c2/DOGFOOD-REHEARSAL-2026-07-12.md	EXOCHAIN core	pathref:command-base	1	86
+docs/c2/DOGFOOD.md	EXOCHAIN core	pathref:gap	1	27
+docs/c2/MISSION-GRAPH.md	EXOCHAIN core	honorgood	5	39
+docs/c2/MISSION-GRAPH.md	EXOCHAIN core	zerodentity	5	34
+docs/c2/README.md	EXOCHAIN core	exoforge	2	29
+docs/c2/README.md	EXOCHAIN core	archon	2	29
+docs/c2/README.md	EXOCHAIN core	decision-forum-name	3	30
+docs/c2/README.md	EXOCHAIN core	pathref:exoforge	1	48
+docs/c2/RUNTIME-TOPOLOGY.md	EXOCHAIN core	livesafe	3	28
+docs/c2/RUNTIME-TOPOLOGY.md	EXOCHAIN core	commandbase	1	28
+docs/c2/RUNTIME-TOPOLOGY.md	EXOCHAIN core	exoforge	4	29
+docs/c2/RUNTIME-TOPOLOGY.md	EXOCHAIN core	archon	4	29
+docs/c2/SECRETS-ACTIVATION.md	EXOCHAIN core	commandbase	2	43
+docs/c2/SECRETS-ACTIVATION.md	EXOCHAIN core	pathref:gap	1	29
+docs/c2/TWO-PERSON-GATE.md	EXOCHAIN core	commandbase	1	44
+docs/c2/mission-graph.yaml	EXOCHAIN core	livesafe	3	104
+docs/c2/mission-graph.yaml	EXOCHAIN core	cybermedica	2	104
+docs/c2/mission-graph.yaml	EXOCHAIN core	commandbase	3	104
+docs/c2/mission-graph.yaml	EXOCHAIN core	honorgood	5	81
+docs/c2/mission-graph.yaml	EXOCHAIN core	heartfield	1	104
+docs/c2/mission-graph.yaml	EXOCHAIN core	zerodentity	4	41
+docs/c2/mission-graph.yaml	EXOCHAIN core	pathref:livesafe	1	108
+docs/c2/mission-graph.yaml	EXOCHAIN core	pathref:command-base	1	108
+docs/c2/nodes/adjacent-surfaces.md	EXOCHAIN core	livesafe	1	41
+docs/c2/nodes/adjacent-surfaces.md	EXOCHAIN core	commandbase	1	41
+docs/c2/nodes/avc-root-trust.md	EXOCHAIN core	zerodentity	1	34
+docs/c2/nodes/economy-honorgood.md	EXOCHAIN core	path-name:honorgood	1	0
+docs/c2/nodes/economy-honorgood.md	EXOCHAIN core	honorgood	5	20
+docs/c2/nodes/identity-0dentity.md	EXOCHAIN core	path-name:zerodentity	1	0
+docs/c2/nodes/identity-0dentity.md	EXOCHAIN core	zerodentity	4	20
+docs/catapult-integration-report.md	EXOCHAIN core	commandbase	13	33
+docs/catapult-integration-report.md	EXOCHAIN core	paperclip	1	29
+docs/catapult-integration-report.md	EXOCHAIN core	pathref:command-base	3	293
+docs/continuous-release.md	EXOCHAIN core	lynk	2	24
+docs/council/CR-004-AVC-TIMESTAMP-FINALITY-COUNCIL-INPUT.md	EXOCHAIN core	exoforge	1	31
+docs/council/OPTIMIZED-SPEC.md	EXOCHAIN core	decision-forum-name	4	19
+docs/council/OPTIMIZED-SPEC.md	EXOCHAIN core	syntaxis	2	212
+docs/council/PANEL-1-GOVERNANCE.md	EXOCHAIN core	decision-forum-name	31	23
+docs/council/PANEL-2-LEGAL.md	EXOCHAIN core	decision-forum-name	17	22
+docs/council/PANEL-3-ARCHITECTURE.md	EXOCHAIN core	decision-forum-name	1	23
+docs/council/PANEL-4-SECURITY.md	EXOCHAIN core	decision-forum-name	15	2
+docs/council/PANEL-5-OPERATIONS.md	EXOCHAIN core	livesafe	1	428
+docs/council/PANEL-5-OPERATIONS.md	EXOCHAIN core	decision-forum-name	14	22
+docs/council/PANEL-5-OPERATIONS.md	EXOCHAIN core	syntaxis	58	21
+docs/dagdb/api/openapi.json	core runtime adapter	hipaa-phi	1	72
+docs/dagdb/full-migration/code-trace.md	core runtime adapter	livesafe	3	210
+docs/dagdb/full-migration/code-trace.md	core runtime adapter	cybermedica	16	14
+docs/dagdb/full-migration/code-trace.md	core runtime adapter	commandbase	58	47
+docs/dagdb/full-migration/code-trace.md	core runtime adapter	crosschecked	1	606
+docs/dagdb/full-migration/code-trace.md	core runtime adapter	zerodentity	26	39
+docs/dagdb/full-migration/code-trace.md	core runtime adapter	decision-forum-name	2	706
+docs/dagdb/full-migration/code-trace.md	core runtime adapter	vitallock	1	605
+docs/dagdb/full-migration/code-trace.md	core runtime adapter	pathref:cybermedica	4	704
+docs/dagdb/full-migration/code-trace.md	core runtime adapter	pathref:command-base	23	517
+docs/dagdb/full-migration/code-trace.md	core runtime adapter	pathref:demo	10	567
+docs/dagdb/full-migration/code-trace.md	core runtime adapter	pathref:web	16	650
+docs/dagdb/full-migration/code-trace.md	core runtime adapter	pathref:site	5	611
+docs/dagdb/full-migration/quality-matrix.md	core runtime adapter	cybermedica	18	36
+docs/dagdb/full-migration/quality-matrix.md	core runtime adapter	commandbase	43	32
+docs/dagdb/full-migration/quality-matrix.md	core runtime adapter	zerodentity	14	25
+docs/dagdb/full-migration/quality-matrix.md	core runtime adapter	pathref:cybermedica	7	208
+docs/dagdb/full-migration/quality-matrix.md	core runtime adapter	pathref:command-base	28	165
+docs/dagdb/full-migration/quality-matrix.md	core runtime adapter	pathref:demo	11	176
+docs/dagdb/full-migration/quality-matrix.md	core runtime adapter	pathref:web	15	196
+docs/dagdb/full-migration/quality-matrix.md	core runtime adapter	pathref:site	6	186
+docs/dagdb/llm-usage-custody.md	core runtime adapter	lynk	1	21
+docs/economy/AVC_MISSION_ECONOMICS_COMPACT.md	EXOCHAIN core	honorgood	1	46
+docs/economy/AVC_MISSION_ECONOMICS_COMPACT.md	EXOCHAIN core	apex-velocity	6	19
+docs/economy/MISSION_ECONOMICS.md	EXOCHAIN core	commandbase	2	31
+docs/economy/MISSION_ECONOMICS.md	EXOCHAIN core	honorgood	4	28
+docs/economy/MISSION_ECONOMICS.md	EXOCHAIN core	exoforge	2	31
+docs/economy/MISSION_ECONOMICS.md	EXOCHAIN core	apex-velocity	2	74
+docs/economy/README.md	EXOCHAIN core	commandbase	2	77
+docs/economy/README.md	EXOCHAIN core	honorgood	8	61
+docs/economy/README.md	EXOCHAIN core	exoforge	2	77
+docs/economy/README.md	EXOCHAIN core	apex-velocity	1	64
+docs/economy/examples/archon_exoforge_legacy_receipt.yml	EXOCHAIN core	path-name:exoforge	1	0
+docs/economy/examples/archon_exoforge_legacy_receipt.yml	EXOCHAIN core	path-name:archon	1	0
+docs/economy/examples/archon_exoforge_legacy_receipt.yml	EXOCHAIN core	exoforge	2	19
+docs/economy/examples/archon_exoforge_legacy_receipt.yml	EXOCHAIN core	archon	3	18
+docs/economy/examples/avc_client_services_mission.yml	EXOCHAIN core	apex-velocity	3	18
+docs/economy/examples/paperclip_commandbase_legacy_receipt.yml	EXOCHAIN core	path-name:commandbase	1	0
+docs/economy/examples/paperclip_commandbase_legacy_receipt.yml	EXOCHAIN core	path-name:paperclip	1	0
+docs/economy/examples/paperclip_commandbase_legacy_receipt.yml	EXOCHAIN core	commandbase	3	19
+docs/economy/examples/paperclip_commandbase_legacy_receipt.yml	EXOCHAIN core	paperclip	3	18
+docs/execution-ledger/2026-05-10-commandbase.md	EXOCHAIN core	path-name:commandbase	1	0
+docs/execution-ledger/2026-05-10-commandbase.md	EXOCHAIN core	commandbase	1	19
+docs/execution-ledger/2026-07-14-exochain-0.2.3-branch-reconciliation.md	EXOCHAIN core	livesafe	48	12
+docs/execution-ledger/2026-07-14-exochain-0.2.3-branch-reconciliation.md	EXOCHAIN core	cybermedica	15	12
+docs/execution-ledger/2026-07-14-exochain-0.2.3-branch-reconciliation.md	EXOCHAIN core	commandbase	21	52
+docs/execution-ledger/2026-07-14-exochain-0.2.3-branch-reconciliation.md	EXOCHAIN core	crosschecked	7	12
+docs/execution-ledger/2026-07-14-exochain-0.2.3-branch-reconciliation.md	EXOCHAIN core	legaldyne	2	12
+docs/execution-ledger/2026-07-14-exochain-0.2.3-branch-reconciliation.md	EXOCHAIN core	honorgood	3	202
+docs/execution-ledger/2026-07-14-exochain-0.2.3-branch-reconciliation.md	EXOCHAIN core	exoforge	9	181
+docs/execution-ledger/2026-07-14-exochain-0.2.3-branch-reconciliation.md	EXOCHAIN core	zerodentity	28	137
+docs/execution-ledger/2026-07-14-exochain-0.2.3-branch-reconciliation.md	EXOCHAIN core	archon	21	542
+docs/execution-ledger/2026-07-14-exochain-0.2.3-branch-reconciliation.md	EXOCHAIN core	gap-incubator	1	945
+docs/execution-ledger/2026-07-14-exochain-0.2.3-branch-reconciliation.md	EXOCHAIN core	decision-forum-name	13	12
+docs/execution-ledger/2026-07-14-exochain-0.2.3-branch-reconciliation.md	EXOCHAIN core	telegram	13	377
+docs/execution-ledger/2026-07-14-exochain-0.2.3-branch-reconciliation.md	EXOCHAIN core	vitallock	2	235
+docs/execution-ledger/2026-07-14-exochain-0.2.3-branch-reconciliation.md	EXOCHAIN core	syntaxis	4	699
+docs/execution-ledger/2026-07-14-exochain-0.2.3-branch-reconciliation.md	EXOCHAIN core	pathref:livesafe	5	69
+docs/governance/RATIFICATION-SLATE-2026-07-04.md	EXOCHAIN core	livesafe	1	369
+docs/governance/RATIFICATION-SLATE-2026-07-04.md	EXOCHAIN core	decision-forum-name	1	132
+docs/grant/CODEX-CYBERSECURITY-GRANT-CLAIMS.md	EXOCHAIN core	commandbase	1	63
+docs/grant/CODEX-CYBERSECURITY-GRANT-CLAIMS.md	EXOCHAIN core	decision-forum-name	2	34
+docs/guides/ARCHON-INTEGRATION.md	core runtime adapter	path-name:archon	1	0
+docs/guides/ARCHON-INTEGRATION.md	core runtime adapter	exoforge	24	19
+docs/guides/ARCHON-INTEGRATION.md	core runtime adapter	archon	9	23
+docs/guides/ARCHON-INTEGRATION.md	core runtime adapter	syntaxis	4	70
+docs/guides/ARCHON-INTEGRATION.md	core runtime adapter	pathref:demo	1	32
+docs/guides/GETTING-STARTED.md	core runtime adapter	exoforge	1	89
+docs/guides/GETTING-STARTED.md	core runtime adapter	archon	2	89
+docs/guides/GETTING-STARTED.md	core runtime adapter	syntaxis	3	188
+docs/guides/ai-agent-guide.md	core runtime adapter	lynk	2	60
+docs/guides/ai-agent-guide.md	core runtime adapter	pathref:Initiatives	1	409
+docs/guides/architecture-overview.md	core runtime adapter	commandbase	2	47
+docs/guides/architecture-overview.md	core runtime adapter	exoforge	3	40
+docs/guides/architecture-overview.md	core runtime adapter	decision-forum-name	1	44
+docs/guides/architecture-overview.md	core runtime adapter	cognitiveplane	1	48
+docs/guides/architecture-overview.md	core runtime adapter	pathref:command-base	1	48
+docs/guides/architecture-overview.md	core runtime adapter	pathref:exoforge	1	41
+docs/guides/cgr-developer-guide.md	core runtime adapter	decision-forum-name	9	36
+docs/guides/cgr-developer-guide.md	core runtime adapter	paperclip	1	591
+docs/guides/constitutional-model.md	core runtime adapter	decision-forum-name	1	109
+docs/guides/crosschecked-anchor-authority-owner-runbook.md	core runtime adapter	path-name:crosschecked	1	0
+docs/guides/crosschecked-anchor-authority-owner-runbook.md	core runtime adapter	crosschecked	32	1
+docs/guides/developer-onboarding.md	core runtime adapter	commandbase	3	43
+docs/guides/developer-onboarding.md	core runtime adapter	exoforge	4	259
+docs/guides/developer-onboarding.md	core runtime adapter	zerodentity	1	388
+docs/guides/developer-onboarding.md	core runtime adapter	archon	2	494
+docs/guides/developer-onboarding.md	core runtime adapter	sybil-cli	1	250
+docs/guides/developer-onboarding.md	core runtime adapter	decision-forum-name	2	222
+docs/guides/developer-onboarding.md	core runtime adapter	syntaxis	2	44
+docs/guides/developer-onboarding.md	core runtime adapter	pathref:command-base	2	43
+docs/guides/developer-onboarding.md	core runtime adapter	pathref:exoforge	1	259
+docs/guides/mcp-integration.md	core runtime adapter	lynk	4	42
+docs/honorgood/BAILMENT_WRAPPED_TRANSACTIONS.md	EXOCHAIN core	path-name:honorgood	1	0
+docs/honorgood/HONOR_GOOD_COMPACT.md	EXOCHAIN core	path-name:honorgood	1	0
+docs/honorgood/HONOR_GOOD_COMPACT.md	EXOCHAIN core	commandbase	1	64
+docs/honorgood/HONOR_GOOD_COMPACT.md	EXOCHAIN core	honorgood	6	19
+docs/honorgood/HONOR_GOOD_COMPACT.md	EXOCHAIN core	exoforge	1	64
+docs/honorgood/HONOR_GOOD_COMPACT.md	EXOCHAIN core	archon	1	91
+docs/honorgood/HONOR_GOOD_COMPACT.md	EXOCHAIN core	paperclip	1	91
+docs/honorgood/LEGACY_RECEIPTS.md	EXOCHAIN core	path-name:honorgood	1	0
+docs/honorgood/LEGACY_RECEIPTS.md	EXOCHAIN core	commandbase	1	69
+docs/honorgood/LEGACY_RECEIPTS.md	EXOCHAIN core	honorgood	1	21
+docs/honorgood/LEGACY_RECEIPTS.md	EXOCHAIN core	exoforge	1	68
+docs/honorgood/LEGACY_RECEIPTS.md	EXOCHAIN core	archon	1	68
+docs/honorgood/LEGACY_RECEIPTS.md	EXOCHAIN core	paperclip	1	69
+docs/honorgood/OPEN_PROVENANCE_COMPACT.md	EXOCHAIN core	path-name:honorgood	1	0
+docs/honorgood/OPEN_PROVENANCE_COMPACT.md	EXOCHAIN core	honorgood	2	21
+docs/honorgood/TERMS_OF_BAILMENT.md	EXOCHAIN core	path-name:honorgood	1	0
+docs/honorgood/TERMS_OF_BAILMENT.md	EXOCHAIN core	honorgood	1	21
+docs/honorgood/VALUE_CONTRIBUTION_NODES.md	EXOCHAIN core	path-name:honorgood	1	0
+docs/honorgood/VALUE_CONTRIBUTION_NODES.md	EXOCHAIN core	commandbase	1	43
+docs/honorgood/VALUE_CONTRIBUTION_NODES.md	EXOCHAIN core	honorgood	1	21
+docs/honorgood/VALUE_CONTRIBUTION_NODES.md	EXOCHAIN core	exoforge	1	43
+docs/honorgood/VALUE_CONTRIBUTION_NODES.md	EXOCHAIN core	apex-velocity	1	21
+docs/legal/LICENSING-POSITION.md	EXOCHAIN core	livesafe	8	61
+docs/legal/LICENSING-POSITION.md	EXOCHAIN core	cybermedica	7	60
+docs/legal/LICENSING-POSITION.md	EXOCHAIN core	crosschecked	2	62
+docs/legal/LICENSING-POSITION.md	EXOCHAIN core	legaldyne	2	59
+docs/legal/LICENSING-POSITION.md	EXOCHAIN core	customer-zero	1	46
+docs/legal/LICENSING-POSITION.md	EXOCHAIN core	decision-forum-name	7	35
+docs/legal/LICENSING-POSITION.md	EXOCHAIN core	pathref:livesafe	4	61
+docs/legal/LICENSING-POSITION.md	EXOCHAIN core	pathref:cybermedica	4	60
+docs/policy/NATIONAL-POLICY-FRAMEWORK-CROSSWALK-2026.md	EXOCHAIN core	exoforge	2	37
+docs/policy/NATIONAL-POLICY-FRAMEWORK-CROSSWALK-2026.md	EXOCHAIN core	syntaxis	1	37
+docs/policy/NATIONAL-POLICY-FRAMEWORK-CROSSWALK-2026.md	EXOCHAIN core	pathref:demo	2	38
+docs/proof/avc-cornerstone-production-proof.md	EXOCHAIN core	commandbase	9	5
+docs/proof/avc-cornerstone-production-proof.md	EXOCHAIN core	crosschecked	1	33
+docs/proof/avc-cornerstone-production-proof.md	EXOCHAIN core	exoforge	3	29
+docs/proof/avc-cornerstone-production-proof.md	EXOCHAIN core	archon	6	30
+docs/proof/avc-cornerstone-production-proof.md	EXOCHAIN core	paperclip	6	5
+docs/proof/avc-cornerstone-production-proof.md	EXOCHAIN core	pathref:exoforge	1	33
+docs/proof/avc-issue-713-production-closure-proof.md	EXOCHAIN core	archon	2	47
+docs/quality/archon-avc-quality-matrix.md	EXOCHAIN core	path-name:archon	1	0
+docs/quality/archon-avc-quality-matrix.md	EXOCHAIN core	commandbase	13	18
+docs/quality/archon-avc-quality-matrix.md	EXOCHAIN core	exoforge	15	9
+docs/quality/archon-avc-quality-matrix.md	EXOCHAIN core	archon	21	1
+docs/quality/archon-avc-quality-matrix.md	EXOCHAIN core	paperclip	5	26
+docs/quality/archon-avc-quality-matrix.md	EXOCHAIN core	pathref:exoforge	1	23
+docs/reference/CRATE-REFERENCE.md	core runtime adapter	decision-forum-name	4	54
+docs/superpowers/lynk-coverage-evidence-2026-07-08.md	EXOCHAIN core	path-name:lynk	1	0
+docs/superpowers/lynk-coverage-evidence-2026-07-08.md	EXOCHAIN core	lynk	12	1
+docs/superpowers/plans/2026-07-05-livesafe-public-adapter-output-authorization.md	EXOCHAIN core	path-name:livesafe	1	0
+docs/superpowers/plans/2026-07-05-livesafe-public-adapter-output-authorization.md	EXOCHAIN core	livesafe	66	1
+docs/superpowers/plans/2026-07-05-livesafe-public-adapter-output-authorization.md	EXOCHAIN core	hipaa-phi	2	67
+docs/superpowers/plans/2026-07-05-livesafe-public-adapter-output-authorization.md	EXOCHAIN core	pathref:livesafe	21	24
+docs/superpowers/plans/2026-07-08-llm-usage-receipt-extensions.md	EXOCHAIN core	lynk	8	482
+docs/superpowers/plans/2026-07-12-presidential-mission-c2.md	EXOCHAIN core	livesafe	5	65
+docs/superpowers/plans/2026-07-12-presidential-mission-c2.md	EXOCHAIN core	commandbase	16	40
+docs/superpowers/plans/2026-07-12-presidential-mission-c2.md	EXOCHAIN core	crosschecked	10	38
+docs/superpowers/plans/2026-07-12-presidential-mission-c2.md	EXOCHAIN core	exoforge	8	25
+docs/superpowers/plans/2026-07-12-presidential-mission-c2.md	EXOCHAIN core	archon	8	25
+docs/superpowers/plans/2026-07-12-presidential-mission-c2.md	EXOCHAIN core	decision-forum-name	14	37
+docs/superpowers/plans/2026-07-12-presidential-mission-c2.md	EXOCHAIN core	pathref:command-base	5	99
+docs/superpowers/plans/2026-07-12-presidential-mission-c2.md	EXOCHAIN core	pathref:exoforge	1	132
+docs/superpowers/plans/2026-07-12-presidential-mission-c2.md	EXOCHAIN core	pathref:demo	2	273
+docs/superpowers/plans/2026-07-12-presidential-mission-c2.md	EXOCHAIN core	pathref:gap	2	163
+docs/superpowers/plans/2026-08-28-release-0.2.6-security-remediation.md	EXOCHAIN core	livesafe	31	42
+docs/superpowers/plans/2026-08-28-release-0.2.6-security-remediation.md	EXOCHAIN core	zerodentity	5	304
+docs/superpowers/plans/2026-08-28-release-0.2.6-security-remediation.md	EXOCHAIN core	decision-forum-name	1	926
+docs/superpowers/plans/2026-08-28-release-0.2.6-security-remediation.md	EXOCHAIN core	pathref:livesafe	19	836
+docs/superpowers/plans/2026-11-01-governed-agent-runtime.md	EXOCHAIN core	lynk	4	6
+docs/superpowers/specs/2026-11-01-governed-agent-runtime-design.md	EXOCHAIN core	lynk	3	8
+governance/COUNCIL-ASSESSMENT-EXO-VS-EXOCHAIN.md	EXOCHAIN core	syntaxis	9	45
+governance/EXOCHAIN-REFACTOR-PLAN.md	EXOCHAIN core	decision-forum-name	1	81
+governance/EXOCHAIN-REFACTOR-PLAN.md	EXOCHAIN core	syntaxis	3	5
+governance/commercial-product-licensing.json	EXOCHAIN core	livesafe	2	41
+governance/commercial-product-licensing.json	EXOCHAIN core	cybermedica	2	31
+governance/commercial-product-licensing.json	EXOCHAIN core	crosschecked	1	51
+governance/commercial-product-licensing.json	EXOCHAIN core	legaldyne	1	21
+governance/commercial-product-licensing.json	EXOCHAIN core	decision-forum-name	2	8
+governance/commercial-product-licensing.json	EXOCHAIN core	pathref:livesafe	1	42
+governance/commercial-product-licensing.json	EXOCHAIN core	pathref:cybermedica	1	32
+governance/quality_gates.md	EXOCHAIN core	zerodentity	2	43
+governance/releases/published-release-snapshot.json	EXOCHAIN core	decision-forum-name	1	37
+governance/releases/v0.2.6/ISSUE-DISPOSITION.md	EXOCHAIN core	crosschecked	4	33
+governance/releases/v0.2.6/ISSUE-DISPOSITION.md	EXOCHAIN core	apex-velocity	1	50
+governance/releases/v0.2.6/ISSUE-DISPOSITION.md	EXOCHAIN core	lynk	1	32
+governance/releases/v0.2.6/PATH-CLASSIFICATION.md	EXOCHAIN core	livesafe	34	62
+governance/releases/v0.2.6/PATH-CLASSIFICATION.md	EXOCHAIN core	crosschecked	3	54
+governance/releases/v0.2.6/PATH-CLASSIFICATION.md	EXOCHAIN core	zerodentity	3	186
+governance/releases/v0.2.6/PATH-CLASSIFICATION.md	EXOCHAIN core	decision-forum-name	1	124
+governance/releases/v0.2.6/PATH-CLASSIFICATION.md	EXOCHAIN core	lynk	2	171
+governance/releases/v0.2.6/PATH-CLASSIFICATION.md	EXOCHAIN core	pathref:livesafe	25	231
+governance/releases/v0.2.6/PATH-CLASSIFICATION.md	EXOCHAIN core	pathref:Initiatives	1	121
+governance/releases/v0.2.6/RC.md	EXOCHAIN core	livesafe	20	37
+governance/releases/v0.2.6/RC.md	EXOCHAIN core	zerodentity	2	228
+governance/releases/v0.2.6/RC.md	EXOCHAIN core	decision-forum-name	1	454
+governance/releases/v0.2.6/RC.md	EXOCHAIN core	lynk	5	40
+governance/releases/v0.2.6/RC.md	EXOCHAIN core	pathref:livesafe	1	198
+governance/releases/v0.2.6/TEST-PLAN.md	EXOCHAIN core	livesafe	21	70
+governance/releases/v0.2.6/TEST-PLAN.md	EXOCHAIN core	crosschecked	3	188
+governance/releases/v0.2.6/TEST-PLAN.md	EXOCHAIN core	zerodentity	8	87
+governance/releases/v0.2.6/TEST-PLAN.md	EXOCHAIN core	lynk	9	403
+governance/releases/v0.2.6/TEST-PLAN.md	EXOCHAIN core	pathref:livesafe	4	384
+governance/releases/v0.2.6/TEST-PLAN.md	EXOCHAIN core	pathref:demo	6	295
+governance/releases/v0.2.6/TEST-PLAN.md	EXOCHAIN core	pathref:web	2	295
+governance/releases/v0.2.6/TEST-PLAN.md	EXOCHAIN core	pathref:Initiatives	1	419
+governance/releases/v0.2.7/CI-REPRODUCIBILITY-DESIGN.md	EXOCHAIN core	crosschecked	1	11
+governance/releases/v0.2.7/CI-REPRODUCIBILITY-DESIGN.md	EXOCHAIN core	zerodentity	1	29
+governance/releases/v0.2.7/CI-REPRODUCIBILITY-PLAN.md	EXOCHAIN core	zerodentity	1	36
+governance/releases/v0.2.7/CI-REPRODUCIBILITY-PLAN.md	EXOCHAIN core	pathref:gap	1	52
+governance/releases/v0.2.7/RECOVERY-DESIGN.md	EXOCHAIN core	lynk	2	93
+governance/releases/v0.2.7/RECOVERY-MANIFEST.json	EXOCHAIN core	crosschecked	1	132
+governance/releases/v0.2.7/RECOVERY-MANIFEST.json	EXOCHAIN core	zerodentity	3	96
+governance/releases/v0.2.7/RECOVERY-MANIFEST.json	EXOCHAIN core	decision-forum-name	2	413
+governance/releases/v0.2.7/RECOVERY-MANIFEST.json	EXOCHAIN core	lynk	2	206
+governance/releases/v0.2.7/RECOVERY-PLAN.md	EXOCHAIN core	lynk	2	169
+governance/releases/v0.2.7/RECOVERY-VALIDATION.md	EXOCHAIN core	lynk	1	43
+governance/releases/v0.2.7/RETAINED-CUSTODY.json	EXOCHAIN core	decision-forum-name	1	329
+governance/releases/v0.2.7/RETAINED-RECOVERY-PLAN.md	EXOCHAIN core	lynk	3	269
+governance/releases/v0.3.0/GOAL.md	EXOCHAIN core	legaldyne	1	46
+governance/releases/v0.3.1/ARCHITECTURE.md	EXOCHAIN core	livesafe	1	203
+governance/releases/v0.3.1/ARCHITECTURE.md	EXOCHAIN core	cybermedica	1	203
+governance/releases/v0.3.1/ARCHITECTURE.md	EXOCHAIN core	commandbase	1	203
+governance/releases/v0.3.1/ARCHITECTURE.md	EXOCHAIN core	crosschecked	5	96
+governance/releases/v0.3.1/ARCHITECTURE.md	EXOCHAIN core	legaldyne	1	203
+governance/releases/v0.3.1/ARCHITECTURE.md	EXOCHAIN core	zerodentity	3	87
+governance/releases/v0.3.1/ARCHITECTURE.md	EXOCHAIN core	lynk	4	86
+governance/releases/v0.3.1/DEMO.md	EXOCHAIN core	crosschecked	1	86
+governance/releases/v0.3.1/DEPENDENCY-GRAPH.md	EXOCHAIN core	lynk	4	86
+governance/releases/v0.3.1/GOAL.md	EXOCHAIN core	legaldyne	4	165
+governance/releases/v0.3.1/GOAL.md	EXOCHAIN core	zerodentity	2	106
+governance/releases/v0.3.1/GOVERNANCE-DECISIONS.md	EXOCHAIN core	legaldyne	5	163
+governance/releases/v0.3.1/ISSUES.md	EXOCHAIN core	crosschecked	1	337
+governance/releases/v0.3.1/ISSUES.md	EXOCHAIN core	zerodentity	4	254
+governance/releases/v0.3.1/RELEASE-EVIDENCE.md	EXOCHAIN core	zerodentity	1	73
+governance/releases/v0.3.1/TEST-PLAN.md	EXOCHAIN core	crosschecked	1	69
+governance/releases/v0.3.1/schemas/claim-attestation.schema.json	EXOCHAIN core	crosschecked	3	14
+governance/releases/v0.3.1/specs/CLAIM-ATTESTATION.md	EXOCHAIN core	crosschecked	4	36
+governance/releases/v0.3.1/specs/MCP-A2A-DISCOVERY.md	EXOCHAIN core	lynk	1	131
+governance/releases/v0.3.1/specs/X402-SETTLEMENT.md	EXOCHAIN core	zerodentity	1	63
+governance/releases/v0.3.1/test-vectors/claim-stamp-request.json	EXOCHAIN core	crosschecked	1	4
+governance/releases/v0.4.0/RC.md	EXOCHAIN core	lynk	1	55
+governance/resolutions/CR-002-AUTONOMOUS-RECURSIVE-IMPROVEMENT-INFRASTRUCTURE.md	EXOCHAIN core	livesafe	2	87
+governance/resolutions/CR-002-AUTONOMOUS-RECURSIVE-IMPROVEMENT-INFRASTRUCTURE.md	EXOCHAIN core	commandbase	5	83
+governance/resolutions/CR-002-AUTONOMOUS-RECURSIVE-IMPROVEMENT-INFRASTRUCTURE.md	EXOCHAIN core	crosschecked	2	85
+governance/resolutions/CR-002-AUTONOMOUS-RECURSIVE-IMPROVEMENT-INFRASTRUCTURE.md	EXOCHAIN core	exoforge	12	71
+governance/resolutions/CR-002-AUTONOMOUS-RECURSIVE-IMPROVEMENT-INFRASTRUCTURE.md	EXOCHAIN core	decision-forum-name	5	68
+governance/resolutions/CR-002-AUTONOMOUS-RECURSIVE-IMPROVEMENT-INFRASTRUCTURE.md	EXOCHAIN core	vitallock	2	86
+governance/resolutions/CR-002-AUTONOMOUS-RECURSIVE-IMPROVEMENT-INFRASTRUCTURE.md	EXOCHAIN core	pathref:command-base	3	83
+governance/resolutions/CR-002-AUTONOMOUS-RECURSIVE-IMPROVEMENT-INFRASTRUCTURE.md	EXOCHAIN core	pathref:exoforge	3	73
+governance/resolutions/CR-002-AUTONOMOUS-RECURSIVE-IMPROVEMENT-INFRASTRUCTURE.md	EXOCHAIN core	pathref:demo	1	84
+governance/resolutions/CR-004-AVC-TIMESTAMP-FINALITY-AUTHORITY.md	EXOCHAIN core	exoforge	1	52
+governance/resolutions/CR-HG-001-honorgood-mission-economics.md	EXOCHAIN core	path-name:honorgood	1	0
+governance/resolutions/CR-HG-001-honorgood-mission-economics.md	EXOCHAIN core	commandbase	1	60
+governance/resolutions/CR-HG-001-honorgood-mission-economics.md	EXOCHAIN core	honorgood	5	19
+governance/resolutions/CR-HG-001-honorgood-mission-economics.md	EXOCHAIN core	exoforge	1	60
+governance/resolutions/CR-HG-001-honorgood-mission-economics.md	EXOCHAIN core	apex-velocity	1	25
+governance/threat_matrix.md	EXOCHAIN core	commandbase	4	44
+governance/threat_matrix.md	EXOCHAIN core	honorgood	5	43
+governance/threat_matrix.md	EXOCHAIN core	exoforge	6	42
+governance/threat_matrix.md	EXOCHAIN core	archon	1	43
+governance/threat_matrix.md	EXOCHAIN core	decision-forum-name	1	41
+governance/threat_matrix.md	EXOCHAIN core	paperclip	1	43
+governance/threat_matrix.md	EXOCHAIN core	pathref:command-base	2	44
+governance/threat_matrix.md	EXOCHAIN core	pathref:exoforge	2	44
+governance/threat_matrix.md	EXOCHAIN core	pathref:demo	2	42
+governance/traceability_matrix.md	EXOCHAIN core	commandbase	3	223
+governance/traceability_matrix.md	EXOCHAIN core	honorgood	9	214
+governance/traceability_matrix.md	EXOCHAIN core	exoforge	8	168
+governance/traceability_matrix.md	EXOCHAIN core	archon	1	167
+governance/traceability_matrix.md	EXOCHAIN core	decision-forum-name	2	134
+governance/traceability_matrix.md	EXOCHAIN core	apex-velocity	1	220
+governance/traceability_matrix.md	EXOCHAIN core	pathref:command-base	2	223
+governance/traceability_matrix.md	EXOCHAIN core	pathref:exoforge	2	223
+governance/traceability_matrix.md	EXOCHAIN core	pathref:demo	8	158
+governance/traceability_matrix.md	EXOCHAIN core	pathref:web	1	169
+init-db.sh	core runtime adapter	livesafe	4	18
+livesafe/Cargo.lock	third-party/vendor	path-name:livesafe	1	0
+livesafe/Cargo.lock	third-party/vendor	livesafe	1	6
+livesafe/client/package-lock.json	third-party/vendor	path-name:livesafe	1	0
+livesafe/client/package-lock.json	third-party/vendor	livesafe	2	2
+livesafe/package-lock.json	third-party/vendor	path-name:livesafe	1	0
+livesafe/package-lock.json	third-party/vendor	livesafe	2	2
+livesafe/responder/package-lock.json	third-party/vendor	path-name:livesafe	1	0
+livesafe/responder/package-lock.json	third-party/vendor	livesafe	2	2
+livesafe/server/package-lock.json	third-party/vendor	path-name:livesafe	1	0
+livesafe/server/package-lock.json	third-party/vendor	livesafe	2	2
+packages/README.md	core runtime adapter	lynk	2	32
+packages/exochain-llm-proxy/AGENTS.md	core runtime adapter	lynk	2	1
+packages/exochain-llm-proxy/README.md	core runtime adapter	lynk	7	21
+packages/exochain-llm-proxy/dist/action-authorization.js	third-party/vendor	lynk	2	57
+packages/exochain-llm-proxy/dist/agent-model.js	third-party/vendor	lynk	1	18
+packages/exochain-llm-proxy/dist/attestation.d.ts	third-party/vendor	lynk	2	3
+packages/exochain-llm-proxy/dist/attestation.js	third-party/vendor	lynk	18	12
+packages/exochain-llm-proxy/dist/evidence.d.ts	third-party/vendor	lynk	1	4
+packages/exochain-llm-proxy/dist/evidence.js	third-party/vendor	lynk	13	15
+packages/exochain-llm-proxy/dist/http.js	third-party/vendor	lynk	2	61
+packages/exochain-llm-proxy/dist/mcp.js	third-party/vendor	lynk	1	31
+packages/exochain-llm-proxy/dist/receipt.js	third-party/vendor	lynk	13	32
+packages/exochain-llm-proxy/dist/types.d.ts	third-party/vendor	lynk	2	130
+packages/exochain-llm-proxy/dist/wire.d.ts	third-party/vendor	lynk	1	49
+packages/exochain-llm-proxy/dist/wire.js	third-party/vendor	lynk	1	27
+packages/exochain-llm-proxy/examples/chat-completions.ts	core runtime adapter	lynk	1	18
+packages/exochain-llm-proxy/examples/external-payload-ref.ts	core runtime adapter	lynk	1	22
+packages/exochain-llm-proxy/examples/mcp-tool-call.ts	core runtime adapter	lynk	1	19
+packages/exochain-llm-proxy/examples/openai-responses.ts	core runtime adapter	lynk	1	18
+packages/exochain-llm-proxy/examples/receipt-pending-retry.ts	core runtime adapter	lynk	1	20
+packages/exochain-llm-proxy/package.json	core runtime adapter	lynk	2	4
+packages/exochain-llm-proxy/snippets/agent-integration-brief.md	core runtime adapter	lynk	1	3
+packages/exochain-llm-proxy/snippets/env-template.md	core runtime adapter	lynk	2	1
+packages/exochain-llm-proxy/src/action-authorization.ts	core runtime adapter	lynk	2	70
+packages/exochain-llm-proxy/src/agent-model.ts	core runtime adapter	lynk	1	31
+packages/exochain-llm-proxy/src/attestation.ts	core runtime adapter	lynk	18	17
+packages/exochain-llm-proxy/src/evidence.ts	core runtime adapter	lynk	13	26
+packages/exochain-llm-proxy/src/http.ts	core runtime adapter	lynk	2	100
+packages/exochain-llm-proxy/src/mcp.ts	core runtime adapter	lynk	1	60
+packages/exochain-llm-proxy/src/receipt.ts	core runtime adapter	lynk	13	55
+packages/exochain-llm-proxy/src/types.ts	core runtime adapter	lynk	2	164
+packages/exochain-llm-proxy/src/wire.ts	core runtime adapter	lynk	1	104
+packages/exochain-llm-proxy/test/action-wire-contract.test.ts	core runtime adapter	lynk	1	12
+packages/exochain-llm-proxy/test/cli.test.ts	core runtime adapter	lynk	1	34
+packages/exochain-llm-proxy/test/delivery.test.ts	core runtime adapter	lynk	2	235
+packages/exochain-llm-proxy/test/receipt-fixture.ts	core runtime adapter	lynk	1	40
+packages/exochain-llm-proxy/test/release-artifacts.test.ts	core runtime adapter	lynk	1	32
+packages/exochain-llm-proxy/test/wire-contract.test.ts	core runtime adapter	lynk	5	35
+packages/exochain-sdk/dist-test/src/client.js	third-party/vendor	honorgood	1	99
+packages/exochain-sdk/dist-test/src/validation.js	third-party/vendor	honorgood	1	23
+packages/exochain-sdk/dist/client.d.ts	third-party/vendor	honorgood	1	66
+packages/exochain-sdk/dist/client.js	third-party/vendor	honorgood	1	99
+packages/exochain-sdk/dist/types.d.ts	third-party/vendor	honorgood	2	85
+packages/exochain-sdk/dist/validation.js	third-party/vendor	honorgood	1	23
+packages/exochain-sdk/src/client.ts	core runtime adapter	honorgood	1	163
+packages/exochain-sdk/src/types.ts	core runtime adapter	honorgood	2	111
+packages/exochain-sdk/src/validation.ts	core runtime adapter	honorgood	1	39
+packages/exochain-wasm/test/bridge_verification.mjs	core runtime adapter	commandbase	2	1215
+packages/exochain-wasm/test/bridge_verification.mjs	core runtime adapter	honorgood	5	2648
+packages/exochain-wasm/test/bridge_verification.mjs	core runtime adapter	exoforge	3	2701
+packages/exochain-wasm/test/bridge_verification.mjs	core runtime adapter	archon	7	2694
+tarpaulin.toml	EXOCHAIN core	telegram	2	30
+tla/AuditLogContinuity.tla	EXOCHAIN core	decision-forum-name	1	19
+tla/AuthorityChain.tla	EXOCHAIN core	decision-forum-name	2	18
+tla/DecisionLifecycle.tla	EXOCHAIN core	decision-forum-name	2	18
+tools/check_cratesio_namespace_ownership.mjs	core runtime adapter	decision-forum-name	1	41
+tools/check_systemic_integrity_claims.sh	EXOCHAIN core	decision-forum-name	2	53
+tools/codegen/generate_crate.py	EXOCHAIN core	decision-forum-name	1	488
+tools/cross-impl-test/fixtures/SHA256SUMS	EXOCHAIN core	crosschecked	1	1
+tools/cross-impl-test/fixtures/crosschecked_anchor_authority_governance_v1.json	EXOCHAIN core	path-name:crosschecked	1	0
+tools/cross-impl-test/fixtures/crosschecked_anchor_authority_governance_v1.json	EXOCHAIN core	crosschecked	1	7
+tools/cross-impl-test/index.js	EXOCHAIN core	crosschecked	2	75
+tools/license_headers.py	EXOCHAIN core	livesafe	2	52
+tools/license_headers.py	EXOCHAIN core	cybermedica	1	54
+tools/license_headers.py	EXOCHAIN core	commandbase	1	55
+tools/license_headers.py	EXOCHAIN core	pathref:livesafe	2	52
+tools/license_headers.py	EXOCHAIN core	pathref:cybermedica	1	54
+tools/license_headers.py	EXOCHAIN core	pathref:command-base	1	55
+tools/license_headers.py	EXOCHAIN core	pathref:demo	3	51
+tools/llm_usage_receipt_smoke.mjs	core runtime adapter	lynk	3	28
+tools/preflight_release_crates.sh	core runtime adapter	decision-forum-name	1	166
+tools/publish_release_crates.sh	core runtime adapter	decision-forum-name	1	721
+tools/recover_github_release_027.py	core runtime adapter	lynk	1	834
+tools/retire_crates_023.py	core runtime adapter	decision-forum-name	1	60
+tools/stage_llm_release_package.sh	core runtime adapter	lynk	7	19
+tools/syntaxis/README.md	EXOCHAIN core	path-name:syntaxis	1	0
+tools/syntaxis/README.md	EXOCHAIN core	exoforge	6	23
+tools/syntaxis/README.md	EXOCHAIN core	archon	7	312
+tools/syntaxis/README.md	EXOCHAIN core	syntaxis	19	19
+tools/syntaxis/README.md	EXOCHAIN core	pathref:exoforge	1	206
+tools/syntaxis/compiler.js	EXOCHAIN core	path-name:syntaxis	1	0
+tools/syntaxis/compiler.js	EXOCHAIN core	archon	3	498
+tools/syntaxis/compiler.js	EXOCHAIN core	syntaxis	34	18
+tools/syntaxis/determinism.js	EXOCHAIN core	path-name:syntaxis	1	0
+tools/syntaxis/determinism.test.js	EXOCHAIN core	path-name:syntaxis	1	0
+tools/syntaxis/determinism.test.js	EXOCHAIN core	exoforge	5	699
+tools/syntaxis/determinism.test.js	EXOCHAIN core	archon	2	370
+tools/syntaxis/determinism.test.js	EXOCHAIN core	syntaxis	22	22
+tools/syntaxis/determinism.test.js	EXOCHAIN core	pathref:exoforge	5	699
+tools/syntaxis/generate_workflow.py	EXOCHAIN core	path-name:syntaxis	1	0
+tools/syntaxis/generate_workflow.py	EXOCHAIN core	syntaxis	7	19
+tools/syntaxis/index.js	EXOCHAIN core	path-name:syntaxis	1	0
+tools/syntaxis/index.js	EXOCHAIN core	exoforge	1	21
+tools/syntaxis/index.js	EXOCHAIN core	archon	3	385
+tools/syntaxis/index.js	EXOCHAIN core	syntaxis	26	18
+tools/syntaxis/node_registry.json	EXOCHAIN core	path-name:syntaxis	1	0
+tools/syntaxis/node_registry.json	EXOCHAIN core	syntaxis	4	2
+tools/syntaxis/nodes.js	EXOCHAIN core	path-name:syntaxis	1	0
+tools/syntaxis/nodes.js	EXOCHAIN core	syntaxis	26	18
+tools/syntaxis/package.json	EXOCHAIN core	path-name:syntaxis	1	0
+tools/syntaxis/package.json	EXOCHAIN core	exoforge	2	4
+tools/syntaxis/package.json	EXOCHAIN core	syntaxis	2	2
+tools/syntaxis/solutions-builder.js	EXOCHAIN core	path-name:syntaxis	1	0
+tools/syntaxis/solutions-builder.js	EXOCHAIN core	exoforge	1	445
+tools/syntaxis/solutions-builder.js	EXOCHAIN core	syntaxis	10	18
+tools/syntaxis/test.js	EXOCHAIN core	path-name:syntaxis	1	0
+tools/syntaxis/test.js	EXOCHAIN core	exoforge	3	452
+tools/syntaxis/test.js	EXOCHAIN core	archon	3	435
+tools/syntaxis/test.js	EXOCHAIN core	syntaxis	15	18
+tools/syntaxis/test.js	EXOCHAIN core	pathref:exoforge	3	452
+tools/syntaxis/test_generate_workflow_input_boundary.py	EXOCHAIN core	path-name:syntaxis	1	0
+tools/syntaxis/test_generate_workflow_input_boundary.py	EXOCHAIN core	syntaxis	2	18
+tools/test_agent_prompt_boundaries.sh	EXOCHAIN core	archon	4	53
+tools/test_agent_workflow_bounds.sh	EXOCHAIN core	archon	4	61
+tools/test_archon_avc_quality_matrix.sh	EXOCHAIN core	path-name:archon	1	0
+tools/test_archon_avc_quality_matrix.sh	EXOCHAIN core	commandbase	2	54
+tools/test_archon_avc_quality_matrix.sh	EXOCHAIN core	exoforge	3	9
+tools/test_archon_avc_quality_matrix.sh	EXOCHAIN core	archon	12	4
+tools/test_archon_avc_quality_matrix.sh	EXOCHAIN core	paperclip	2	54
+tools/test_beta_codeowners.sh	EXOCHAIN core	decision-forum-name	1	36
+tools/test_beta_codeowners.sh	EXOCHAIN core	pathref:demo	1	42
+tools/test_commandbase_dispatch_identity.sh	EXOCHAIN core	path-name:commandbase	1	0
+tools/test_commandbase_dispatch_identity.sh	EXOCHAIN core	commandbase	13	18
+tools/test_commandbase_dispatch_identity.sh	EXOCHAIN core	pathref:command-base	9	38
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	path-name:commandbase	1	0
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	commandbase	45	23
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	pathref:command-base	35	27
+tools/test_continuous_release.py	core runtime adapter	zerodentity	1	22
+tools/test_continuous_release.py	core runtime adapter	lynk	15	45
+tools/test_cratesio_release_packaging.sh	core runtime adapter	decision-forum-name	1	326
+tools/test_demo_adjacent_boundaries.sh	EXOCHAIN core	livesafe	2	48
+tools/test_demo_adjacent_boundaries.sh	EXOCHAIN core	crosschecked	2	47
+tools/test_demo_adjacent_boundaries.sh	EXOCHAIN core	vitallock	1	53
+tools/test_demo_adjacent_boundaries.sh	EXOCHAIN core	pathref:demo	13	11
+tools/test_demo_wasm_adapter_boundary.sh	EXOCHAIN core	pathref:demo	3	35
+tools/test_gap_stub_ci_guard.sh	EXOCHAIN core	pathref:web	4	34
+tools/test_gap_syntaxis_yaml_parse.sh	EXOCHAIN core	path-name:syntaxis	1	0
+tools/test_gap_syntaxis_yaml_parse.sh	EXOCHAIN core	syntaxis	4	23
+tools/test_gap_syntaxis_yaml_parse.sh	EXOCHAIN core	pathref:gap	1	27
+tools/test_github_actions_pinned.sh	core runtime adapter	zerodentity	2	113
+tools/test_github_issue_workflow_boundaries.sh	EXOCHAIN core	exoforge	19	25
+tools/test_heartfield_adjacent_intake.sh	EXOCHAIN core	path-name:heartfield	1	0
+tools/test_heartfield_adjacent_intake.sh	EXOCHAIN core	heartfield	16	22
+tools/test_livesafe_demo_security.sh	EXOCHAIN core	path-name:livesafe	1	0
+tools/test_livesafe_demo_security.sh	EXOCHAIN core	livesafe	19	21
+tools/test_livesafe_demo_security.sh	EXOCHAIN core	pathref:livesafe	1	122
+tools/test_livesafe_demo_security.sh	EXOCHAIN core	pathref:demo	4	21
+tools/test_livesafe_railway_deploy_ref_guard.sh	EXOCHAIN core	path-name:livesafe	1	0
+tools/test_livesafe_railway_deploy_ref_guard.sh	EXOCHAIN core	livesafe	5	21
+tools/test_lynk_receipt_privacy.sh	EXOCHAIN core	lynk	11	17
+tools/test_lynk_receipt_privacy.sh	EXOCHAIN core	pathref:site	8	39
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	livesafe	24	27
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	cybermedica	17	27
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	crosschecked	4	71
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	legaldyne	4	71
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	decision-forum-name	9	71
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	pathref:livesafe	16	36
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	pathref:cybermedica	9	58
+tools/test_release_llm_lifecycle_boundary.sh	core runtime adapter	lynk	13	8
+tools/test_release_publish_boundaries.sh	core runtime adapter	lynk	1	375
+tools/test_release_version_alignment.sh	core runtime adapter	decision-forum-name	1	481
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	lynk	12	1451
+tools/test_repo_truth.sh	EXOCHAIN core	commandbase	1	296
+tools/test_repo_truth.sh	EXOCHAIN core	decision-forum-name	1	289
+tools/test_repo_truth.sh	EXOCHAIN core	pathref:demo	1	189
+tools/test_retire_crates_023.py	core runtime adapter	decision-forum-name	1	45
+tools/test_security_critical_dependencies_pinned.sh	EXOCHAIN core	livesafe	1	239
+tools/test_security_critical_dependencies_pinned.sh	EXOCHAIN core	pathref:livesafe	1	239
+tools/test_stage_llm_release_package.sh	core runtime adapter	lynk	3	8
+tools/test_sybil_cli_secret_boundaries.sh	EXOCHAIN core	path-name:sybil-cli	1	0
+tools/test_sybil_cli_secret_boundaries.sh	EXOCHAIN core	sybil-cli	5	21
+tools/test_syntaxis_workflow_input_boundary.sh	EXOCHAIN core	path-name:syntaxis	1	0
+tools/test_syntaxis_workflow_input_boundary.sh	EXOCHAIN core	syntaxis	1	20
+tools/test_transport_release_file_set.sh	core runtime adapter	lynk	3	51
+tools/transport_release_file_set.py	core runtime adapter	lynk	1	86
+tools/verify_cratesio_release_packaging.mjs	core runtime adapter	decision-forum-name	3	104
+web/package-lock.json	third-party/vendor	decision-forum-name	2	2

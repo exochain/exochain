@@ -1,0 +1,94 @@
+subtree	proposed_class	paths	apache_header	spdx_only	proprietary_marker	none_eligible	none_excluded	none_unsupported	binary	nearest_license	declared
+(root files)	EXOCHAIN core	23	20	0	0	0	1	0	2	(self), LICENSE	license = "Apache-2.0"
+(root files)	core runtime adapter	9	8	0	0	0	0	1	0	LICENSE	-
+(root files)	third-party/vendor	1	0	0	0	0	1	0	0	LICENSE	-
+.archon	adjacent surface	13	13	0	0	0	0	0	0	LICENSE	-
+.cargo	EXOCHAIN core	2	2	0	0	0	0	0	0	LICENSE	-
+.claude	adjacent surface	1	0	0	0	0	0	1	0	LICENSE	-
+.cursor	adjacent surface	1	0	0	0	0	0	1	0	LICENSE	-
+.exochain	EXOCHAIN core	4	3	0	0	0	0	1	0	LICENSE	-
+.github	EXOCHAIN core	2	2	0	0	0	0	0	0	LICENSE	-
+.github	adjacent surface	6	6	0	0	0	0	0	0	LICENSE	-
+.github	core runtime adapter	3	3	0	0	0	0	0	0	LICENSE	-
+.superpowers	adjacent surface	1	0	0	0	1	0	0	0	LICENSE	-
+Initiatives	EXOCHAIN core	6	6	0	0	0	0	0	0	LICENSE	-
+agents	EXOCHAIN core	5	5	0	0	0	0	0	0	LICENSE	-
+artifacts	core runtime adapter	4	0	0	0	0	0	4	0	LICENSE	-
+command-base	adjacent surface	256	0	0	3	0	253	0	0	(self), command-base/LICENSE	"UNLICENSED"
+command-base	third-party/vendor	1	0	0	1	0	0	0	0	command-base/LICENSE	-
+crates	EXOCHAIN core	1	1	0	0	0	0	0	0	LICENSE	-
+crates/decision-forum	EXOCHAIN core	21	21	0	0	0	0	0	0	LICENSE	license.workspace = true
+crates/exo-api	core runtime adapter	28	14	0	0	2	0	7	5	LICENSE	license.workspace = true
+crates/exo-authority	EXOCHAIN core	7	7	0	0	0	0	0	0	LICENSE	license.workspace = true
+crates/exo-avc	EXOCHAIN core	13	12	0	0	1	0	0	0	LICENSE	license.workspace = true
+crates/exo-catapult	EXOCHAIN core	13	13	0	0	0	0	0	0	LICENSE	license.workspace = true
+crates/exo-cgr-methods	EXOCHAIN core	5	5	0	0	0	0	0	0	LICENSE	absent, license = "Apache-2.0"
+crates/exo-cgr-methods	third-party/vendor	1	0	0	0	0	1	0	0	LICENSE	-
+crates/exo-cgr-prover	EXOCHAIN core	5	3	0	0	0	0	0	2	LICENSE	license = "Apache-2.0"
+crates/exo-consensus	EXOCHAIN core	14	13	0	0	0	0	1	0	LICENSE	license.workspace = true
+crates/exo-consent	EXOCHAIN core	7	7	0	0	0	0	0	0	LICENSE	license.workspace = true
+crates/exo-core	EXOCHAIN core	14	14	0	0	0	0	0	0	LICENSE	license.workspace = true
+crates/exo-dag	EXOCHAIN core	14	12	0	0	1	0	1	0	LICENSE	license.workspace = true
+crates/exo-dag-db-api	core runtime adapter	6	1	0	0	1	0	4	0	LICENSE	license.workspace = true
+crates/exo-dag-db-core	core runtime adapter	8	0	0	0	7	0	1	0	LICENSE	license.workspace = true
+crates/exo-dag-db-domain	core runtime adapter	27	0	0	0	27	0	0	0	LICENSE	license.workspace = true
+crates/exo-dag-db-exchange	core runtime adapter	11	0	0	0	11	0	0	0	LICENSE	license.workspace = true
+crates/exo-dag-db-graph	core runtime adapter	6	0	0	0	6	0	0	0	LICENSE	license.workspace = true
+crates/exo-dag-db-lab	core runtime adapter	26	0	0	0	24	0	2	0	LICENSE	license.workspace = true
+crates/exo-dag-db-postgres	core runtime adapter	67	0	0	0	67	0	0	0	LICENSE	license.workspace = true
+crates/exo-dag-db-retrieval	core runtime adapter	15	0	0	0	15	0	0	0	LICENSE	license.workspace = true
+crates/exo-economy	EXOCHAIN core	21	21	0	0	0	0	0	0	LICENSE	license.workspace = true
+crates/exo-escalation	EXOCHAIN core	11	11	0	0	0	0	0	0	LICENSE	license.workspace = true
+crates/exo-gatekeeper	EXOCHAIN core	14	13	0	0	1	0	0	0	LICENSE	license.workspace = true
+crates/exo-gateway	core runtime adapter	35	18	0	0	17	0	0	0	LICENSE	license.workspace = true
+crates/exo-governance	EXOCHAIN core	15	15	0	0	0	0	0	0	LICENSE	license.workspace = true
+crates/exo-identity	EXOCHAIN core	13	13	0	0	0	0	0	0	LICENSE	license.workspace = true
+crates/exo-legal	EXOCHAIN core	16	16	0	0	0	0	0	0	LICENSE	license.workspace = true
+crates/exo-messaging	EXOCHAIN core	8	8	0	0	0	0	0	0	LICENSE	license.workspace = true
+crates/exo-node	core runtime adapter	92	81	0	0	6	0	5	0	LICENSE	license.workspace = true
+crates/exo-pdp	EXOCHAIN core	13	12	0	0	0	0	1	0	LICENSE	license.workspace = true
+crates/exo-pdp	core runtime adapter	1	1	0	0	0	0	0	0	LICENSE	-
+crates/exo-proofs	EXOCHAIN core	17	17	0	0	0	0	0	0	LICENSE	license.workspace = true
+crates/exo-root	EXOCHAIN core	11	2	0	0	9	0	0	0	LICENSE	license.workspace = true
+crates/exo-tenant	EXOCHAIN core	10	10	0	0	0	0	0	0	LICENSE	license.workspace = true
+crates/exo-verify	EXOCHAIN core	19	10	0	0	1	0	5	3	LICENSE	license.workspace = true
+crates/exochain-sdk	core runtime adapter	13	12	0	0	1	0	0	0	LICENSE	license.workspace = true
+crates/exochain-wasm	core runtime adapter	19	18	0	0	0	0	1	0	LICENSE	license.workspace = true
+cybermedica	adjacent surface	385	0	0	370	0	13	0	2	(self), cybermedica/LICENSE	"UNLICENSED"
+cybermedica	third-party/vendor	1	0	0	1	0	0	0	0	cybermedica/LICENSE	-
+demo	adjacent surface	180	2	0	20	0	155	1	2	(self), demo/LICENSE, demo/apps/livesafe/LICENSE	"Apache-2.0", "UNLICENSED"
+demo	third-party/vendor	37	0	0	4	0	31	0	2	demo/LICENSE, demo/apps/livesafe/LICENSE	-
+deploy	core runtime adapter	5	5	0	0	0	0	0	0	LICENSE	-
+docs	EXOCHAIN core	121	92	0	0	27	0	2	0	LICENSE	-
+docs	adjacent surface	19	18	0	0	0	0	1	0	LICENSE	-
+docs	core runtime adapter	34	15	0	0	16	0	3	0	LICENSE	-
+exoforge	adjacent surface	15	14	0	0	0	0	1	0	LICENSE	absent
+fuzz	EXOCHAIN core	5	5	0	0	0	0	0	0	LICENSE	absent
+fuzz	third-party/vendor	1	0	0	0	0	1	0	0	LICENSE	-
+gap	adjacent surface	59	58	0	0	0	0	1	0	LICENSE	-
+governance	EXOCHAIN core	105	43	0	0	15	0	47	0	LICENSE	-
+livesafe	adjacent surface	500	0	0	26	0	453	0	21	(self), livesafe/LICENSE	"UNLICENSED", license = "UNLICENSED"
+livesafe	third-party/vendor	5	0	0	4	0	1	0	0	livesafe/LICENSE	-
+packages	core runtime adapter	1	1	0	0	0	0	0	0	LICENSE	-
+packages/exochain-llm-proxy	core runtime adapter	50	36	0	0	10	1	3	0	(self), packages/exochain-llm-proxy/LICENSE	"Apache-2.0"
+packages/exochain-llm-proxy	third-party/vendor	65	15	0	0	17	32	1	0	packages/exochain-llm-proxy/LICENSE	-
+packages/exochain-py	core runtime adapter	32	31	0	0	0	1	0	0	LICENSE	license = "Apache-2.0"
+packages/exochain-sdk	core runtime adapter	36	32	0	0	0	1	3	0	(self), packages/exochain-sdk/LICENSE	"Apache-2.0"
+packages/exochain-sdk	third-party/vendor	133	47	0	0	0	85	1	0	packages/exochain-sdk/LICENSE	-
+packages/exochain-wasm	core runtime adapter	2	1	0	0	0	1	0	0	(self), LICENSE	-
+packages/exochain-wasm	third-party/vendor	1	0	0	0	0	0	1	0	packages/exochain-wasm/wasm/LICENSE	"Apache-2.0"
+scripts	adjacent surface	1	0	0	0	1	0	0	0	LICENSE	-
+site	adjacent surface	144	139	0	0	0	0	5	0	LICENSE	absent
+site	third-party/vendor	1	0	0	0	0	0	1	0	LICENSE	-
+tests	EXOCHAIN core	1	0	0	0	0	0	1	0	LICENSE	-
+tla	EXOCHAIN core	5	5	0	0	0	0	0	0	LICENSE	-
+tools (top-level files)	EXOCHAIN core	44	40	1	0	3	0	0	0	LICENSE	-
+tools (top-level files)	core runtime adapter	90	87	0	0	3	0	0	0	LICENSE	-
+tools (top-level files)	third-party/vendor	1	0	0	0	0	1	0	0	LICENSE	-
+tools/codegen	EXOCHAIN core	2	1	0	0	1	0	0	0	LICENSE	-
+tools/cross-impl-test	EXOCHAIN core	6	3	0	0	0	0	3	0	LICENSE	absent
+tools/cross-impl-test	third-party/vendor	1	0	0	0	0	0	1	0	LICENSE	-
+tools/sybil-cli	adjacent surface	16	15	0	0	0	0	1	0	LICENSE	-
+tools/syntaxis	EXOCHAIN core	12	10	0	0	0	0	2	0	LICENSE	"MIT"
+web	adjacent surface	83	72	0	0	0	0	3	8	LICENSE	absent
+web	third-party/vendor	1	0	0	0	0	0	1	0	LICENSE	-
