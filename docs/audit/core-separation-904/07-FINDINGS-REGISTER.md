@@ -140,7 +140,7 @@ one and this record suggests none (8 rows).
 
 | ID | Finding | Proposed | Owner | Blocks |
 | --- | --- | --- | --- | --- |
-| F-1 | Kernel crate manifest requires seven DAG DB crates and `sqlx` | `patch` | Architecture and Security panels | cutover |
+| F-1 | Kernel crate manifest requires four DAG DB crates and `sqlx` directly on native targets, and seven DAG DB crates through them | `patch` | Architecture and Security panels | cutover |
 | F-2 | Kernel crate takes `exo-api` by default | `no_change` if accepted as core | Architecture and Security panels | cutover |
 | F-3 | Decision Forum crate required, ungated, by gateway, consensus and WASM | `no_change` under option A | Architecture panel | cutover |
 | F-4 | Four declared Decision Forum dependencies not named in source | `patch` | not named | none |
@@ -166,7 +166,7 @@ one and this record suggests none (8 rows).
 | ID | Finding | Proposed | Owner | Blocks |
 | --- | --- | --- | --- | --- |
 | F-8 | Workspace tests read fixtures from an excluded crate | `patch`, pending a fixture decision | Architecture panel | cutover |
-| F-15 | Gateway unit test reads five adjacent trees | `patch` | not named | cutover (inferred) |
+| F-15 | Two gateway unit tests read 19 files in five adjacent trees | `patch` | not named | cutover (inferred) |
 | F-16 | Guards and CI steps inspect adjacent trees | per assertion | not named | cutover (inferred) |
 | F-31 | CI fails at the audited commit on Gates 6 and 7 | `patch` | core maintainers | claim |
 | F-32 | No required checks visible on `main` | pending | administrator, Security panel | claim |
@@ -177,7 +177,7 @@ one and this record suggests none (8 rows).
 | F-37 | Images copy only proposed-core paths | `no_change`; `patch` dead config | core maintainers † | none |
 | F-38 | Three toolchains, little `--locked`, images by tag | `patch` | core maintainers † | claim |
 | F-39 | Release names no product tree; inherits CI couplings | `no_change`; contents pending | release owner † | conditional |
-| F-40 | No sibling-free build or test run exists | `patch` (CI job) | core maintainers, Build Lead | cutover |
+| F-40 | No CI job builds or tests the core without the sibling trees; the deploy image build compiles two binaries from `crates/` alone but runs no tests | `patch` (CI job) | core maintainers, Build Lead | cutover |
 
 ### Documents and inventory (parts 2 and 3)
 
@@ -211,7 +211,7 @@ one and this record suggests none (8 rows).
 | F-43 | Licence statements changed over time, inside tags | pending | legal owner | claim |
 | F-44 | One author name on 1,380 of 1,479 core commits; no holder record found | pending | legal owner | claim |
 | F-45 | 221 commits name an AI tool or agent (lower bound) | pending; disclose | legal owner | claim |
-| F-46 | 1,302 unsigned commits and 575 merges against the stated rules | `patch` | core maintainers | claim |
+| F-46 | 1,235 unsigned commits and 575 merges against the stated rules | `patch` | core maintainers | claim |
 | F-47 | 502 commit references and 792 pull-request links point at the legacy repository | `patch` under the split plan | split plan owner | cutover |
 | F-48 | Release attestations tied to the current repository identity (inferred) | pending | release owner | release |
 | F-50 | A public file marked CONFIDENTIAL; two PDFs with no author or terms | `patch`; pending | document owner, legal owner | cutover (those three files, under an Apache-2.0 claim) |
@@ -260,10 +260,10 @@ statements that the findings rule out today, and what each would need.
 | "The repository has always been Apache-2.0" or "ships the standard licence text" | The root manifest declared AGPL for two days, before the first tag; a demo package declared it until 2026-05-09, inside two tags; the `LICENSE` text was edited and has not been compared with the published text | F-43 |
 | "Third-party notices are complete" | No NOTICE file; two outside projects are named as sources without a notice; one comparison is open | F-24, F-49 |
 | "Published packages carry the right licence files" | Package contents were not inspected; that needs a release dry run | F-26, F-39 |
-| "The core builds and passes tests on its own" | No such run exists | F-40 |
+| "The core builds and passes tests on its own" | No test run without the sibling trees exists. The deploy image build compiles two binaries from `crates/` alone; its runs were not inspected | F-40 |
 | "Builds are reproducible" | Three toolchains, little `--locked`, images by tag | F-38 |
 | "CI gates are enforced on `main`" | No required checks were visible to the account used | F-32 |
-| "All commits are signed or verified" | 1,302 commits carry no signature field; none was verified | F-46 |
+| "All commits are signed or verified" | 1,235 commits carry no signature field; none was verified | F-46 |
 | "The code is wholly human-authored" | 221 commits name an AI tool or agent, a lower bound | F-45 |
 | "The tree or its history holds no personal data or secrets" | 17 files named as health-record requests were not opened; history was searched by file name only | F-51, O-38 |
 | "The new repository can publish and attest releases as the current one does" | Attestations and publication are tied to the current repository identity (inferred; no attestation or registry setting was read) | F-48 |

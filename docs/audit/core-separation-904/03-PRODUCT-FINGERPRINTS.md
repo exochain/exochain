@@ -601,7 +601,7 @@ before the split record can say anything about them.
 | F-12 | ExoForge, 0dentity and Telegram surfaces in the node | `patch` for ExoForge | Yes: whether 0dentity and Telegram are core is undecided | No |
 | F-13 | Named arrangements in the economy crate's API and enums | `patch` | Yes: bears on the economy boundary | Part 4 |
 | F-14 | CommandBase metadata in `exo-catapult` | `patch` if kept | Only if the crate is kept | No |
-| F-15 | Gateway unit test reads five adjacent trees | `patch` | Blocks a green core test run (inferred) | Part 5 |
+| F-15 | Two gateway unit tests read 19 files in five adjacent trees | `patch` | Blocks a green core test run (inferred) | Part 5 |
 | F-16 | Guards and CI steps that inspect adjacent trees | per assertion | Blocks a green core CI run (inferred) | Part 5 |
 | F-17 | Decision Forum crate: not resolved by a name search | `no_change` here | Yes: panel decision pending | Part 4 |
 | F-18 | Smaller code references | `patch` | No | No |

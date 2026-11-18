@@ -22,8 +22,10 @@ Usage:
 Reads `git log` for every commit reachable from <commit> and writes:
 
   commits-out: one row per commit: sha, author date, author name, author
-      e-mail domain, committer name, parent count, signature field (git's
-      %G?), sign-off count, co-author names, number of paths changed per
+      e-mail domain, committer name, parent count, signature kind (`N` none,
+      `E` PGP, `S` SSH or `O` other, read from the commit's `gpgsig`
+      header; no signature is verified), sign-off count, co-author names,
+      number of paths changed per
       proposed class, number of changed paths absent from the audited tree,
       a `mixed` flag, and the subject line.
   paths-out: one row per path that any non-merge commit changed: path,
@@ -79,7 +81,7 @@ GUARDED = frozenset(
         ("exo-governance", "emergency"), ("exo-identity", "key"),
     )
 )
-FMT = "%x01%H%x1f%aI%x1f%an%x1f%ae%x1f%cn%x1f%P%x1f%G?%x1f%s%x1f" \
+FMT = "%x01%H%x1f%aI%x1f%an%x1f%ae%x1f%cn%x1f%P%x1f%s%x1f" \
       "%(trailers:key=Co-authored-by,valueonly,separator=%x1e)%x1f" \
       "%(trailers:key=Signed-off-by,valueonly,separator=%x1e)%x02"
 
@@ -111,11 +113,28 @@ def main():
         check=True, capture_output=True,
     ).stdout.decode("utf-8", errors="replace")
 
+    # The signature kind comes from the raw commit header. git's %G? is not
+    # used: without a configured allowed-signers file it reports an
+    # SSH-signed commit as having no signature.
+    sigs = {}
+    sha = None
+    for line in subprocess.run(
+        ["git", "-C", repo, "log", "--no-color", "--pretty=raw", commit],
+        check=True, capture_output=True,
+    ).stdout.decode("utf-8", errors="replace").split("\n"):
+        if line.startswith("commit "):
+            sha = line.split()[1]
+            sigs[sha] = "N"
+        elif line.startswith("gpgsig"):
+            sigs[sha] = ("E" if "BEGIN PGP" in line
+                         else "S" if "BEGIN SSH" in line else "O")
+
     paths = {}
     rows = []
     for chunk in raw.split("\x01")[1:]:
         head, _, body = chunk.partition("\x02")
-        sha, date, an, ae, cn, parents, sig, subj, coauth, signoff = head.split("\x1f")
+        sha, date, an, ae, cn, parents, subj, coauth, signoff = head.split("\x1f")
+        sig = sigs[sha]
         n_par = len(parents.split()) if parents.strip() else 0
         changed = []
         for line in body.split("\n"):

@@ -563,7 +563,7 @@ criterion.
 | F-37 | Images copy only proposed-core paths (which include LiveSafe schema) | `no_change`; `patch` dead config | No |
 | F-38 | Three toolchains, little `--locked`, images by tag | `patch` | Blocks a "reproducible" claim only |
 | F-39 | Release names no product tree; inherits CI couplings | `no_change`; contents pending | Through F-31, F-33 to F-35 |
-| F-40 | No sibling-free build or test run exists | `patch` (CI job) | Yes: acceptance criterion |
+| F-40 | No CI job builds or tests the core without the sibling trees; the deploy image build compiles two binaries from `crates/` alone but runs no tests | `patch` (CI job) | Yes: acceptance criterion |
 
 ## Items earlier parts sent here
 

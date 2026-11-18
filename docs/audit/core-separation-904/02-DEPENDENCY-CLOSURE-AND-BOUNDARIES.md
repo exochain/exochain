@@ -494,7 +494,7 @@ status table. A finding marked "Yes" there should be treated as blocking the
 
 | ID | Finding | Proposed disposition | Boundary decision needed | Later-part evidence needed |
 | --- | --- | --- | --- | --- |
-| F-1 | Kernel manifest requires seven DAG DB crates and `sqlx` on native targets | `patch` | Yes | No |
+| F-1 | Kernel manifest requires four DAG DB crates and `sqlx` directly on native targets, and seven DAG DB crates through them | `patch` | Yes | No |
 | F-2 | Kernel crate takes `exo-api` by default | `no_change` if accepted | Yes | No |
 | F-3 | Decision Forum required ungated by gateway, consensus and WASM | `no_change` under option A | Yes | Parts 3, 4 |
 | F-4 | Four declared Decision Forum dependencies not named in source | `patch` | No | Part 5 (CI check) |

@@ -1,7 +1,7 @@
 sha	author_date	author_name	author_email_domain	committer_name	parents	sig	signoffs	coauthors	core	adapter	adjacent	imported	vendor	unclassified	not_in_audited_tree	mixed	subject
 e6ecf4388a69fa3a1a352ebda4c8226697dcfd2e	2026-11-16	John C Fitzpatrick	cyberfitz.org	GitHub	1	E	0		27	17	0	0	1	0	1	0	feat(avc): offline level-3 receipt verification (exochain-verify) (#912)
 0d3dafd1da6a155147d49df30178a5473da0bed9	2026-11-05	Bob Stewart	bobstewart.com	GitHub	2	E	0		0	0	0	0	0	0	0	0	Merge pull request #895 from exochain/spacex/gate7-pin-utils-exception-3c2e
-bfbfc9028ee6e7bab4b987311ad72a0fc8a69551	2026-11-05	Cursor Agent	cursor.com	Cursor Agent	1	N	0	Bob Stewart	1	0	0	0	0	0	0	0	fix(deny): ignore unmaintained pin-utils RUSTSEC-0000-0000
+bfbfc9028ee6e7bab4b987311ad72a0fc8a69551	2026-11-05	Cursor Agent	cursor.com	Cursor Agent	1	S	0	Bob Stewart	1	0	0	0	0	0	0	0	fix(deny): ignore unmaintained pin-utils RUSTSEC-0000-0000
 2be2549262f3aafa351afeab4a907b3db594cc19	2026-11-01	Bob Stewart	bobstewart.com	GitHub	2	E	0		0	0	0	0	0	0	0	0	Merge pull request #892 from exochain/codex/release-0.4.0-governed-agents
 d028d49dee807831e80a0229df6e3d14c6a68e7e	2026-11-01	Bob Stewart	bobstewart.com	Bob Stewart	1	N	0		26	22	0	0	10	0	0	0	release: prepare 0.4.0 governed-agent version and migration
 c4ea410f9a0de4c024de32f94c4cae973301525b	2026-11-01	Bob Stewart	bobstewart.com	GitHub	2	E	0		0	0	0	0	0	0	0	0	Merge pull request #891 from exochain/codex/governed-agent-runtime
@@ -17,49 +17,49 @@ c91fdceea0c2b0a8ab689f1b4c19be291a2c06e5	2026-10-23	Bob Stewart	bobstewart.com	B
 cf9e5c86f3a9174e6e0d961e165a1481a1fc9d21	2026-10-22	Bob Stewart	bobstewart.com	GitHub	1	E	0	Cursor Agent; stewart	1	3	0	0	0	0	0	0	fix(avc): anchor Allow receipts atomically and re-anchor on retry (#870)
 ca2277709ad2cb3c889a5d9c2b029a4c2e300f75	2026-10-22	Bob Stewart	bobstewart.com	GitHub	1	E	0	Cursor Agent; stewart	2	2	0	0	2	0	0	0	fix(deps): patch quinn-proto, rustls, and webpki advisories (#888)
 2d829be203bde292ca4ea3a19803f23a4f89322d	2026-10-22	Bob Stewart	bobstewart.com	GitHub	1	E	0	Cursor Agent; stewart	1	1	0	0	0	0	0	0	fix(avc): persist a signed chained deny receipt when it can be anchored (#885)
-8064284f77dbffbbbb3c28acdd7c608cfc17ffe4	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	N	0	stewart	10	0	0	0	0	0	0	0	docs(governance): draft the unsigned path B v0.3.0 close record
+8064284f77dbffbbbb3c28acdd7c608cfc17ffe4	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	S	0	stewart	10	0	0	0	0	0	0	0	docs(governance): draft the unsigned path B v0.3.0 close record
 5782ada11f5b5cf1a963cb142bd22af08b64c58b	2026-10-22	Bob Stewart	bobstewart.com	GitHub	2	E	0		0	0	0	0	0	0	0	0	Merge pull request #879 from exochain/spacex/avc-deny-objective-autonomy-jurisdiction-estop-baad
-68d840fc0ac16c438027aa04e36f7cd587cfc941	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	N	0	stewart	3	1	0	0	0	0	0	0	fix(avc): close remaining objective, approval, stop, and replay fail-opens
-959b38b7939282c956443b3fbf3bed9b286119f7	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	N	0	stewart	2	0	0	0	0	0	0	0	fix(avc): deny Unix public-output expiry at genesis time
-1c1095441ae1ffdebf7af078510e212a2385eb36	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	N	0	stewart	0	1	0	0	0	0	0	0	fix(avc): qualify allowed LYNK receipt actions with US
-9abb686c04a095ca169f79087e1fe531b856a240	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	N	0	stewart	3	0	0	0	0	0	0	0	fix(avc): close jurisdiction, forbidden-name, and e-stop fail-opens
-ba64295a2458a0df6d76ca6028c49be5beb90374	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	N	0	stewart	3	0	0	0	0	0	0	0	fix(avc): deny actions outside objectives, autonomy, jurisdiction, and e-stop
-5d01a6148deb6eec0ad7add9c650b060be3b6f3a	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	N	0	stewart	2	0	0	0	0	0	0	0	test(avc): expect validate_avc to deny unbound actions
+68d840fc0ac16c438027aa04e36f7cd587cfc941	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	S	0	stewart	3	1	0	0	0	0	0	0	fix(avc): close remaining objective, approval, stop, and replay fail-opens
+959b38b7939282c956443b3fbf3bed9b286119f7	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	S	0	stewart	2	0	0	0	0	0	0	0	fix(avc): deny Unix public-output expiry at genesis time
+1c1095441ae1ffdebf7af078510e212a2385eb36	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	S	0	stewart	0	1	0	0	0	0	0	0	fix(avc): qualify allowed LYNK receipt actions with US
+9abb686c04a095ca169f79087e1fe531b856a240	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	S	0	stewart	3	0	0	0	0	0	0	0	fix(avc): close jurisdiction, forbidden-name, and e-stop fail-opens
+ba64295a2458a0df6d76ca6028c49be5beb90374	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	S	0	stewart	3	0	0	0	0	0	0	0	fix(avc): deny actions outside objectives, autonomy, jurisdiction, and e-stop
+5d01a6148deb6eec0ad7add9c650b060be3b6f3a	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	S	0	stewart	2	0	0	0	0	0	0	0	test(avc): expect validate_avc to deny unbound actions
 0dbf568583de9dec412fec570cab10c017eb7c55	2026-10-22	Bob Stewart	bobstewart.com	GitHub	2	E	0		0	0	0	0	0	0	0	0	Merge pull request #882 from exochain/spacex/avc-deny-genesis-clock-expiry-b0fd
-49f2d7034c28d9b445e4ecfe9929f974c3bca001	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	N	0	stewart	2	0	0	0	0	0	0	0	fix(avc): deny a Unix window bound at the genesis clock
-2e672a4d29f96c1b0b47e4d954164cb626544a3c	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	N	0	stewart	4	1	0	0	0	0	0	0	fix(avc): deny expiry checks while the clock is still at genesis
-aa9ed339a05731aaa8a3e183db45e4980b21c009	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	N	0	stewart	3	1	0	0	0	0	0	0	test(avc): fail a 2020 expiry under the genesis clock
+49f2d7034c28d9b445e4ecfe9929f974c3bca001	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	S	0	stewart	2	0	0	0	0	0	0	0	fix(avc): deny a Unix window bound at the genesis clock
+2e672a4d29f96c1b0b47e4d954164cb626544a3c	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	S	0	stewart	4	1	0	0	0	0	0	0	fix(avc): deny expiry checks while the clock is still at genesis
+aa9ed339a05731aaa8a3e183db45e4980b21c009	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	S	0	stewart	3	1	0	0	0	0	0	0	test(avc): fail a 2020 expiry under the genesis clock
 eb09c4294c298392c9edcca62ebd6724c0ab68bb	2026-10-22	Bob Stewart	bobstewart.com	GitHub	2	E	0		0	0	0	0	0	0	0	0	Merge pull request #875 from exochain/spacex/avc-parent-revoke-cascade-9b2c
 329f714a64a2ceb641df8f8a6806324aacaffa54	2026-10-22	Bob Stewart	bobstewart.com	GitHub	2	E	0		0	0	0	0	0	0	0	0	Merge pull request #878 from exochain/spacex/avc-reject-wider-delegate-0884
-fc2ca681cae36a6fc636fd18384f87750730175b	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	N	0	stewart	1	0	0	0	0	0	0	0	docs(readme): recount listed tests after main moved
-de5c0cfd28b1c249570bf788cc26065ad0ce60cc	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	N	0	stewart	1	0	0	0	0	0	0	0	test(avc): drop narration on the narrower child
-56ed85788d3aaad594c659af93b1dff7b1823041	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	N	0	stewart	1	0	0	0	0	0	0	0	fix(avc): reject a delegate that widens objectives
-f035d1147cf7d079524b1e83618d38b97c19004b	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	N	0	stewart	1	1	0	0	0	0	0	0	test(avc): reject a delegate that widens objectives
-9a5a446e1c50987f95342e7620d24cc30e518578	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	N	0	stewart	0	1	0	0	0	0	0	0	fix(avc): reject a delegate wider than its parent
-74c1c33f25d5c93ddfb2c2af2046e606570c347a	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	N	0	stewart	0	1	0	0	0	0	0	0	test(avc): reject a delegate wider than its parent
-191332b9d7bd77153728982945dc86450b761a78	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	N	0	stewart	1	0	0	0	0	0	0	0	fix(avc): deny descendants after a parent revoke
-617f7a3b51e306b1a372fe4b83a7a853d423acf9	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	N	0	stewart	1	0	0	0	0	0	0	0	test(avc): expect Deny after a parent revoke
+fc2ca681cae36a6fc636fd18384f87750730175b	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	S	0	stewart	1	0	0	0	0	0	0	0	docs(readme): recount listed tests after main moved
+de5c0cfd28b1c249570bf788cc26065ad0ce60cc	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	S	0	stewart	1	0	0	0	0	0	0	0	test(avc): drop narration on the narrower child
+56ed85788d3aaad594c659af93b1dff7b1823041	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	S	0	stewart	1	0	0	0	0	0	0	0	fix(avc): reject a delegate that widens objectives
+f035d1147cf7d079524b1e83618d38b97c19004b	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	S	0	stewart	1	1	0	0	0	0	0	0	test(avc): reject a delegate that widens objectives
+9a5a446e1c50987f95342e7620d24cc30e518578	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	S	0	stewart	0	1	0	0	0	0	0	0	fix(avc): reject a delegate wider than its parent
+74c1c33f25d5c93ddfb2c2af2046e606570c347a	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	S	0	stewart	0	1	0	0	0	0	0	0	test(avc): reject a delegate wider than its parent
+191332b9d7bd77153728982945dc86450b761a78	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	S	0	stewart	1	0	0	0	0	0	0	0	fix(avc): deny descendants after a parent revoke
+617f7a3b51e306b1a372fe4b83a7a853d423acf9	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	S	0	stewart	1	0	0	0	0	0	0	0	test(avc): expect Deny after a parent revoke
 0acff92647a90b0f715dc3fb5cef0a5816fa6878	2026-10-22	Bob Stewart	bobstewart.com	GitHub	2	E	0		0	0	0	0	0	0	0	0	Merge pull request #881 from exochain/spacex/avc-refuse-local-clock-public-output-2729
 a61b2db5777f09551811c3d39e616ff7bf8fb8e8	2026-10-22	Bob Stewart	bobstewart.com	GitHub	2	E	0		0	0	0	0	0	0	0	0	Merge pull request #876 from exochain/spacex/avc-require-external-timestamp-e10a
 be3d45521b7029d7ad67a9ec5804505fd84c08bd	2026-10-22	Bob Stewart	bobstewart.com	GitHub	2	E	0		0	0	0	0	0	0	0	0	Merge pull request #883 from exochain/spacex/gateway-did-capacity-order-07a8
-0b4fe0b759745b78da2446066e0cc9d889b170a0	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	N	0	stewart	1	0	0	0	0	0	0	0	docs(readme): recount workspace test inventories on the rebased head
-ee43316243862183ea0ba3ec1b00883ef8835bed	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	N	0	stewart	0	1	0	0	0	0	0	0	fix(avc): warn that an unconfigured timestamp authority fails closed
-9985b22de556678409e0928945f211fdc40552d2	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	N	0	stewart	0	1	0	0	0	0	0	0	test(avc): fail while the unconfigured timestamp warning promises a local clock
-cc8d515d0d778df5be1b1923d818cf0210df197f	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	N	0	stewart	0	1	0	0	0	0	0	0	test(avc): require the timestamp authority explicitly on main
-9a3a4a556bd2aa585bfba82c4e9597bbff96214b	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	N	0	stewart	1	0	0	0	0	0	0	0	docs(readme): match workspace test inventories to listed counts
-3cad623a7c626120621ecbf4f5c3471ceea0b449	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	N	0	stewart	0	1	0	0	0	0	0	0	docs(avc): record the timestamp authority default as true
-06f5b5fa7e597eea7073f4cbc3562a34cd36645a	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	N	0	stewart	0	1	0	0	0	0	0	0	fix(avc): require an external timestamp authority by default
-ba8e677f6e830292c4756fe5591090d8cd30f951	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	N	0	stewart	0	1	0	0	0	0	0	0	test(avc): fail when the timestamp authority default is off
-edc50d07096da286e31971b130874d290449f5ec	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	N	0	stewart	0	1	0	0	0	0	0	0	fix(gateway): roll back a rejected DID insert before returning
-89c9ad9a5a0e6e9cf4c62a56fc9fac38ec8f7536	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	N	0	stewart	0	1	0	0	0	0	0	0	fix(gateway): count the DID cap on a private table
-c43891055c091e57a5f19e82035a30d11e1e555b	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	N	0	stewart	0	1	0	0	0	0	0	0	test(gateway): require the DID cap to ignore a foreign row
-5713492a2ed9d593ecc44aa79a7fbf39d378a2fd	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	N	0	stewart	0	1	0	0	0	0	0	0	fix(avc): attach the external timestamp proof on public output
-d1907524646c57b6e782f61e610dab33802e0f4b	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	N	0	stewart	0	1	0	0	0	0	0	0	test(avc): fail when public output ignores a configured timestamp authority
-a66dbb5a2ae6280000b09a8b0ed5250ae0d400a2	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	N	0	stewart	0	1	0	0	0	0	0	0	fix(avc): refuse a local-clock receipt when a timestamp authority is required
-dfe2d32189a05e997cfa9a10e9d3375e6015e482	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	N	0	stewart	0	1	0	0	0	0	0	0	test(avc): fail when public output stores a local-clock receipt
+0b4fe0b759745b78da2446066e0cc9d889b170a0	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	S	0	stewart	1	0	0	0	0	0	0	0	docs(readme): recount workspace test inventories on the rebased head
+ee43316243862183ea0ba3ec1b00883ef8835bed	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	S	0	stewart	0	1	0	0	0	0	0	0	fix(avc): warn that an unconfigured timestamp authority fails closed
+9985b22de556678409e0928945f211fdc40552d2	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	S	0	stewart	0	1	0	0	0	0	0	0	test(avc): fail while the unconfigured timestamp warning promises a local clock
+cc8d515d0d778df5be1b1923d818cf0210df197f	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	S	0	stewart	0	1	0	0	0	0	0	0	test(avc): require the timestamp authority explicitly on main
+9a3a4a556bd2aa585bfba82c4e9597bbff96214b	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	S	0	stewart	1	0	0	0	0	0	0	0	docs(readme): match workspace test inventories to listed counts
+3cad623a7c626120621ecbf4f5c3471ceea0b449	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	S	0	stewart	0	1	0	0	0	0	0	0	docs(avc): record the timestamp authority default as true
+06f5b5fa7e597eea7073f4cbc3562a34cd36645a	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	S	0	stewart	0	1	0	0	0	0	0	0	fix(avc): require an external timestamp authority by default
+ba8e677f6e830292c4756fe5591090d8cd30f951	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	S	0	stewart	0	1	0	0	0	0	0	0	test(avc): fail when the timestamp authority default is off
+edc50d07096da286e31971b130874d290449f5ec	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	S	0	stewart	0	1	0	0	0	0	0	0	fix(gateway): roll back a rejected DID insert before returning
+89c9ad9a5a0e6e9cf4c62a56fc9fac38ec8f7536	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	S	0	stewart	0	1	0	0	0	0	0	0	fix(gateway): count the DID cap on a private table
+c43891055c091e57a5f19e82035a30d11e1e555b	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	S	0	stewart	0	1	0	0	0	0	0	0	test(gateway): require the DID cap to ignore a foreign row
+5713492a2ed9d593ecc44aa79a7fbf39d378a2fd	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	S	0	stewart	0	1	0	0	0	0	0	0	fix(avc): attach the external timestamp proof on public output
+d1907524646c57b6e782f61e610dab33802e0f4b	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	S	0	stewart	0	1	0	0	0	0	0	0	test(avc): fail when public output ignores a configured timestamp authority
+a66dbb5a2ae6280000b09a8b0ed5250ae0d400a2	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	S	0	stewart	0	1	0	0	0	0	0	0	fix(avc): refuse a local-clock receipt when a timestamp authority is required
+dfe2d32189a05e997cfa9a10e9d3375e6015e482	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	S	0	stewart	0	1	0	0	0	0	0	0	test(avc): fail when public output stores a local-clock receipt
 a654d353b3caced64ca63c4c8cbcf29457d26562	2026-10-22	Bob Stewart	bobstewart.com	GitHub	2	E	0		0	0	0	0	0	0	0	0	Merge pull request #884 from exochain/spacex/gateway-login-stale-did-f94a
-9f84ac940454bd774cacaa2c0daa7e24571a2cf1	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	N	0	stewart	0	1	0	0	0	0	0	0	fix(gateway): isolate login fixtures from a leftover signing DID
-d0701cf6ba6c91ee9f3396c5c56e34dccc425974	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	N	0	stewart	0	1	0	0	0	0	0	0	test(gateway): require login to replace a leftover signing DID
+9f84ac940454bd774cacaa2c0daa7e24571a2cf1	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	S	0	stewart	0	1	0	0	0	0	0	0	fix(gateway): isolate login fixtures from a leftover signing DID
+d0701cf6ba6c91ee9f3396c5c56e34dccc425974	2026-10-22	Cursor Agent	cursor.com	Cursor Agent	1	S	0	stewart	0	1	0	0	0	0	0	0	test(gateway): require login to replace a leftover signing DID
 2be99832408e7818adaa7c01278d0fef0784ecc0	2026-10-21	Bob Stewart	bobstewart.com	GitHub	1	E	0	Cursor Agent; oakwindholdings	7	7	31	0	0	0	0	1	docs: align public status and release wording with published 0.2.7 (#855)
 3a334bf9b42620598374aabddaf073a91a44088d	2026-10-21	Bob Stewart	bobstewart.com	GitHub	1	E	0	Cursor Agent; oakwindholdings	61	0	0	0	0	0	0	0	Cursor/v031 market making proposal 5439 (#857)
 67bdc31734ac0eca79e584f4e66ad5fb9ff94ba2	2026-10-13	Bob Stewart	bobstewart.com	GitHub	1	E	0	Cursor Agent; oakwindholdings	0	0	58	0	0	0	0	0	Cursor/trust fabric website 2d9a (#858)
@@ -368,21 +368,21 @@ f81c7b80d411b0270628472c6c4dad55877a8977	2026-07-14	Bob Stewart	bobstewart.com	G
 6c08878734b1bd734d5b258bd7aa3ae634946c5e	2026-07-14	Bob Stewart	bobstewart.com	Bob Stewart	1	N	0		1	0	0	0	0	0	0	0	ci: tolerate advisory-less audit warnings
 2f5b5003443d3c04df0bef3a05ebb34f85a5527b	2026-07-14	Bob Stewart	bobstewart.com	Bob Stewart	1	N	0		2	0	0	0	0	0	0	0	docs: remove README Rust LOC metric
 341032aa1d47bd0f703205c1997b653e0fd94c59	2026-07-12	cursor[bot]	users.noreply.github.com	GitHub	2	E	0		0	0	0	0	0	0	0	0	Merge pull request #791 from exochain/cursor/cloud-agent-1783858638696-q6upw
-4219a7113c0cbd61a0523766a4058d15c2ef47e8	2026-07-12	Cursor Agent	cursor.com	Cursor Agent	1	N	0	exochain	3	0	0	0	0	0	0	0	docs(c2): add live dogfood dual-gate worksheet for push enablement
-0738465c09e2b5154afad7458034f4d7ff135248	2026-07-12	Cursor Agent	cursor.com	Cursor Agent	1	N	0	exochain	4	0	0	0	0	0	0	0	docs(c2): refresh repo-truth metrics and secrets activation runbook
+4219a7113c0cbd61a0523766a4058d15c2ef47e8	2026-07-12	Cursor Agent	cursor.com	Cursor Agent	1	S	0	exochain	3	0	0	0	0	0	0	0	docs(c2): add live dogfood dual-gate worksheet for push enablement
+0738465c09e2b5154afad7458034f4d7ff135248	2026-07-12	Cursor Agent	cursor.com	Cursor Agent	1	S	0	exochain	4	0	0	0	0	0	0	0	docs(c2): refresh repo-truth metrics and secrets activation runbook
 01750e8ba91022a8f74c126afff560c305102a29	2026-07-12	Bob Stewart	bobstewart.com	Bob Stewart	1	N	0		1	3	0	0	0	0	0	0	identity: close I1–I7 residuals (auth matrix, docs, SDK bind guard)
-4745e90095df183d0e9f1573c939bca25bdfd8c6	2026-07-12	Cursor Agent	cursor.com	Cursor Agent	2	N	0	exochain	0	0	0	0	0	0	0	0	merge(main): absorb Rust 1.97 clippy hygiene and release truth-ups
-2b3c6add9d2b4a699dd06b687d58017d4377db64	2026-07-12	Cursor Agent	cursor.com	Cursor Agent	1	N	0	exochain	0	0	0	0	1	0	0	0	fix(deps): bump crossbeam-epoch to 0.9.20 for RUSTSEC-2026-0204
-777c9d03958080fe5f6d1f8be754039a263e1524	2026-07-12	Cursor Agent	cursor.com	Cursor Agent	1	N	0	exochain	6	0	0	0	0	0	0	0	fix(c2): clear CI gates and record partial dogfood rehearsal
-d393a9fe2e9dbc153b554c41f3fe92a74d07ac9b	2026-07-12	Cursor Agent	cursor.com	Cursor Agent	1	N	0	exochain	0	0	0	0	1	0	0	0	chore: lock uuid for exo-consensus presidential bridge tests
-46d008c297249fabc5a66165c0841ed95c8a477d	2026-07-12	Cursor Agent	cursor.com	Cursor Agent	1	N	0	exochain	4	0	0	0	0	0	0	0	test(c2): bridge AI-IRB advisories to Bob+Max dual gate
-1ed372f8efd0a7cf3cb3bd01e5d81394e40d998d	2026-07-12	Cursor Agent	cursor.com	Cursor Agent	1	N	0	exochain	0	0	5	0	0	0	0	0	feat(command-base): add Presidential Desk C2 surface
-a4dea597ce5fd0fb76d2f6d26c9c4a1608f23339	2026-07-12	Cursor Agent	cursor.com	Cursor Agent	1	N	0	exochain	34	0	1	0	0	0	0	1	feat(c2): add Mission C2 doctrine, dual-gate, and AI-IRB seats
+4745e90095df183d0e9f1573c939bca25bdfd8c6	2026-07-12	Cursor Agent	cursor.com	Cursor Agent	2	S	0	exochain	0	0	0	0	0	0	0	0	merge(main): absorb Rust 1.97 clippy hygiene and release truth-ups
+2b3c6add9d2b4a699dd06b687d58017d4377db64	2026-07-12	Cursor Agent	cursor.com	Cursor Agent	1	S	0	exochain	0	0	0	0	1	0	0	0	fix(deps): bump crossbeam-epoch to 0.9.20 for RUSTSEC-2026-0204
+777c9d03958080fe5f6d1f8be754039a263e1524	2026-07-12	Cursor Agent	cursor.com	Cursor Agent	1	S	0	exochain	6	0	0	0	0	0	0	0	fix(c2): clear CI gates and record partial dogfood rehearsal
+d393a9fe2e9dbc153b554c41f3fe92a74d07ac9b	2026-07-12	Cursor Agent	cursor.com	Cursor Agent	1	S	0	exochain	0	0	0	0	1	0	0	0	chore: lock uuid for exo-consensus presidential bridge tests
+46d008c297249fabc5a66165c0841ed95c8a477d	2026-07-12	Cursor Agent	cursor.com	Cursor Agent	1	S	0	exochain	4	0	0	0	0	0	0	0	test(c2): bridge AI-IRB advisories to Bob+Max dual gate
+1ed372f8efd0a7cf3cb3bd01e5d81394e40d998d	2026-07-12	Cursor Agent	cursor.com	Cursor Agent	1	S	0	exochain	0	0	5	0	0	0	0	0	feat(command-base): add Presidential Desk C2 surface
+a4dea597ce5fd0fb76d2f6d26c9c4a1608f23339	2026-07-12	Cursor Agent	cursor.com	Cursor Agent	1	S	0	exochain	34	0	1	0	0	0	0	1	feat(c2): add Mission C2 doctrine, dual-gate, and AI-IRB seats
 4344766f089e06e2e3a08d5725ead36af9b8c7c3	2026-07-12	Bob Stewart	bobstewart.com	Bob Stewart	1	N	0		0	0	1	0	0	0	0	0	Cursor: Apply local changes for cloud agent
 64555f11faae8368c25995fa12dbd02591350a2e	2026-07-12	Bob Stewart	bobstewart.com	Bob Stewart	1	N	0	Cursor	1	0	0	0	0	0	0	0	docs: harden Mission C2 with dual-gate and dogfood controls
 ea220444d0a8170d5d5b30093d595cdbefd074b5	2026-07-12	Bob Stewart	bobstewart.com	Bob Stewart	1	N	0	Cursor	1	0	0	0	0	0	0	0	docs: add Presidential Mission C2 plan
 a2ff61ae667db32f9d90e602d18fbcaeee70a6f4	2026-07-12	Bob Stewart	bobstewart.com	Bob Stewart	1	N	0	Cursor	1	0	0	0	0	0	0	0	docs: add LiveSafe public adapter output authorization plan
-459b6971110aed77245d443f3e3c82c8c523632d	2026-07-11	Cursor Agent	cursor.com	Cursor Agent	1	N	0	Bob Stewart	1	0	0	0	0	0	0	0	docs(agents): add Cursor Cloud dev environment setup instructions
+459b6971110aed77245d443f3e3c82c8c523632d	2026-07-11	Cursor Agent	cursor.com	Cursor Agent	1	S	0	Bob Stewart	1	0	0	0	0	0	0	0	docs(agents): add Cursor Cloud dev environment setup instructions
 301c447d45405f8440753ca698a6988ace665d19	2026-07-10	Bob Stewart	bobstewart.com	GitHub	2	E	0		0	0	0	0	0	0	0	0	Merge pull request #788 from exochain/bob-stewart/release-0.2.2-20260710
 273ad92d3854a6a8dbb0f23e34ee51dce1f49948	2026-07-10	Bob Stewart	bobstewart.com	Bob Stewart	1	N	0		1	0	0	0	0	0	0	0	docs: refresh release repository truth
 871b01ed15244d1c7bcb60c82f647d8d8e5c09f9	2026-07-10	Bob Stewart	bobstewart.com	Bob Stewart	1	N	0		0	2	0	0	0	0	0	0	test(dagdb): serialize graph artifact tests
@@ -703,28 +703,28 @@ cac074f011e270462198de2b4440c3fa99cb1ecf	2026-06-22	Bob Stewart	bobstewart.com	B
 f24d2baa38e766fffed1202e053bc4a91c9ac0c4	2026-06-21	Bob Stewart	bobstewart.com	Bob Stewart	1	N	0		1	0	0	0	0	0	0	0	Sync README repo truth metrics
 b4ba5f8a0f7c0de2a0d23d6a7f1a56de2aee358c	2026-06-21	Bob Stewart	bobstewart.com	Bob Stewart	1	N	0		5	1	0	0	0	0	0	0	Harden AVC receipts with external timestamp proofs
 5ea25f6c358a1544439d542d951adb9e7c73ca77	2026-06-20	Bob Stewart	bobstewart.com	GitHub	2	E	0		0	0	0	0	0	0	0	0	Merge pull request #695 from mstewartbz/codex/dagdb-crate-split-upstream-pr
-607b2fbe714206f6042f58f535808a670e047c86	2026-06-20	mstewartbz	gmail.com	mstewartbz	1	N	0		1	0	0	0	0	0	0	0	Fix README repo-truth counts
-2f287593805853df1f2426a8df57dd0dda11a31b	2026-06-20	mstewartbz	gmail.com	mstewartbz	1	N	0		4	17	0	0	0	0	0	0	Complete DAG DB runtime finality hardening
-d038dade27282c3445d0ea8ed1afe75273c12e6e	2026-06-20	mstewartbz	gmail.com	mstewartbz	1	N	0		1	2	0	0	0	0	0	0	Fix DAG DB CI format and repo truth
-4b9579743c80b9c51825394bc74506f7a0ac3a0e	2026-06-20	mstewartbz	gmail.com	mstewartbz	1	N	0		5	31	0	0	0	0	0	0	Complete DAG DB runtime audit coverage
-a935cd33498ed7dec03f12262d652e73ba9ff650	2026-06-20	mstewartbz	gmail.com	mstewartbz	1	N	0		0	1	0	0	0	0	0	0	Fix nightly DAG DB gateway formatting
-1a7b7a51350719817d8a703b389f5c28b1ae8cf7	2026-06-20	mstewartbz	gmail.com	mstewartbz	1	N	0		1	10	0	0	0	0	0	0	Require external DAG DB finality for live routes
-2e50952601ea6951e213d1201cd4a1fdda33ced5	2026-06-19	mstewartbz	gmail.com	mstewartbz	1	N	0		1	0	0	0	0	0	0	0	Fix DAG DB repo truth after formatting
-619f400db5cbcf4784f9f142f45d45abd25c89f4	2026-06-19	mstewartbz	gmail.com	mstewartbz	1	N	0		0	1	0	0	0	0	0	0	Fix DAG DB nightly rustfmt gate
-58c1b337bdeca2ee63e08656500936769e946a6b	2026-06-19	mstewartbz	gmail.com	mstewartbz	2	N	0		0	0	0	0	0	0	0	0	Merge branch 'main' of https://github.com/exochain/exochain into codex/dagdb-crate-split-upstream-pr
-f5e84c8d65f7a1071b1fe97c58d102b3495d0ac4	2026-06-19	mstewartbz	gmail.com	mstewartbz	1	N	0		1	17	0	0	0	0	0	0	Complete DAG DB runtime activation gates
+607b2fbe714206f6042f58f535808a670e047c86	2026-06-20	mstewartbz	gmail.com	mstewartbz	1	S	0		1	0	0	0	0	0	0	0	Fix README repo-truth counts
+2f287593805853df1f2426a8df57dd0dda11a31b	2026-06-20	mstewartbz	gmail.com	mstewartbz	1	S	0		4	17	0	0	0	0	0	0	Complete DAG DB runtime finality hardening
+d038dade27282c3445d0ea8ed1afe75273c12e6e	2026-06-20	mstewartbz	gmail.com	mstewartbz	1	S	0		1	2	0	0	0	0	0	0	Fix DAG DB CI format and repo truth
+4b9579743c80b9c51825394bc74506f7a0ac3a0e	2026-06-20	mstewartbz	gmail.com	mstewartbz	1	S	0		5	31	0	0	0	0	0	0	Complete DAG DB runtime audit coverage
+a935cd33498ed7dec03f12262d652e73ba9ff650	2026-06-20	mstewartbz	gmail.com	mstewartbz	1	S	0		0	1	0	0	0	0	0	0	Fix nightly DAG DB gateway formatting
+1a7b7a51350719817d8a703b389f5c28b1ae8cf7	2026-06-20	mstewartbz	gmail.com	mstewartbz	1	S	0		1	10	0	0	0	0	0	0	Require external DAG DB finality for live routes
+2e50952601ea6951e213d1201cd4a1fdda33ced5	2026-06-19	mstewartbz	gmail.com	mstewartbz	1	S	0		1	0	0	0	0	0	0	0	Fix DAG DB repo truth after formatting
+619f400db5cbcf4784f9f142f45d45abd25c89f4	2026-06-19	mstewartbz	gmail.com	mstewartbz	1	S	0		0	1	0	0	0	0	0	0	Fix DAG DB nightly rustfmt gate
+58c1b337bdeca2ee63e08656500936769e946a6b	2026-06-19	mstewartbz	gmail.com	mstewartbz	2	S	0		0	0	0	0	0	0	0	0	Merge branch 'main' of https://github.com/exochain/exochain into codex/dagdb-crate-split-upstream-pr
+f5e84c8d65f7a1071b1fe97c58d102b3495d0ac4	2026-06-19	mstewartbz	gmail.com	mstewartbz	1	S	0		1	17	0	0	0	0	0	0	Complete DAG DB runtime activation gates
 9e0cd389e04e394cec8ee790af48a823fad16d0b	2026-06-19	Bob Stewart	bobstewart.com	GitHub	2	E	0		0	0	0	0	0	0	0	0	Merge pull request #701 from mstewartbz/codex/avc-trust-receipt-issues-696-700
-d7d15840848cc6f2372ba0f55a1fb840193ff7e7	2026-06-19	mstewartbz	gmail.com	mstewartbz	1	N	0		1	0	0	0	0	0	0	0	Fix DAG DB repo truth README counts
-98d281c74d0ad30e56a724a2e648fb19862fe9f2	2026-06-19	mstewartbz	gmail.com	mstewartbz	1	N	0		0	8	0	0	0	0	0	0	Raise DAG DB coverage above 93 percent
-024965202d305cb78142b8afacecf91a40b839cb	2026-06-19	mstewartbz	gmail.com	mstewartbz	1	N	0		2	0	0	0	0	0	0	0	Align scoped coverage gate denominator
-5391559d8bfb6de5a804b2957f88587da900ebee	2026-06-19	mstewartbz	gmail.com	mstewartbz	1	N	0		3	4	0	0	0	0	0	0	Satisfy DAG DB PR quality gates
-a7388838db55d8cb21595c21e521b4b681429dfa	2026-06-19	mstewartbz	gmail.com	mstewartbz	1	N	0		3	1	0	0	0	0	0	0	Satisfy AVC PR quality gates
-747d9a6e0e2b7776304e36bb7d6f8ed151caecea	2026-06-19	mstewartbz	gmail.com	mstewartbz	1	N	0		5	5	0	0	0	0	0	0	Harden AVC trust receipts
-508faf6986f5a5a2a81b6312b77d7a3372815a0a	2026-06-19	mstewartbz	gmail.com	mstewartbz	1	N	0		5	35	0	0	0	0	0	0	Activate DAG DB production runtime path
-a37dadf12b69efec349f53a4983389cf48df3022	2026-06-18	mstewartbz	gmail.com	mstewartbz	1	N	0		1	0	0	0	0	0	0	0	Refresh repo-truth counts after SDK module export
-91dc041f2c558c9101d0518f0816f94ddbfd6068	2026-06-18	mstewartbz	gmail.com	mstewartbz	1	N	0		0	1	0	0	0	0	0	0	Declare DAG DB SDK module
-77db62d1669a16dc163fda33a7c0da1151369276	2026-06-18	mstewartbz	gmail.com	mstewartbz	1	N	0		1	2	0	0	1	0	0	0	Fix DAG DB PR CI gate regressions
-1112e7b858a296762e58dea9c09808795f289571	2026-06-18	mstewartbz	gmail.com	mstewartbz	1	N	0		15	192	0	0	1	0	0	0	Split DAG DB into governed upstream crates
+d7d15840848cc6f2372ba0f55a1fb840193ff7e7	2026-06-19	mstewartbz	gmail.com	mstewartbz	1	S	0		1	0	0	0	0	0	0	0	Fix DAG DB repo truth README counts
+98d281c74d0ad30e56a724a2e648fb19862fe9f2	2026-06-19	mstewartbz	gmail.com	mstewartbz	1	S	0		0	8	0	0	0	0	0	0	Raise DAG DB coverage above 93 percent
+024965202d305cb78142b8afacecf91a40b839cb	2026-06-19	mstewartbz	gmail.com	mstewartbz	1	S	0		2	0	0	0	0	0	0	0	Align scoped coverage gate denominator
+5391559d8bfb6de5a804b2957f88587da900ebee	2026-06-19	mstewartbz	gmail.com	mstewartbz	1	S	0		3	4	0	0	0	0	0	0	Satisfy DAG DB PR quality gates
+a7388838db55d8cb21595c21e521b4b681429dfa	2026-06-19	mstewartbz	gmail.com	mstewartbz	1	S	0		3	1	0	0	0	0	0	0	Satisfy AVC PR quality gates
+747d9a6e0e2b7776304e36bb7d6f8ed151caecea	2026-06-19	mstewartbz	gmail.com	mstewartbz	1	S	0		5	5	0	0	0	0	0	0	Harden AVC trust receipts
+508faf6986f5a5a2a81b6312b77d7a3372815a0a	2026-06-19	mstewartbz	gmail.com	mstewartbz	1	S	0		5	35	0	0	0	0	0	0	Activate DAG DB production runtime path
+a37dadf12b69efec349f53a4983389cf48df3022	2026-06-18	mstewartbz	gmail.com	mstewartbz	1	S	0		1	0	0	0	0	0	0	0	Refresh repo-truth counts after SDK module export
+91dc041f2c558c9101d0518f0816f94ddbfd6068	2026-06-18	mstewartbz	gmail.com	mstewartbz	1	S	0		0	1	0	0	0	0	0	0	Declare DAG DB SDK module
+77db62d1669a16dc163fda33a7c0da1151369276	2026-06-18	mstewartbz	gmail.com	mstewartbz	1	S	0		1	2	0	0	1	0	0	0	Fix DAG DB PR CI gate regressions
+1112e7b858a296762e58dea9c09808795f289571	2026-06-18	mstewartbz	gmail.com	mstewartbz	1	S	0		15	192	0	0	1	0	0	0	Split DAG DB into governed upstream crates
 ccf9d8d82ef226d9aae89df3bf7bd603f86bf422	2026-06-05	Bob Stewart	bobstewart.com	GitHub	2	E	0		0	0	0	0	0	0	0	0	Merge pull request #692 from exochain/bob-stewart/exochain-github-issues-20260605
 b639ab158b0cc5b633499dc6357a22e67d5d6804	2026-06-05	Bob Stewart	bobstewart.com	Bob Stewart	1	N	0		5	14	0	0	1	0	0	0	Fix AVC receipt readback and WASM package release
 a98e5a2326971e393ec4c44771f311c11bdf38ab	2026-06-04	Bob Stewart	bobstewart.com	GitHub	2	E	0		0	0	0	0	0	0	0	0	Merge pull request #686 from exochain/bob-stewart/security-gateway-rate-limit-window-20260604

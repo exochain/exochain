@@ -76,7 +76,7 @@ It does not establish:
 | Repository | `exochain/exochain` |
 | Commit | `e6ecf4388a69fa3a1a352ebda4c8226697dcfd2e` |
 | Per-commit table | `docs/audit/core-separation-904/history-commits.tsv`, 2,176 rows |
-| Per-commit table SHA-256 | `ac8b8389c6cbfe688763eaed7f70e39b5f1ab89bcde4c9777d1d63261afafe56` |
+| Per-commit table SHA-256 | `169fe95e871935ef67516c6b51a984e53bc4b674da79c066bada100ced4bf4c1` |
 | Per-path table | `docs/audit/core-separation-904/history-paths.tsv`, 3,445 rows |
 | Per-path table SHA-256 | `7cfc33896b58516c9e7f43fb27cdb5566658d1eeea05d16fbf82325c6d73b410` |
 | Rows left out of the per-path table | 7. The repository guard `tools/test_no_orphan_rust_modules.sh` fails if anything under `docs/` names one of seven removed Rust files, so the script skips them. All seven were classed EXOCHAIN core by a rule on the old path, are absent from the audited tree, and had 2 to 6 commits each. The guard lists them. Figures elsewhere in this part were computed before these rows were removed and still include them |
@@ -101,8 +101,11 @@ decisions.
    folded into one row.
 2. **Author data.** Author and committer names are copied from git. E-mail
    addresses are reduced to their domain in the tables. The signature column
-   is git's `%G?` field on a machine with no trusted keys, so `N` means no
-   signature and `E` means a signature is present but could not be checked.
+   is read from each commit's `gpgsig` header: `N` for none, `E` for a PGP
+   signature and `S` for an SSH signature. No signature was verified. An earlier version of this table used git's
+   `%G?` field, which reports an SSH-signed commit as unsigned when no
+   allowed-signers file is configured; that undercounted signed commits
+   by 67 and has been corrected.
 3. **Trailers.** `Co-authored-by` and `Signed-off-by` trailers are read with
    git's trailer parser. A commit is counted as naming an AI tool or agent
    when its author or a co-author name matches one of: Claude, Cursor,
@@ -422,10 +425,12 @@ The history shows:
 
 | Measure | Value |
 | --- | ---: |
-| Commits with no signature | 1,302 of 2,176 |
-| Commits with a signature present | 874 |
-| Of those, committer "GitHub" (made on the hosting side) | 716 |
-| Of those, committer Bob Stewart | 158 |
+| Commits with no signature | 1,235 of 2,176 |
+| Commits with a signature present | 941 |
+| Of those, PGP signature, committer "GitHub" (made on the hosting side) | 716 |
+| Of those, PGP signature, committer Bob Stewart | 158 |
+| Of those, SSH signature, committer Cursor Agent | 46 |
+| Of those, SSH signature, committer mstewartbz | 21 |
 | Merge commits | 575 |
 
 Both rules entered `CONTRIBUTING.md` in `148fc016` (2025-12-16); eight
@@ -688,7 +693,7 @@ No filter was specified or run, so these are expected effects:
 | F-43 | Licence statements changed: the `LICENSE` text was edited; AGPL in the root manifest for two days and in a demo package until May, inside two tags; 204 `command-base/` files Apache-headed for two months, inside three tags | Pending, legal owner | Yes: claims about legal effect, "always Apache-2.0", or standard licence text |
 | F-44 | One author name on 1,380 of 1,479 core commits; other parties credited in trailers; no sign-off, separate agreement or holder record found | Pending, legal owner | Yes: Apache-2.0 claim over the 290 headerless files |
 | F-45 | 221 commits name an AI tool or agent (lower bound) | Pending, legal owner; disclose | Yes: any wholly-human-authored claim |
-| F-46 | 1,302 unsigned commits and 575 merges against rules requiring signatures and linear history | `patch` rules or enforcement | Yes: claims that all commits are signed or verified |
+| F-46 | 1,235 unsigned commits and 575 merges against rules requiring signatures and linear history | `patch` rules or enforcement | Yes: claims that all commits are signed or verified |
 | F-47 | 502 commit references and 792 pull-request links in core records point at the legacy repository; this audit's tables add more | `patch` under the split plan | Yes: cutover |
 | F-48 | Release attestations and publication are tied to the current repository's identity (inferred) | Pending, release owner | Yes: first release from the new repository |
 | F-49 | Core code states material use of two outside MIT projects, with no notice found; Archon comparison open; built bundles show no third-party banners; proof fixtures lack a generation record | Pending; `no_change`; `patch` | No; "notices complete" stays conditional |
