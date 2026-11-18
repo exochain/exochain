@@ -85,6 +85,10 @@
     "source": "The deployment platform's secret store, read at start-up.",
     "holds": [
       {
+        "description": "A route-scoped credential issued to this integration as its own principal",
+        "issued_to_self": true
+      },
+      {
         "description": "A signing key issued to this integration as its own principal",
         "issued_to_self": true
       }

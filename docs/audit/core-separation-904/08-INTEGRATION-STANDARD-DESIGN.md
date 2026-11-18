@@ -237,6 +237,11 @@ JSON Schema the core would publish. No such schema exists yet.
 The example is hypothetical. Its contract name is a placeholder, and
 because 0.4.0 is unpublished it could not reach level 1 today.
 
+Note added after this record was written: a draft schema now exists in
+`integration-manifest/`, and it has since changed. This example no
+longer validates against it. The current example and the list of changes
+are in `integration-manifest/README.md`.
+
 ```json
 {
   "manifest_version": 1,

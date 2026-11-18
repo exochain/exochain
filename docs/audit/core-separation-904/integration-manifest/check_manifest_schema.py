@@ -23,8 +23,12 @@ With no argument it checks, and exits non-zero on any failure:
   1. the schema is itself a valid JSON Schema (draft 2020-12);
   2. the example manifest validates;
   3. each case below, made by changing the example, is accepted or
-     rejected as stated, and each rejection comes only from the rule
-     the case names.
+     rejected as stated, and every error of a rejection lies under the
+     schema path the case names. Where a case notes that two rules
+     reject it, the path named covers both.
+
+An accepted case shows only that the shape is allowed. It does not show
+that such an integration would meet the level it records.
 
 With arguments it validates each named manifest and prints every error.
 
@@ -73,6 +77,18 @@ def verify_only(doc):
     doc["secrets"] = {"inventory": [], "source": "None needed.", "holds": []}
 
 
+def mcp_only(doc):
+    """Make the example an integration that reaches the core only through MCP."""
+    doc["interfaces"] = [MCP]
+    doc["actions"][0]["core_decision"] = MCP["tools"][0]
+    doc["trust_claims"] = claims(True, 2, 2, RESULT)
+
+
+def library_only(doc):
+    doc["interfaces"] = [LIBRARY]
+    doc["actions"] = []
+
+
 def add_embedded(doc, target=None, achieved=None, allowed=False):
     doc["interfaces"].append(EMBEDDED)
     doc["trust_claims"] = claims(allowed, target, achieved, None)
@@ -84,10 +100,12 @@ LIBRARY = {"profile": "library", "package": "exochain-avc", "source": "registry"
 GIT_LIBRARY = {"profile": "library", "package": "exochain-avc", "source": "git", "revision": "86e9a029"}
 PROBE = {"name": "probe", "entry_point": "health check", "core_decision": "GET /health",
          "gating": "no_decision", "effect": "Reopens the connection."}
+POST_PROBE = dict(PROBE, core_decision="POST /api/v1/dag-db/writeback")
 SHARED = {"description": "The node's shared admin token", "issued_to_self": False}
 L1 = "allOf/3/then/properties/"
 MCP = {"profile": "mcp", "protocol_version": "2024-11-05",
        "tools": ["exochain_verify_authority_chain"]}
+IF = "properties/interfaces/items/oneOf/"
 TC = "properties/trust_claims/"
 
 # (description, change applied to a copy of the example)
@@ -101,7 +119,8 @@ VALID = [
     ("level 2 reached, claim allowed", lambda d: put(d, ["trust_claims"], claims(True, 2, 2, RESULT))),
     ("level 2 reached, claim not made",
      lambda d: put(d, ["trust_claims"], claims(False, 3, 2, RESULT))),
-    ("level 3 reached with http and verify interfaces",
+    # Shape only: the schema cannot tell whether the listed route yields a receipt.
+    ("level 3 recorded with http and verify interfaces (shape only)",
      lambda d: put(d, ["trust_claims"], claims(True, 3, 3, RESULT))),
     ("mcp interface", lambda d: d["interfaces"].append(MCP)),
     ("verify-only integration with no actions", verify_only),
@@ -122,6 +141,12 @@ VALID = [
     ("a no-decision action beside a gated one at level 2",
      lambda d: (d["actions"].append(PROBE), put(d, ["trust_claims"], claims(True, 2, 2, RESULT)))),
     ("http interface with a host", lambda d: put(d, ["interfaces", 0, "host"], "node")),
+    ("mcp-only integration at level 2", mcp_only),
+    ("library beside http at level 1",
+     lambda d: (d["interfaces"].append(LIBRARY), put(d, ["trust_claims"], claims(False, 1, 1, RESULT)))),
+    ("manifest version written 1.0", lambda d: put(d, ["manifest_version"], 1.0)),
+    ("core named by release and commit", lambda d: put(d, ["core", "revision"], "86e9a029")),
+    ("a 40-digit commit", lambda d: put(d, ["core"], {"revision": "a" * 40})),
 ]
 
 # (description, change, text that every error's schema path must contain)
@@ -170,11 +195,15 @@ INVALID = [
      "properties/actions/items/required"),
     ("unknown gating answer", lambda d: put(d, ["actions", 0, "gating"], "mostly"),
      "properties/gating/enum"),
-    ("registry package without a version", lambda d: drop(d, ["interfaces", 1, "version"]), "oneOf"),
+    ("registry package without a version", lambda d: drop(d, ["interfaces", 1, "version"]),
+     IF + "2/allOf/0/then/required"),
     ("git package without a commit",
-     lambda d: d["interfaces"].append({"profile": "library", "package": "x", "source": "git"}), "oneOf"),
-    ("package without a source", lambda d: drop(d, ["interfaces", 1, "source"]), "oneOf"),
-    ("unknown http host", lambda d: put(d, ["interfaces", 0, "host"], "edge"), "oneOf"),
+     lambda d: d["interfaces"].append({"profile": "library", "package": "x", "source": "git"}),
+     IF + "2/allOf/1/then/required"),
+    ("package without a source", lambda d: drop(d, ["interfaces", 1, "source"]),
+     IF + "2/required"),
+    ("unknown http host", lambda d: put(d, ["interfaces", 0, "host"], "edge"),
+     IF + "0/properties/host/enum"),
     ("core with neither release nor commit", lambda d: put(d, ["core"], {}), "properties/core/anyOf"),
     ("core commit that is not hex", lambda d: put(d, ["core"], {"revision": "main"}),
      "properties/revision"),
@@ -188,8 +217,8 @@ INVALID = [
      lambda d: (put(d, ["interfaces"], [d["interfaces"][0]]),
                 put(d, ["trust_claims"], claims(False, 3, 3, RESULT))),
      "allOf/1/then/properties/interfaces/contains"),
-    ("embedded interface with level 0 recorded", lambda d: add_embedded(d, None, 0),
-     "achieved_level"),
+    ("embedded interface with level 0 sought and recorded", lambda d: add_embedded(d, 0, 0),
+     "allOf/2/then/" + TC + "properties/"),
     ("embedded interface with a level sought", lambda d: add_embedded(d, 1, None),
      "allOf/2/then/" + TC + "properties/target_level"),
     # Two rules reject this one: the embedded rule, and "a claim needs level 2 or 3".
@@ -198,7 +227,8 @@ INVALID = [
     ("an access category left out", lambda d: drop(d, ["core_access", "consent_records"]),
      "properties/core_access/required"),
     ("an access category with no write answer",
-     lambda d: drop(d, ["core_access", "signatures", "write"]), "required"),
+     lambda d: drop(d, ["core_access", "signatures", "write"]),
+     "properties/core_access/properties/signatures/required"),
     ("an access answer that is not true or false",
      lambda d: put(d, ["core_access", "signatures", "read"], "no"), "properties/read/type"),
     ("threat model left out", lambda d: drop(d, ["threat_model"]), "required"),
@@ -211,19 +241,27 @@ INVALID = [
     ("no interface listed", lambda d: put(d, ["interfaces"], []), "properties/interfaces/minItems"),
     ("the same interface listed twice", lambda d: d["interfaces"].append(d["interfaces"][1]),
      "properties/interfaces/uniqueItems"),
-    ("unknown interface profile", lambda d: put(d, ["interfaces", 0, "profile"], "file"), "oneOf"),
-    ("http interface without a contract", lambda d: drop(d, ["interfaces", 0, "contract"]), "oneOf"),
+    ("unknown interface profile", lambda d: put(d, ["interfaces", 0, "profile"], "file"),
+     IF),
+    ("http interface without a contract", lambda d: drop(d, ["interfaces", 0, "contract"]),
+     IF + "0/required"),
     ("route without a method",
-     lambda d: put(d, ["interfaces", 0, "routes"], ["/api/v1/dag-db/writeback"]), "oneOf"),
+     lambda d: put(d, ["interfaces", 0, "routes"], ["/api/v1/dag-db/writeback"]),
+     IF + "0/properties/routes/items/pattern"),
     ("route with a tab in it",
-     lambda d: put(d, ["interfaces", 0, "routes"], ["POST /api/v1/dag-db/write\tback"]), "oneOf"),
+     lambda d: put(d, ["interfaces", 0, "routes"], ["POST /api/v1/dag-db/write\tback"]),
+     IF + "0/properties/routes/items"),
     ("route ending in a line break",
-     lambda d: put(d, ["interfaces", 0, "routes"], ["POST /api/v1/dag-db/writeback\n"]), "oneOf"),
+     lambda d: put(d, ["interfaces", 0, "routes"], ["POST /api/v1/dag-db/writeback\n"]),
+     IF + "0/properties/routes/items/not"),
     ("the same route listed twice",
-     lambda d: put(d, ["interfaces", 0, "routes"], ["POST /a", "POST /a"]), "oneOf"),
-    ("mcp interface with no tools", lambda d: d["interfaces"].append(dict(MCP, tools=[])), "oneOf"),
+     lambda d: put(d, ["interfaces", 0, "routes"], ["POST /a", "POST /a"]),
+     IF + "0/properties/routes/uniqueItems"),
+    ("mcp interface with no tools", lambda d: d["interfaces"].append(dict(MCP, tools=[])),
+     IF + "1/properties/tools/minItems"),
     ("verify interface with a version that is not one",
-     lambda d: put(d, ["interfaces", 1, "version"], "latest"), "oneOf"),
+     lambda d: put(d, ["interfaces", 1, "version"], "latest"),
+     IF + "2/properties/version/pattern"),
     ("an email address as maintainer",
      lambda d: put(d, ["integration", "accountable_maintainer"], "someone@example.org"),
      "properties/accountable_maintainer"),
@@ -258,11 +296,78 @@ INVALID = [
      "properties/achieved_level/enum"),
     ("claim permission given as 1", lambda d: put(d, ["trust_claims", "allowed"], 1),
      "properties/allowed/type"),
+    ("a library package with no http or mcp interface", library_only,
+     "allOf/4/then/properties/interfaces/contains"),
+    ("level 2 reached where the only gated action calls a GET route",
+     lambda d: (put(d, ["interfaces", 0, "routes"], ["GET /health"]),
+                put(d, ["actions", 0, "core_decision"], "GET /health"),
+                put(d, ["trust_claims"], claims(False, 2, 2, RESULT))),
+     "allOf/0/then/properties/actions/contains"),
+    ("level 2 reached with a no-decision action on a POST route",
+     lambda d: (d["actions"].append(POST_PROBE), put(d, ["trust_claims"], claims(False, 2, 2, RESULT))),
+     "allOf/0/then/properties/actions/items/then"),
+    ("level 1 reached with a path-sourced package",
+     lambda d: (d["interfaces"].append(dict(LIBRARY, source="path")),
+                put(d, ["trust_claims"], claims(False, 2, 1, RESULT))), L1 + "interfaces/not"),
+    ("level 1 reached with a vendored package",
+     lambda d: (d["interfaces"].append(dict(LIBRARY, source="vendored")),
+                put(d, ["trust_claims"], claims(False, 2, 1, RESULT))), L1 + "interfaces/not"),
+    ("secrets named but none described as held", lambda d: put(d, ["secrets", "holds"], []),
+     "properties/secrets/allOf/0/then/properties/holds/minItems"),
+    ("the same held secret twice", lambda d: d["secrets"]["holds"].append(d["secrets"]["holds"][0]),
+     "holds/uniqueItems"),
+    ("a held secret with no issued_to_self answer",
+     lambda d: drop(d, ["secrets", "holds", 0, "issued_to_self"]), "holds/items/required"),
+    ("an issued_to_self answer that is not true or false",
+     lambda d: put(d, ["secrets", "holds", 0, "issued_to_self"], "yes"),
+     "properties/issued_to_self/type"),
+    ("the same mcp tool twice", lambda d: d["interfaces"].append(dict(MCP, tools=["a", "a"])),
+     IF + "1/properties/tools/uniqueItems"),
+    ("core commit ending in a line break", lambda d: put(d, ["core"], {"revision": "86e9a029\n"}),
+     "properties/core/properties/revision/not"),
+    ("core commit in capitals", lambda d: put(d, ["core"], {"revision": "86E9A029"}),
+     "properties/core/properties/revision/pattern"),
+    ("core commit of 6 digits", lambda d: put(d, ["core"], {"revision": "86e9a0"}),
+     "properties/core/properties/revision/pattern"),
+    ("trust boundary with a line separator", lambda d: put(d, ["trust_boundary"], "one\u2028two"),
+     "properties/trust_boundary/not"),
+    ("deployment boundary with a C1 control character",
+     lambda d: put(d, ["deployment_boundary"], "A\u0080B"), "properties/deployment_boundary/not"),
+    ("an unknown field inside an action", lambda d: put(d, ["actions", 0, "claimed"], True),
+     "properties/actions/items/additionalProperties"),
+    ("an unknown field inside secrets", lambda d: put(d, ["secrets", "values"], []),
+     "properties/secrets/additionalProperties"),
 ]
 
 
+def branch_errors(error):
+    """Errors inside a failed oneOf, from the branch the entry was meant for.
+
+    A failed oneOf reports one error and hides the reason in its context.
+    For an interface entry the intended branch is the one whose `profile`
+    matched. If no branch can be singled out, every branch's errors are
+    returned, or none when the validator gives no context.
+    """
+    by_branch = {}
+    for inner in error.context or []:
+        by_branch.setdefault(inner.relative_schema_path[0], []).append(inner)
+    meant = [errors for errors in by_branch.values()
+             if not any(list(e.relative_schema_path)[-2:-1] == ["profile"] for e in errors)]
+    if len(meant) == 1:
+        return meant[0]
+    return [e for errors in by_branch.values() for e in errors]
+
+
 def schema_paths(validator, doc):
-    return ["/".join(str(p) for p in e.absolute_schema_path) for e in validator.iter_errors(doc)]
+    paths = []
+    for error in validator.iter_errors(doc):
+        base = "/".join(str(p) for p in error.absolute_schema_path)
+        inner = branch_errors(error) if error.validator == "oneOf" else []
+        if inner:
+            paths.extend(base + "/" + "/".join(str(p) for p in e.relative_schema_path) for e in inner)
+        else:
+            paths.append(base)
+    return paths
 
 
 def check_files(validator, names):

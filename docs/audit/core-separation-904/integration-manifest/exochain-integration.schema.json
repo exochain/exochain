@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://exochain.io/schemas/proposal/integration/exochain-integration.schema.json",
   "title": "EXOCHAIN integration manifest (draft)",
-  "description": "PROPOSAL. Draft. Not reviewed by any panel. Not adopted. Nothing is published at the $id. A manifest that validates against this schema has stated what AGENTS.md's intake gate and 'Adding Adjacent Surfaces' section ask for, in a fixed form. Validation says the manifest is complete in shape. It does not say any statement in it is true, it is not the intake review, and it grants no authority and no trust claim. Until the standard is adopted no level may be claimed publicly, so a real manifest keeps trust_claims.allowed false and achieved_level null; this draft keeps the level rules so they can be reviewed. See 08-INTEGRATION-STANDARD-DESIGN.md.",
+  "description": "PROPOSAL. Draft. Not reviewed by any panel. Not adopted. Nothing is published at the $id. A manifest that validates against this schema gives an answer, in a fixed form, to each item AGENTS.md's intake gate and 'Adding Adjacent Surfaces' section ask for. An answer may record that something is missing or not allowed, for example a null threat_model or a held credential with issued_to_self false; such a manifest is a draft inventory and has not completed the intake record. Validation says the manifest is complete in shape. It does not say any statement in it is true, it is not the intake review, and it grants no authority and no trust claim. Until the standard is adopted no level may be claimed publicly, so a real manifest keeps trust_claims.allowed false and achieved_level null; this draft keeps the level rules so they can be reviewed. See 08-INTEGRATION-STANDARD-DESIGN.md.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -167,7 +167,7 @@
             "$ref": "#/$defs/text"
           },
           "gating": {
-            "description": "gated: the effect happens only after the core allows it. not_gated: the core is asked, but the effect happens whatever it answers. no_decision: the call asks the core to decide nothing, for example a health probe.",
+            "description": "gated: the effect happens only after the core allows it. not_gated: the core is asked, but the effect happens whatever it answers. no_decision: the call asks the core to decide nothing, for example a health probe. A no_decision action is outside every level and every trust claim; its effect is not protected by the core.",
             "enum": [
               "gated",
               "not_gated",
@@ -186,7 +186,7 @@
       "$ref": "#/$defs/text"
     },
     "threat_model": {
-      "description": "Adding Adjacent Surfaces: threat model for secrets, identity, consent, authority, provenance and external writes. A path or reference to the document. Null states that none exists yet; a level above 0 needs one.",
+      "description": "Adding Adjacent Surfaces: threat model for secrets, identity, consent, authority, provenance and external writes. A path or reference to the document. Null records that none exists yet: the intake record is then incomplete, and no level above 0 can be recorded.",
       "oneOf": [
         {
           "type": "null"
@@ -410,7 +410,7 @@
           "$ref": "#/$defs/text"
         },
         "holds": {
-          "description": "Each credential or piece of key material the integration holds, described in words. Never a value.",
+          "description": "Each secret credential or private key the integration holds, described in words. Never a value. Public keys and trust anchors used only to verify what the core produced are not secrets and are not listed here.",
           "type": "array",
           "uniqueItems": true,
           "items": {
@@ -425,13 +425,35 @@
                 "$ref": "#/$defs/text"
               },
               "issued_to_self": {
-                "description": "True only if it was issued to this integration as its own principal. False for anything shared: a node admin token, a tenant secret, a production signing key, a core bootstrap key or an emergency override credential.",
+                "description": "True only if the secret was issued to this integration as its own principal. False for anything shared or belonging to the core or a tenant: a node admin token, a tenant secret, a core or tenant signing key, a core bootstrap key or an emergency override credential.",
                 "type": "boolean"
               }
             }
           }
         }
-      }
+      },
+      "allOf": [
+        {
+          "$comment": "If any secret is named in the inventory, at least one held secret is described.",
+          "if": {
+            "required": [
+              "inventory"
+            ],
+            "properties": {
+              "inventory": {
+                "minItems": 1
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "holds": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
     },
     "disablement": {
       "description": "Intake: rollback or disablement path if the surface leaks, misroutes or misstates core trust decisions.",
@@ -440,7 +462,7 @@
   },
   "allOf": [
     {
-      "$comment": "Levels 2 and 3 are claimed per action and only where the core's own process decides. Every action that asks the core for a decision is gated, at least one is, and there is an http or mcp interface.",
+      "$comment": "Levels 2 and 3 are claimed per action and only where the core's own process decides. No action is not_gated, at least one gated action calls something other than a GET or HEAD route, a no_decision action may only name a GET or HEAD route, and there is an http or mcp interface.",
       "if": {
         "properties": {
           "trust_claims": {
@@ -461,11 +483,17 @@
             "contains": {
               "type": "object",
               "required": [
-                "gating"
+                "gating",
+                "core_decision"
               ],
               "properties": {
                 "gating": {
                   "const": "gated"
+                },
+                "core_decision": {
+                  "not": {
+                    "pattern": "^(GET|HEAD) "
+                  }
                 }
               }
             },
@@ -478,6 +506,25 @@
                 "properties": {
                   "gating": {
                     "const": "not_gated"
+                  }
+                }
+              }
+            },
+            "items": {
+              "if": {
+                "required": [
+                  "gating"
+                ],
+                "properties": {
+                  "gating": {
+                    "const": "no_decision"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "core_decision": {
+                    "pattern": "^(GET|HEAD) /"
                   }
                 }
               }
@@ -633,15 +680,55 @@
           }
         }
       }
+    },
+    {
+      "$comment": "A library package is used to talk to a core that decides, so an http or mcp interface is listed beside it.",
+      "if": {
+        "properties": {
+          "interfaces": {
+            "contains": {
+              "type": "object",
+              "required": [
+                "profile"
+              ],
+              "properties": {
+                "profile": {
+                  "const": "library"
+                }
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "interfaces": {
+            "contains": {
+              "type": "object",
+              "required": [
+                "profile"
+              ],
+              "properties": {
+                "profile": {
+                  "enum": [
+                    "http",
+                    "mcp"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
     }
   ],
   "$defs": {
     "text": {
-      "description": "One line of text with at least one visible character and no control characters (so no tab or line break).",
+      "description": "One line of text with at least one non-space character and no control character or line separator (so no tab or line break).",
       "type": "string",
       "pattern": "\\S",
       "not": {
-        "pattern": "[\\u0000-\\u001F\\u007F]"
+        "pattern": "[\\u0000-\\u001F\\u007F-\\u009F\\u2028\\u2029]"
       }
     },
     "party": {
@@ -743,7 +830,7 @@
     },
     "git_revision": {
       "description": "A git commit id, 7 to 40 lower-case hex digits.",
-      "type": "string",
+      "$ref": "#/$defs/text",
       "pattern": "^[0-9a-f]{7,40}$"
     },
     "package_interface": {
@@ -792,7 +879,10 @@
               "source": {
                 "const": "registry"
               }
-            }
+            },
+            "required": [
+              "source"
+            ]
           },
           "then": {
             "required": [
@@ -806,7 +896,10 @@
               "source": {
                 "const": "git"
               }
-            }
+            },
+            "required": [
+              "source"
+            ]
           },
           "then": {
             "required": [
