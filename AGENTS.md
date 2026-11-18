@@ -659,20 +659,22 @@ assert_eq!(output.fields.get("processed").unwrap(), "true");
 ## Cursor Cloud specific instructions
 
 Durable, non-obvious notes for running this workspace in a Cursor Cloud VM. The
-startup update script already refreshes the toolchain (see below); standard
-build/test/lint/fmt commands live in `README.md` and `CONTRIBUTING.md` — use
-those, do not duplicate them here.
+environment install script already installs the CI toolchain and fetches the
+locked crate graph; the environment start script already brings PostgreSQL
+online. Standard build/test/lint/fmt commands live in `README.md` and
+`CONTRIBUTING.md` — use those, do not duplicate them here.
 
 ### Toolchain
 
-- The workspace is Rust **edition 2024** and has MSRV **rustc 1.85+**. The base
-  VM image may pin an older default toolchain (e.g. 1.83), so install CI's
-  exact validation compiler with `rustup toolchain install 1.98.1 --profile minimal --component clippy`
-  and use explicit `cargo +1.98.1` for build, test, lint, and documentation.
-  This pinned validation does not establish Rust 1.99 compatibility. Nightly +
-  `rustfmt` are installed only for the formatting gate. Install the same dated formatter as CI
-  with `rustup toolchain install nightly-2026-09-21 --profile minimal --component rustfmt`;
-  run `cargo +nightly-2026-09-21 fmt --all -- --check`. Do not substitute a
+- The workspace is Rust **edition 2024** and has MSRV **rustc 1.85+**. Cloud
+  Agent install sets the default toolchain to CI's exact validation compiler,
+  Rust **1.98.1** with clippy, and installs `nightly-2026-09-21` with rustfmt.
+  Still invoke `cargo +1.98.1` for build, test, lint, and documentation. This
+  pinned validation does not establish Rust 1.99 compatibility. If
+  `cargo +1.98.1` is missing, install it with
+  `rustup toolchain install 1.98.1 --profile minimal --component clippy` and
+  `rustup toolchain install nightly-2026-09-21 --profile minimal --component rustfmt`.
+  Run `cargo +nightly-2026-09-21 fmt --all -- --check`. Do not substitute a
   floating nightly formatter.
 - The full `cargo test --workspace` gate is slow. Derive the current package
   inventory with
@@ -686,22 +688,32 @@ those, do not duplicate them here.
 
 ### PostgreSQL is a required system dependency for the runtime
 
-The runnable binaries persist through Postgres via `sqlx`. Postgres is a
-**system dependency** (installed with `apt-get install postgresql`, NOT part of
-the update script). Start it and create a DB before running the servers:
+The runnable binaries persist through Postgres via `sqlx`. Cloud Agent `start`
+starts the PostgreSQL cluster, creates the `exochain` database when it is
+missing, and trusts **loopback** connections only. Login shells source
+`/etc/profile.d/exochain-dev.sh`. If `DATABASE_URL` is unset in the current
+shell, source that file:
+
+```bash
+source /etc/profile.d/exochain-dev.sh
+```
+
+That file exports:
+
+- `DATABASE_URL=postgres://postgres@127.0.0.1:5432/exochain`
+- `EXO_DAGDB_TENANT_ID=dag_db-local`
+- `EXO_DAGDB_NAMESPACE=dag_db`
+
+Loopback trust is only for this disposable Cloud Agent VM. Do not enable trust
+authentication on a shared, staging, or production database.
+
+If the cluster is down, start it before running the servers:
 
 ```bash
 read -r cluster_version cluster_name _ < <(pg_lsclusters --no-header | awk 'NR == 1 { print $1, $2 }')
 test -n "$cluster_version" && test -n "$cluster_name"
 sudo pg_ctlcluster "$cluster_version" "$cluster_name" start
-sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
-sudo -u postgres psql -c "CREATE DATABASE exochain;"
-export DATABASE_URL="postgres://postgres:postgres@127.0.0.1:5432/exochain"
 ```
-
-The literal `postgres` password above is restricted to an isolated,
-disposable local VM. Never reuse it in a shared, staging, or production
-database; obtain those credentials from the environment's secret manager.
 
 Schema migrations run automatically on gateway/node startup (the DAG DB schema
 is embedded in the binary via `sqlx::migrate!` and provisioned into a dedicated
