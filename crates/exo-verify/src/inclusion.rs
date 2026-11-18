@@ -53,14 +53,19 @@ pub struct ReceiptTreeHead {
     pub signature: Signature,
 }
 
+/// Signed tree-head fields. Declared in sorted key order (`chain_head`,
+/// `chain_id`, `domain`, `root`, `tree_size`, `validator_did`), so the CBOR
+/// map is encoded with sorted keys as the workspace rules require. This is
+/// the same lexicographic key order the rest of the workspace gets from
+/// `BTreeMap` keys. A unit test checks the encoded key order.
 #[derive(Serialize)]
 struct TreeHeadSigningPayload<'a> {
-    domain: &'static str,
-    validator_did: &'a Did,
-    tree_size: u64,
-    root: &'a Hash256,
     chain_head: &'a Hash256,
     chain_id: &'a Hash256,
+    domain: &'static str,
+    root: &'a Hash256,
+    tree_size: u64,
+    validator_did: &'a Did,
 }
 
 impl ReceiptTreeHead {
@@ -72,12 +77,12 @@ impl ReceiptTreeHead {
         let mut buf = Vec::new();
         ciborium::ser::into_writer(
             &TreeHeadSigningPayload {
-                domain: AVC_RECEIPT_TREE_HEAD_DOMAIN,
-                validator_did: &self.validator_did,
-                tree_size: self.tree_size,
-                root: &self.root,
                 chain_head: &self.chain_head,
                 chain_id: &self.chain_id,
+                domain: AVC_RECEIPT_TREE_HEAD_DOMAIN,
+                root: &self.root,
+                tree_size: self.tree_size,
+                validator_did: &self.validator_did,
             },
             &mut buf,
         )
@@ -351,10 +356,12 @@ mod tests {
 
     use super::*;
 
+    /// Sorted-key encoding of the v2 tree head signing payload.
     const TREE_HEAD_VECTOR_HEX: &str = concat!(
-        "a666646f6d61696e781c65786f2e6176632e726563656970742e747265655f686561642e76326d76616c696461746f725f646964716469643a65786f3a76616c696461746f7269747265655f73697a650564726f6f74982011111",
-        "111111111111111111111111111111111111111111111111111111111116a636861696e5f686561649820182218221822182218221822182218221822182218221822182218221822182218221822182218221822182218221822",
-        "1822182218221822182218221822182268636861696e5f6964982018331833183318331833183318331833183318331833183318331833183318331833183318331833183318331833183318331833183318331833183318331833",
+        "a66a636861696e5f6865616498201822182218221822182218221822182218221822182218221822182218221822182218221822182218221822182218221822182218221822182218221822182268636861696e5f6964982018",
+        "33183318331833183318331833183318331833183318331833183318331833183318331833183318331833183318331833183318331833183318331833183366646f6d61696e781c65786f2e6176632e726563656970742e7472",
+        "65655f686561642e763264726f6f749820111111111111111111111111111111111111111111111111111111111111111169747265655f73697a65056d76616c696461746f725f646964716469643a65786f3a76616c69646174",
+        "6f72",
     );
 
     fn leaf(i: u8) -> Hash256 {
@@ -552,6 +559,41 @@ mod tests {
         };
         let payload = head.signing_payload().unwrap();
         assert_eq!(hex::encode(&payload), TREE_HEAD_VECTOR_HEX);
+    }
+
+    #[test]
+    fn tree_head_signing_payload_keys_are_sorted() {
+        let head = ReceiptTreeHead {
+            validator_did: Did::new("did:exo:validator").unwrap(),
+            tree_size: 5,
+            root: Hash256::from_bytes([0x11; 32]),
+            chain_head: Hash256::from_bytes([0x22; 32]),
+            chain_id: Hash256::from_bytes([0x33; 32]),
+            signature: Signature::empty(),
+        };
+        let payload = head.signing_payload().unwrap();
+        let value: ciborium::value::Value = ciborium::from_reader(payload.as_slice()).unwrap();
+        let keys: Vec<String> = value
+            .as_map()
+            .unwrap()
+            .iter()
+            .map(|(key, _)| key.as_text().unwrap().to_owned())
+            .collect();
+        let mut sorted = keys.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(keys, sorted);
+        assert_eq!(
+            keys,
+            [
+                "chain_head",
+                "chain_id",
+                "domain",
+                "root",
+                "tree_size",
+                "validator_did"
+            ]
+        );
     }
 
     #[test]
