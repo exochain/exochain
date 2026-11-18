@@ -26,7 +26,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use exo_authority::{AuthorityChain, permission::Permission};
-use exo_core::{Did, Hash256, PublicKey, Timestamp, crypto};
+use exo_core::{Did, Hash256, PublicKey, Signature, Timestamp, crypto};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -145,6 +145,31 @@ pub struct AvcRegistryDurableState {
     pub registered_issuer_keys: BTreeMap<Did, RegisteredIssuerKey>,
     #[serde(default)]
     pub emergency_stops: BTreeMap<String, EmergencyStopStanding>,
+    /// Latest receipt tree head signed by each validator key, so receipts
+    /// keep an inclusion proof under their own validator after rotation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub validator_tree_heads: Vec<AvcValidatorTreeHead>,
+}
+
+/// A receipt tree head as signed by one validator key: the fields of the
+/// `exo.avc.receipt.tree_head` payload plus the signer's public key.
+///
+/// The node records the head it signs at every receipt commit, in the same
+/// durable write as the receipt. After a validator rotation the node can
+/// still return a proof for an older receipt under a head signed by that
+/// receipt's own validator, so the offline verifier's rule (head signer ==
+/// receipt validator) holds without a delegation statement. Loading is
+/// structural only; the node re-checks the signature and recomputes the root
+/// from the receipt chain before it serves a proof against a stored head.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AvcValidatorTreeHead {
+    pub validator_did: Did,
+    pub validator_public_key: PublicKey,
+    pub tree_size: u64,
+    pub root: Hash256,
+    pub chain_head: Hash256,
+    pub chain_id: Hash256,
+    pub signature: Signature,
 }
 
 /// Deterministic in-memory implementation of the registry traits.
@@ -172,6 +197,8 @@ pub struct InMemoryAvcRegistry {
     /// startup-config anchors via `put_public_key` and for runtime
     /// registrations via `put_registered_issuer_key` / restore).
     registered_issuer_keys: BTreeMap<Did, RegisteredIssuerKey>,
+    /// Latest signed receipt tree head per validator key (durable).
+    validator_tree_heads: Vec<AvcValidatorTreeHead>,
 }
 
 impl InMemoryAvcRegistry {
@@ -199,7 +226,24 @@ impl InMemoryAvcRegistry {
             receipt_chain_head: self.receipt_chain_head,
             registered_issuer_keys: self.registered_issuer_keys.clone(),
             emergency_stops: self.emergency_stops.clone(),
+            validator_tree_heads: self.validator_tree_heads.clone(),
         }
+    }
+
+    /// Record `head` as the latest tree head signed by its validator key,
+    /// replacing any earlier head from the same DID and key.
+    pub fn put_validator_tree_head(&mut self, head: AvcValidatorTreeHead) {
+        self.validator_tree_heads.retain(|existing| {
+            existing.validator_did != head.validator_did
+                || existing.validator_public_key != head.validator_public_key
+        });
+        self.validator_tree_heads.push(head);
+    }
+
+    /// Latest recorded tree head per validator key.
+    #[must_use]
+    pub fn validator_tree_heads(&self) -> &[AvcValidatorTreeHead] {
+        &self.validator_tree_heads
     }
 
     /// Reconstruct an in-memory registry from durable runtime records.
@@ -335,6 +379,29 @@ impl InMemoryAvcRegistry {
             registry.registered_issuer_keys.insert(stored_did, record);
         }
 
+        for head in state.validator_tree_heads {
+            if head.tree_size == 0 || head.signature.is_empty() {
+                return Err(AvcError::Registry {
+                    reason: format!(
+                        "durable tree head for validator {} is empty or unsigned",
+                        head.validator_did
+                    ),
+                });
+            }
+            if registry.validator_tree_heads.iter().any(|existing| {
+                existing.validator_did == head.validator_did
+                    && existing.validator_public_key == head.validator_public_key
+            }) {
+                return Err(AvcError::Registry {
+                    reason: format!(
+                        "duplicate durable tree head for validator {}",
+                        head.validator_did
+                    ),
+                });
+            }
+            registry.validator_tree_heads.push(head);
+        }
+
         Ok(registry)
     }
 
@@ -361,6 +428,7 @@ impl InMemoryAvcRegistry {
         candidate.registered_issuer_keys = durable.registered_issuer_keys;
         candidate.emergency_stops = durable.emergency_stops;
         candidate.emergency_stops_unreadable = false;
+        candidate.validator_tree_heads = durable.validator_tree_heads;
 
         for revocation in durable.revocations.into_values() {
             candidate.validate_revocation(&revocation)?;
@@ -378,6 +446,7 @@ impl InMemoryAvcRegistry {
         self.registered_issuer_keys = candidate.registered_issuer_keys;
         self.emergency_stops = candidate.emergency_stops;
         self.emergency_stops_unreadable = false;
+        self.validator_tree_heads = candidate.validator_tree_heads;
         Ok(())
     }
 
@@ -1963,6 +2032,56 @@ mod tests {
             other => panic!("expected invalid receipt credential reference, got {other:?}"),
         }
         assert_eq!(reg.receipt_count(), 0);
+    }
+
+    #[test]
+    fn validator_tree_heads_are_kept_per_key_and_survive_durable_reload() {
+        let head = |validator: &str, key: &KeyPair, size: u64| AvcValidatorTreeHead {
+            validator_did: did(validator),
+            validator_public_key: key.public,
+            tree_size: size,
+            root: h256(0x40),
+            chain_head: h256(0x41),
+            chain_id: h256(0x42),
+            signature: key.sign(b"head"),
+        };
+        let first = keypair(0x51);
+        let second = keypair(0x52);
+        let mut reg = fresh_registry();
+        reg.put_validator_tree_head(head("validator-a", &first, 1));
+        reg.put_validator_tree_head(head("validator-a", &first, 3));
+        reg.put_validator_tree_head(head("validator-b", &second, 4));
+        // A newer head from the same DID and key replaces the older one.
+        assert_eq!(reg.validator_tree_heads().len(), 2);
+        assert_eq!(reg.validator_tree_heads()[0].tree_size, 3);
+
+        let restored = InMemoryAvcRegistry::from_durable_state(reg.durable_state()).unwrap();
+        assert_eq!(restored.validator_tree_heads(), reg.validator_tree_heads());
+
+        let mut duplicate = reg.durable_state();
+        duplicate
+            .validator_tree_heads
+            .push(head("validator-a", &first, 2));
+        assert!(InMemoryAvcRegistry::from_durable_state(duplicate).is_err());
+
+        let mut unsigned = AvcRegistryDurableState::default();
+        let mut unsigned_head = head("validator-a", &first, 1);
+        unsigned_head.signature = Signature::empty();
+        unsigned.validator_tree_heads.push(unsigned_head);
+        assert!(InMemoryAvcRegistry::from_durable_state(unsigned).is_err());
+
+        // States without heads encode exactly as before the field existed.
+        let empty = fresh_registry().durable_state();
+        let mut bytes = Vec::new();
+        ciborium::into_writer(&empty, &mut bytes).unwrap();
+        let value: ciborium::value::Value = ciborium::from_reader(bytes.as_slice()).unwrap();
+        let keys: Vec<_> = value
+            .as_map()
+            .unwrap()
+            .iter()
+            .map(|(key, _)| key.as_text().unwrap().to_owned())
+            .collect();
+        assert!(!keys.contains(&"validator_tree_heads".to_owned()));
     }
 
     #[test]
