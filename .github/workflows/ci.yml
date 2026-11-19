@@ -670,7 +670,7 @@ jobs:
           done
           pg_isready -h localhost -U exochain -d exochain_test
       - name: Install sqlx-cli (postgres only, no default TLS)
-        run: bash tools/ci_cargo_retry.sh cargo install sqlx-cli --version 0.8.6 --locked --no-default-features --features postgres,rustls
+        run: bash tools/ci_cargo_retry.sh cargo install sqlx-cli --version 0.9.1 --locked --no-default-features --features postgres,rustls
       - name: Run migrations
         run: sqlx migrate run --source crates/exo-gateway/migrations
       - name: Run DAG DB migration upgrade regression
