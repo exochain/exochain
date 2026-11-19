@@ -56,8 +56,9 @@ TERMS = [
     ("sybil-cli", r"sybil[-_]cli"),
     ("gap-incubator", r"gap[-_ ]incubator"),
     ("customer-zero", r"customer[-_ ]zero"),
-    # Any form of the name, including the crate name `decision-forum`.
-    ("decision-forum-name", r"decision[-. ]forum"),
+    # Any form of the name, including the crate name `decision-forum` and the
+    # Rust identifier `decision_forum`.
+    ("decision-forum-name", r"decision[-_. ]forum"),
     ("hipaa-phi", r"\bhipaa\b|\bphi\b|protected health"),
     # Names met while reading the first scan's hit sites.
     ("paperclip", r"paperclip"),

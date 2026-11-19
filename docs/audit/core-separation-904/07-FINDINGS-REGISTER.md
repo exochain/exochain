@@ -82,7 +82,7 @@ It does not establish:
 | Commit | `e6ecf4388a69fa3a1a352ebda4c8226697dcfd2e` (`main`) |
 | Tracked paths | 3,175 |
 | Path table (part 1) | `path-classification.tsv`, SHA-256 `0640fb42fa7d2b69ff13599d9e2ee25ea825bfa8cd4553a0ef5a7ac280d79667` |
-| Fingerprint table (part 3) | `product-fingerprints.tsv`, SHA-256 `a13656411386c94804d4603d78c292419d34ed9b80266d21f54baaaca7b4b46c` |
+| Fingerprint table (part 3) | `product-fingerprints.tsv`, SHA-256 `92b105d61be0ae1a9e9bf0b275663270d9961be92e7825bf40c8b5c1da347a5b` |
 | Register | `findings-register.tsv`, 51 rows |
 | Omission groups | `proposed-omissions.tsv`, 23 rows |
 | Document sort | `document-sort.tsv`, 159 rows |
@@ -665,12 +665,13 @@ gh issue view 904 --repo exochain/exochain --json state,updatedAt,comments
 
 | Table | SHA-256 |
 | --- | --- |
-| `findings-register.tsv` | `2366d0940c4a532d4344d3d885d0bb1df1d7566cb97730e17fcd0e5192b03528` |
+| `findings-register.tsv` | `3c95257e9054f1388d38918f45f70c0f67b3020d42254ff28e95df9e3fc521a5` |
 | `proposed-omissions.tsv` | `1acf98f452caac67038f96c06e2d5abd14eb10981e3b36c9131386a79ff4af85` |
-| `document-sort.tsv` | `89b77635db04376ba9bd6bcf083fd36c400228aeb27c36d1a85dbd7d85c6d184` |
+| `document-sort.tsv` | `5eb46661c5852df79e8d7b07f88bb34eb5ce8a80451c1cf45ce4de3473ca2eb9` |
 
 The first command exits non-zero if the register and the parts disagree on
-which findings exist, their part, the vocabulary, links or status. A
+which findings exist, their part, the vocabulary, links or status, or if a
+table digest printed in this part differs from the file beside it. A
 difference in disposition words is printed as a note and does not change
 the exit status.
 The last needs network access and a GitHub token. `findings-register.tsv`

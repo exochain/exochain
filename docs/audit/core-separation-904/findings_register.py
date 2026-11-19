@@ -33,7 +33,10 @@ Checks, and exits non-zero on any failure:
   5. `blocks` is one of cutover, release, claim, conditional, none, and
      every row that blocks carries a note; `owner_basis` says whether the
      owner is named in the part, inferred in part 7, or absent;
-  6. every id in `linked` exists; every status is `open`.
+  6. every id in `linked` exists; every status is `open`;
+  7. every SHA-256 digest that part 7 prints beside a table name
+     (`<name>.tsv` followed by a 64-digit value) equals the digest of
+     that file's bytes in the audit directory.
 
 It checks form and agreement between files. It does not check that a
 finding is true.
@@ -41,6 +44,7 @@ finding is true.
 
 import collections
 import glob
+import hashlib
 import os
 import re
 import sys
@@ -49,6 +53,8 @@ VOCAB = {"patch", "adjacent_patch", "no_change", "pending"}
 BLOCKS = {"cutover", "release", "claim", "conditional", "none"}
 BASIS = {"named in the part", "inferred in part 7", "none"}
 ROW = re.compile(r"^\| (F-\d+) \|(.*)$")
+DIGEST = re.compile(r"`([A-Za-z0-9_.-]+\.tsv)`[^`\n]{0,20}`([0-9a-f]{64})`")
+PART7 = "07-FINDINGS-REGISTER.md"
 
 
 def part_rows(directory):
@@ -63,6 +69,24 @@ def part_rows(directory):
                         raise SystemExit(f"{match.group(1)} has two summary rows")
                     found[match.group(1)] = (part, match.group(2))
     return found
+
+
+def digest_errors(directory):
+    with open(os.path.join(directory, PART7), encoding="utf-8") as handle:
+        printed = DIGEST.findall(handle.read())
+    errors = []
+    if not printed:
+        errors.append(f"{PART7}: no table digests found")
+    for name, value in printed:
+        try:
+            with open(os.path.join(directory, name), "rb") as handle:
+                actual = hashlib.sha256(handle.read()).hexdigest()
+        except OSError:
+            errors.append(f"{name}: named in {PART7} but not readable")
+            continue
+        if actual != value:
+            errors.append(f"{name}: {PART7} prints {value}, file is {actual}")
+    return errors, len(printed)
 
 
 def main():
@@ -113,6 +137,9 @@ def main():
     for fid in defined:
         if seen[fid] != 1:
             errors.append(f"{fid}: appears {seen[fid]} times in the register")
+    digest_failures, digest_count = digest_errors(directory)
+    errors.extend(digest_failures)
+    print("digests checked", digest_count)
     by_block = collections.Counter(row["blocks"] for row in rows)
     by_area = collections.Counter(row["area"] for row in rows)
     print("owner_basis", dict(sorted(collections.Counter(row["owner_basis"] for row in rows).items())))

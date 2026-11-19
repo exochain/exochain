@@ -829,9 +829,9 @@
       }
     },
     "git_revision": {
-      "description": "A git commit id, 7 to 40 lower-case hex digits.",
+      "description": "A full git commit id in lower-case hex: 40 digits (SHA-1) or 64 digits (SHA-256). An abbreviated id is not accepted, because it can stop naming one commit as the repository grows.",
       "$ref": "#/$defs/text",
-      "pattern": "^[0-9a-f]{7,40}$"
+      "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
     },
     "package_interface": {
       "description": "A core package used by the integration. verify: only to check something the core produced. library: linked to build, sign or parse what is exchanged with a core that decides; no governed decision is made in the integration's process. embedded: governed logic from the package runs in the integration's own process.",

@@ -62,13 +62,13 @@ docs/c2/MISSION-GRAPH.md	EXOCHAIN core	K5 living	patch	F-19	Review required at t
 docs/c2/README.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	archon; decision-forum-name; exoforge; pathref:exoforge
 docs/c2/RUNTIME-TOPOLOGY.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	archon; commandbase; exoforge; livesafe
 docs/c2/SECRETS-ACTIVATION.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	commandbase; pathref:gap
-docs/c2/TWO-PERSON-GATE.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	commandbase
+docs/c2/TWO-PERSON-GATE.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	commandbase; decision-forum-name
 docs/c2/mission-graph.yaml	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	commandbase; cybermedica; heartfield; honorgood; livesafe; pathref:command-base; pathref:livesafe; zerodentity
 docs/c2/nodes/adjacent-surfaces.md	EXOCHAIN core	K4 product	pending	F-19	Review: follows the panel decision on the item it documents	commandbase; livesafe
 docs/c2/nodes/avc-root-trust.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	zerodentity
 docs/c2/nodes/economy-honorgood.md	EXOCHAIN core	K4 product	pending	F-13	Review: follows the panel decision on the item it documents	honorgood; path-name:honorgood
 docs/c2/nodes/identity-0dentity.md	EXOCHAIN core	K4 product	pending	F-12	Review: follows the panel decision on the item it documents	path-name:zerodentity; zerodentity
-docs/catapult-integration-report.md	EXOCHAIN core	K4 product	pending	F-14	Review: follows the panel decision on the item it documents	commandbase; paperclip; pathref:command-base
+docs/catapult-integration-report.md	EXOCHAIN core	K4 product	pending	F-14	Review: follows the panel decision on the item it documents	commandbase; decision-forum-name; paperclip; pathref:command-base
 docs/continuous-release.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	lynk
 docs/council/CR-004-AVC-TIMESTAMP-FINALITY-COUNCIL-INPUT.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	exoforge
 docs/council/OPTIMIZED-SPEC.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	decision-forum-name; syntaxis

@@ -97,7 +97,8 @@ def add_embedded(doc, target=None, achieved=None, allowed=False):
 RESULT = "conformance/result.json"
 EMBEDDED = {"profile": "embedded", "package": "exochain-sdk", "source": "registry", "version": "0.4.0"}
 LIBRARY = {"profile": "library", "package": "exochain-avc", "source": "registry", "version": "0.4.0"}
-GIT_LIBRARY = {"profile": "library", "package": "exochain-avc", "source": "git", "revision": "86e9a029"}
+COMMIT = "86e9a029b7a62417b658b04d0def7a979e21fc8b"
+GIT_LIBRARY = {"profile": "library", "package": "exochain-avc", "source": "git", "revision": COMMIT}
 PROBE = {"name": "probe", "entry_point": "health check", "core_decision": "GET /health",
          "gating": "no_decision", "effect": "Reopens the connection."}
 POST_PROBE = dict(PROBE, core_decision="POST /api/v1/dag-db/writeback")
@@ -134,7 +135,7 @@ VALID = [
     ("library interface at level 2",
      lambda d: (d["interfaces"].append(LIBRARY), put(d, ["trust_claims"], claims(True, 2, 2, RESULT)))),
     ("git-sourced library with no level reached", lambda d: d["interfaces"].append(GIT_LIBRARY)),
-    ("core named by commit only", lambda d: put(d, ["core"], {"revision": "86e9a029"})),
+    ("core named by commit only", lambda d: put(d, ["core"], {"revision": COMMIT})),
     ("no threat model yet, no level reached", lambda d: put(d, ["threat_model"], None)),
     ("a shared credential held, no level reached", lambda d: d["secrets"]["holds"].append(SHARED)),
     ("an ungated action, no level reached", lambda d: put(d, ["actions", 0, "gating"], "not_gated")),
@@ -145,8 +146,9 @@ VALID = [
     ("library beside http at level 1",
      lambda d: (d["interfaces"].append(LIBRARY), put(d, ["trust_claims"], claims(False, 1, 1, RESULT)))),
     ("manifest version written 1.0", lambda d: put(d, ["manifest_version"], 1.0)),
-    ("core named by release and commit", lambda d: put(d, ["core", "revision"], "86e9a029")),
+    ("core named by release and commit", lambda d: put(d, ["core", "revision"], COMMIT)),
     ("a 40-digit commit", lambda d: put(d, ["core"], {"revision": "a" * 40})),
+    ("a 64-digit commit", lambda d: put(d, ["core"], {"revision": "a" * 64})),
 ]
 
 # (description, change, text that every error's schema path must contain)
@@ -183,7 +185,7 @@ INVALID = [
      lambda d: (d["interfaces"].append(GIT_LIBRARY),
                 put(d, ["trust_claims"], claims(False, 2, 1, RESULT))), L1 + "interfaces/not"),
     ("level 1 reached with the core named by commit only",
-     lambda d: (put(d, ["core"], {"revision": "86e9a029"}),
+     lambda d: (put(d, ["core"], {"revision": COMMIT}),
                 put(d, ["trust_claims"], claims(False, 2, 1, RESULT))), L1 + "core/required"),
     ("level 1 reached with no threat model",
      lambda d: (put(d, ["threat_model"], None),
@@ -323,12 +325,17 @@ INVALID = [
      "properties/issued_to_self/type"),
     ("the same mcp tool twice", lambda d: d["interfaces"].append(dict(MCP, tools=["a", "a"])),
      IF + "1/properties/tools/uniqueItems"),
-    ("core commit ending in a line break", lambda d: put(d, ["core"], {"revision": "86e9a029\n"}),
+    ("core commit ending in a line break", lambda d: put(d, ["core"], {"revision": COMMIT + "\n"}),
      "properties/core/properties/revision/not"),
-    ("core commit in capitals", lambda d: put(d, ["core"], {"revision": "86E9A029"}),
+    ("core commit in capitals", lambda d: put(d, ["core"], {"revision": COMMIT.upper()}),
      "properties/core/properties/revision/pattern"),
     ("core commit of 6 digits", lambda d: put(d, ["core"], {"revision": "86e9a0"}),
      "properties/core/properties/revision/pattern"),
+    ("core commit abbreviated to 8 digits", lambda d: put(d, ["core"], {"revision": COMMIT[:8]}),
+     "properties/core/properties/revision/pattern"),
+    ("git package with an abbreviated commit",
+     lambda d: d["interfaces"].append(dict(GIT_LIBRARY, revision=COMMIT[:12])),
+     IF + "2/properties/revision/pattern"),
     ("trust boundary with a line separator", lambda d: put(d, ["trust_boundary"], "one\u2028two"),
      "properties/trust_boundary/not"),
     ("deployment boundary with a C1 control character",

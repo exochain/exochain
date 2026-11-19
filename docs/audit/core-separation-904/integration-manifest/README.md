@@ -57,7 +57,7 @@ says its early drafts have no standing, and that applies here:
 |---|---|
 | `exochain-integration.schema.json` | The schema, JSON Schema draft 2020-12. |
 | `example.exochain-integration.json` | A filled-in manifest for an invented tool. It validates. It names core release 0.4.0, which is not published, so the tool could not reach level 1 today. |
-| `check_manifest_schema.py` | Checks the schema, the example and 109 cases; also validates manifests named on the command line. |
+| `check_manifest_schema.py` | Checks the schema, the example and 112 cases; also validates manifests named on the command line. |
 
 ## How to use it
 
@@ -297,8 +297,9 @@ Each is a proposal for the reviewing panel, not a decision.
   for a stricter or looser rule.
 - Any method written in capitals is accepted in a route.
 - Text fields are single-line.
-- A commit id is 7 to 40 lower-case hex digits. A 64-digit SHA-256 id is
-  not accepted.
+- A commit id is written in full, in lower-case hex: 40 digits, or 64 for
+  a SHA-256 repository. An abbreviated id is refused, because it can stop
+  naming one commit as the repository grows.
 - `secrets.holds` covers secrets only. The design says an integration
   holds "only key material issued to it", and also asks a verifier to
   hold the operator's public keys. This draft reads the first sentence
@@ -321,8 +322,9 @@ describe them honestly, and these changes followed.
 
 These changes depart from the design record, and the example manifest
 inside that record no longer validates: its package entries have no
-`source`, its action has no `gating`, and its `secrets.holds` is a list
-of strings. They are proposals for the reviewing panel like everything
+`source`, its action has no `gating`, its `secrets.holds` is a list of
+strings, and its `secrets.inventory` entry is a sentence ("names only,
+never values") where the schema takes a name without spaces. They are proposals for the reviewing panel like everything
 else here.
 
 | Change | Why |

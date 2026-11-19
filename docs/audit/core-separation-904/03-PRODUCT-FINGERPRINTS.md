@@ -63,7 +63,7 @@ Dispositions are proposals for the panels named in part 2. None is a decision.
 | Repository | `exochain/exochain` |
 | Commit | `e6ecf4388a69fa3a1a352ebda4c8226697dcfd2e` |
 | Match list | `docs/audit/core-separation-904/product-fingerprints.tsv` |
-| Match list SHA-256 | `a13656411386c94804d4603d78c292419d34ed9b80266d21f54baaaca7b4b46c` |
+| Match list SHA-256 | `92b105d61be0ae1a9e9bf0b275663270d9961be92e7825bf40c8b5c1da347a5b` |
 | Scanner | `docs/audit/core-separation-904/fingerprint_scan.py` |
 | Input | `path-classification.tsv` from part 1 and the working tree at the audited commit |
 
@@ -99,8 +99,8 @@ names found so far.
 
 ## Results by term
 
-476 of the 1,495 files have at least one row. 377 have a match on a term
-other than the five set aside below: 230 core, 118 adapter, 29 vendor.
+479 of the 1,495 files have at least one row. 380 have a match on a term
+other than the five set aside below: 233 core, 118 adapter, 29 vendor.
 
 Counts are raw pattern matches. They contain false positives (the path
 patterns match prose and URLs) and the search has false negatives (names not
@@ -108,7 +108,7 @@ on the list, other spellings, binary content).
 
 | Term | Core | Adapter | Vendor | Files | Matches |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `decision-forum`, "decision.forum", "Decision Forum" (includes the crate name) | 75 | 28 | 3 | 106 | 329 |
+| `decision-forum`, `decision_forum`, "decision.forum", "Decision Forum" (includes the crate name and the Rust identifier) | 80 | 29 | 3 | 112 | 466 |
 | 0dentity (`0dentity`, `zerodentity`, `odentity`) | 32 | 41 | 0 | 73 | 1,649 |
 | LiveSafe | 40 | 20 | 7 | 67 | 1,138 |
 | CommandBase | 55 | 12 | 0 | 67 | 398 |
@@ -137,8 +137,8 @@ on the list, other spellings, binary content).
 | Path `gap/` | 5 | 0 | 0 | 5 | 6 |
 | Path `site/` | 1 | 3 | 0 | 4 | 20 |
 
-Files whose own path contains a name (132 rows): CrossChecked 29,
-`decision-forum` 21, 0dentity 19, LiveSafe 15, Syntaxis 14, HonorGood 11,
+Files whose own path contains a name (134 rows): CrossChecked 29,
+`decision-forum` 23, 0dentity 19, LiveSafe 15, Syntaxis 14, HonorGood 11,
 CommandBase 5, Archon 4, LYNK 4, ExoForge 2, `decision-forge` 2, and one each
 for CyberMedica, Heartfield, Paperclip, `sybil-cli`, Telegram and VitalLock.
 
@@ -383,7 +383,7 @@ depends on CommandBase.
 Proposed disposition: `patch` if the crate travels with the core; none needed
 if the panel leaves it out.
 
-### F-15. A gateway unit test reads files from five adjacent trees
+### F-15. Two gateway unit tests read files from five adjacent trees
 
 Two tests in `crates/exo-gateway/src/dagdb.rs` (test module from line 9334),
 `dagdb_full_migration_source_hygiene_guard` and
@@ -462,7 +462,11 @@ stated definition of "primitive", which this part did not do. **The part 2
 condition is not discharged.** It goes to the Architecture panel as an open
 question.
 
-Outside the crate, the name appears in core-class files: doc comments in
+Outside the crate, the name appears in core-class files: imports of
+`decision_forum::decision_object::DecisionClass` in `crates/exo-consensus`
+(`src/panel.rs:17` in production code; `src/lib.rs:58` and
+`src/session.rs:441` in test code), which is the crate dependency part 2
+records; doc comments in
 `crates/exo-core/src/events.rs:232` and
 `crates/exo-governance/src/custody.rs:17`; test code in `crates/exo-legal`
 (`cert_902_11.rs:327`, `bundle.rs:913`, both inside test modules); the

@@ -659,7 +659,7 @@ split plan and the panel, drawn from the findings above. None is in force.
 | D-3 | If no history is carried: that per-file author names and co-author trailers are recorded only in the source repository's history, and that those names are unverified | F-44 |
 | D-4 | That the source history records commits naming AI tools as author or co-author | F-45 |
 | D-5 | That commit signatures in the source history are partial and were not verified | F-46 |
-| D-6 | Every omission or redaction made in copying, the reason, and its successor location where one exists, without reproducing sensitive removed content. Part 7 (not yet written) is where the list would be kept | Issue #904; F-50, F-51 |
+| D-6 | Every omission or redaction made in copying, the reason, and its successor location where one exists, without reproducing sensitive removed content. Part 7 keeps the proposed list in its section "Proposed omissions and their successor locations" and in `proposed-omissions.tsv` | Issue #904; F-50, F-51 |
 | D-7 | That earlier licence statements differed: the root manifest field before 2026-03-20, the AGPL declaration in the WASM demo package until 2026-05-09 and the tags that contain it, the Apache headers on product files between 2026-05-10 and 2026-07-15, and the change to the `LICENSE` text, with a pointer to the legal position document | F-43 |
 | D-8 | How to verify a release made before the split, naming the repository that holds its source commit and attestation | F-47, F-48 |
 | D-9 | For each kind of commit, pull-request and issue reference in copied records, whether it refers to the source repository | F-47 |

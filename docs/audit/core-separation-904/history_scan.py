@@ -51,6 +51,10 @@ addresses are reduced to their domain; file contents are never read, so
 `name_flag` is a statement about a file name only.
 
 Deterministic for a given commit: no clock, no network, sorted path output.
+The git options that can change the text of `git log` are set on the command
+line (see PINNED and LOG_FLAGS), so a user or system setting such as
+`log.showSignature` does not change the tables. Replacement refs and grafts
+in the repository itself are not disabled.
 """
 
 import os
@@ -85,6 +89,20 @@ FMT = "%x01%H%x1f%aI%x1f%an%x1f%ae%x1f%cn%x1f%P%x1f%s%x1f" \
       "%(trailers:key=Co-authored-by,valueonly,separator=%x1e)%x1f" \
       "%(trailers:key=Signed-off-by,valueonly,separator=%x1e)%x02"
 
+# The scan must not depend on the user's or the machine's git configuration.
+# Every option that can change the text of these two `git log` calls is set
+# here, on the command line, where it overrides any configuration file.
+GIT = ["git", "--no-pager"]
+PINNED = [
+    "-c", "core.quotepath=false", "-c", "log.showSignature=false",
+    "-c", "log.mailmap=false", "-c", "log.date=default",
+    "-c", "i18n.logOutputEncoding=UTF-8", "-c", "diff.renames=true",
+    "-c", "diff.renameLimit=1000", "-c", "diff.relative=false",
+    "-c", "diff.noprefix=false", "-c", "color.ui=false",
+]
+LOG_FLAGS = ["--no-color", "--no-show-signature", "--no-mailmap",
+             "--no-decorate", "--no-notes", "--encoding=UTF-8"]
+
 
 def clean(text):
     return re.sub(r"[\t\r\n]+", " ", text).strip()
@@ -108,8 +126,8 @@ def main():
             return UNCLASSIFIED, "no-rule-matches"
 
     raw = subprocess.run(
-        ["git", "-C", repo, "-c", "core.quotepath=false", "log", "--no-color",
-         "--name-status", "-M", f"--format={FMT}", commit],
+        GIT + ["-C", repo] + PINNED + ["log"] + LOG_FLAGS + [
+            "--name-status", "-M", f"--format={FMT}", commit],
         check=True, capture_output=True,
     ).stdout.decode("utf-8", errors="replace")
 
@@ -119,7 +137,7 @@ def main():
     sigs = {}
     sha = None
     for line in subprocess.run(
-        ["git", "-C", repo, "log", "--no-color", "--pretty=raw", commit],
+        GIT + ["-C", repo] + PINNED + ["log"] + LOG_FLAGS + ["--pretty=raw", commit],
         check=True, capture_output=True,
     ).stdout.decode("utf-8", errors="replace").split("\n"):
         if line.startswith("commit "):

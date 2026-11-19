@@ -78,6 +78,9 @@ It does not establish:
 | Rust path literals | `docs/audit/core-separation-904/rust-path-reads.tsv` |
 | Rust path literals SHA-256 | `a6b8b11430dfd7d96c08bf900d1edc97852dfbf0a1aad5e901aacd419bfadd1a` |
 | Scripts | `build_coupling_scan.py`, `rust_path_reads.py` in the same directory |
+| Experiment results | `docs/audit/core-separation-904/sibling-removal-results.tsv` |
+| Experiment results SHA-256 | `144e38988936f3b46a578b0055f97cc36131119e047f0fd6c9778a95f09a9793` |
+| Experiment harness | `sibling_removal_prep.py`, `sibling_removal_run.sh` in the same directory |
 | Input | `path-classification.tsv` from part 1 and the working tree at the audited commit |
 | CI run read | "EXOCHAIN Constitutional CI" run `44003950227` (push to `main`, 2026-11-17T02:34:08Z) |
 | Second run read | "LiveSafe Railway Deploy" run `44003950278` (same commit) |
@@ -113,14 +116,19 @@ are proposals from part 1, not decisions.
    compile nothing were run twice on the audit machine: in a byte-exact
    export of the audited commit, and in the same export with 1,726 paths
    deleted (every adjacent-class path, plus the vendor-class paths inside
-   the six product trees). `cargo`, `npm`, `docker` and the network tools
+   the six product trees: `command-base/`, `cybermedica/`, `demo/`,
+   `livesafe/`, `site/` and `web/`). `cargo`, `npm`, `docker` and the network tools
    were replaced by stubs that exit 97, so nothing was compiled or
    downloaded. A guard that passes in the first tree and fails in the second
    depends on a deleted path. A guard that fails in both could not be
-   assessed on this machine. The harness and its logs were kept outside the
-   repository and are not covered by this record's digests; the exit codes
-   and messages quoted below are the auditors' reading of those logs. The
-   removal list has SHA-256
+   assessed on this machine. The harness is tracked: `sibling_removal_prep.py`
+   builds the removal list and the guard list, and `sibling_removal_run.sh`
+   runs them. The exit code of every guard in each tree is in
+   `sibling-removal-results.tsv` (SHA-256
+   `144e38988936f3b46a578b0055f97cc36131119e047f0fd6c9778a95f09a9793`), from
+   one run of that harness on the audit machine. The per-guard logs are not
+   tracked, so the failure messages quoted below are the auditors' reading
+   of those logs. The removal list has SHA-256
    `743d71ce28ff58ce8e24f5b3ac96903b457af64086c5b05007edf58e220e4d6c` and is
    derivable from `path-classification.tsv` by the rule above. During the
    run a Python launcher wrote an untracked `Python/` cache directory into
@@ -260,7 +268,10 @@ Results of the sibling-removal experiment for those tools:
 | `test_gap_stub_ci_guard.sh` | 416 | pass | pass | Tolerates a missing `web/src` |
 | `write_ci_candidate.py` | 1160 | not run | not run | Runs only after `all-gates` |
 
-Across all 76 guard commands run: 22 pass in both trees, 12 pass in the
+The harness ran 81 `ci.yml` lines, which hold 76 distinct guard commands
+(`test_coverage_policy.sh --check-engine` appears on four lines,
+`test_gateway_db_ci.sh` and `test_repo_truth.sh` on two each; every repeat
+gave the same result as the first). Across the 76 commands: 22 pass in both trees, 12 pass in the
 first and fail in the second (the rows above), and 42 fail in both and could
 not be assessed on the audit machine. No guard failed in the first tree and
 passed in the second. The 42 are mostly release-tooling tests. Three of them
@@ -571,7 +582,7 @@ criterion.
 | --- | --- | --- |
 | F-4, unused Decision Forum dependencies | Part 2 | Gate 11 (`cargo machete`, `ci.yml:616`) succeeded in the run read. So the check as configured does not report them. Why (ignore list or detection limit) was not examined |
 | F-11, root deployment files | Part 3 | Extended by F-36. The four LiveSafe tables were not examined here |
-| F-15, gateway unit test | Part 3 | F-35 |
+| F-15, gateway unit tests | Part 3 | F-35 |
 | F-16 and O-12, guards that inspect products | Parts 3, 1 | F-33 |
 | O-4, tracked build output | Part 1 | Gate 9 checks that `web/dist/` and `demo/web/dist/` are not tracked (`ci.yml:380`). No check on `packages/*/dist` was found. Not resolved |
 | O-14, `CARGO_MANIFEST_DIR` candidates | Part 2 | Partly resolved in F-35: whole-literal paths only |
@@ -618,7 +629,10 @@ Forwarding records where the question goes. It does not settle it.
   flags the platform lacks, fail in both trees and say nothing either way.
   It ran only `ci.yml` lines that end in a single `bash tools/...` or
   `python3 tools/...` command, 76 after removing duplicates; guards invoked
-  any other way were not run. Its harness and logs are not tracked.
+  any other way were not run. Its harness and exit codes are tracked; its
+  logs are not.
+- The results table is from one machine and one run. On another platform
+  the guards that fail in both trees here may behave differently.
 - Test code outside Rust that CI runs (the LYNK npm tests, the Python SDK
   tests, the WASM bridge check) was not scanned for sibling paths.
 - The experiment's removal list follows part 1's proposal. A different
@@ -673,9 +687,19 @@ gh api repos/exochain/exochain/branches/main --jq .protection
 gh api repos/exochain/exochain/rulesets
 ```
 
-The experiment is not reproduced by a tracked script. Its steps are in
-Method item 5; its outputs were kept outside the repository and are not
-part of this record's evidence digests.
+The experiment, from the repository root, with an empty directory outside
+the repository as the second argument:
+
+```bash
+bash docs/audit/core-separation-904/sibling_removal_run.sh . /path/to/empty-directory
+```
+
+It compiles nothing and needs no network. It prints the SHA-256 of the
+removal list and of its `results.tsv`. The removal-list digest must equal
+the one in Method item 5. The results digest equals that of
+`sibling-removal-results.tsv` only on a machine that fails the same guards
+for the same platform reasons as the audit machine (Windows, Git Bash, no
+`ruby`); elsewhere, compare the rows that pass in the first tree.
 
 ## Path classification of this record
 
@@ -686,7 +710,10 @@ part of this record's evidence digests.
 | `docs/audit/core-separation-904/build-coupling.tsv` | EXOCHAIN core (governance evidence) |
 | `docs/audit/core-separation-904/rust_path_reads.py` | EXOCHAIN core (governance evidence) |
 | `docs/audit/core-separation-904/rust-path-reads.tsv` | EXOCHAIN core (governance evidence) |
+| `docs/audit/core-separation-904/sibling_removal_prep.py` | EXOCHAIN core (governance evidence) |
+| `docs/audit/core-separation-904/sibling_removal_run.sh` | EXOCHAIN core (governance evidence) |
+| `docs/audit/core-separation-904/sibling-removal-results.tsv` | EXOCHAIN core (governance evidence) |
 
-Core regression statement: this record adds five files under `docs/audit/`.
+Core regression statement: this record adds eight files under `docs/audit/`.
 It changes nothing under `crates/`, `packages/`, `governance/`, `tools/`,
 `.github/` or any deployment file, and it does not edit `GAP-REGISTRY.md`.
