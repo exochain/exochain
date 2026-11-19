@@ -1736,7 +1736,8 @@ async fn load_postgres_durable_registry_in_transaction(
     let statement = format!(
         "SELECT state_cbor FROM {AVC_REGISTRY_POSTGRES_TABLE} WHERE registry_key = $1 FOR UPDATE"
     );
-    let Some(row) = sqlx::query(&statement)
+    // Interpolates only the compile-time constant AVC_REGISTRY_POSTGRES_TABLE.
+    let Some(row) = sqlx::query(sqlx::AssertSqlSafe(&statement[..]))
         .bind(AVC_REGISTRY_POSTGRES_KEY)
         .fetch_optional(&mut **transaction)
         .await
@@ -1765,7 +1766,8 @@ async fn persist_postgres_durable_registry_state_in_transaction(
          ON CONFLICT (registry_key)
          DO UPDATE SET state_cbor = EXCLUDED.state_cbor"
     );
-    sqlx::query(&statement)
+    // Interpolates only the compile-time constant AVC_REGISTRY_POSTGRES_TABLE.
+    sqlx::query(sqlx::AssertSqlSafe(&statement[..]))
         .bind(AVC_REGISTRY_POSTGRES_KEY)
         .bind(bytes)
         .execute(&mut **transaction)
@@ -5881,7 +5883,7 @@ mod tests {
     async fn clear_postgres_avc_registry_state(pool: &PgPool) -> Result<(), sqlx::Error> {
         let statement =
             format!("DELETE FROM {AVC_REGISTRY_POSTGRES_TABLE} WHERE registry_key = $1");
-        sqlx::query(&statement)
+        sqlx::query(sqlx::AssertSqlSafe(&statement[..]))
             .bind(AVC_REGISTRY_POSTGRES_KEY)
             .execute(pool)
             .await?;

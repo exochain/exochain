@@ -112,11 +112,13 @@ impl TestDb {
         let mut admin = PgConnection::connect(&database_url)
             .await
             .expect("connect to EXO_DAGDB_TEST_DATABASE_URL");
-        sqlx::raw_sql(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
-            .execute(&mut admin)
-            .await
-            .expect("drop existing context packet test schema");
-        sqlx::raw_sql(&format!("CREATE SCHEMA {schema}"))
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "DROP SCHEMA IF EXISTS {schema} CASCADE"
+        )))
+        .execute(&mut admin)
+        .await
+        .expect("drop existing context packet test schema");
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
             .execute(&mut admin)
             .await
             .expect("create context packet test schema");
@@ -151,10 +153,12 @@ impl Drop for TestDb {
                 let mut conn = PgConnection::connect(&database_url)
                     .await
                     .expect("connect for context packet cleanup");
-                sqlx::raw_sql(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
-                    .execute(&mut conn)
-                    .await
-                    .expect("drop context packet test schema");
+                sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+                    "DROP SCHEMA IF EXISTS {schema} CASCADE"
+                )))
+                .execute(&mut conn)
+                .await
+                .expect("drop context packet test schema");
             });
         })
         .join()

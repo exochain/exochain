@@ -107,11 +107,13 @@ impl BenchStore {
             .connect(&database_url)
             .await
             .ok()?;
-        sqlx::query(&format!(r#"DROP SCHEMA IF EXISTS "{schema}" CASCADE"#))
-            .execute(&admin_pool)
-            .await
-            .ok()?;
-        sqlx::query(&format!(r#"CREATE SCHEMA "{schema}""#))
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            r#"DROP SCHEMA IF EXISTS "{schema}" CASCADE"#
+        )))
+        .execute(&admin_pool)
+        .await
+        .ok()?;
+        sqlx::query(sqlx::AssertSqlSafe(format!(r#"CREATE SCHEMA "{schema}""#)))
             .execute(&admin_pool)
             .await
             .ok()?;
@@ -138,10 +140,10 @@ impl BenchStore {
     /// leave the shared store exactly as they found it.
     pub async fn cleanup(self) {
         self.pool.close().await;
-        let _ = sqlx::query(&format!(
+        let _ = sqlx::query(sqlx::AssertSqlSafe(format!(
             r#"DROP SCHEMA IF EXISTS "{}" CASCADE"#,
             self.schema
-        ))
+        )))
         .execute(&self.admin_pool)
         .await;
         self.admin_pool.close().await;
