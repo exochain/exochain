@@ -115,7 +115,7 @@ tower = { version = "=0.5.3", features = ["util", "limit"] }
 tower-http = { version = "=0.6.8", features = ["trace", "cors"] }
 
 # Database
-sqlx = { version = "=0.8.6", features = ["runtime-tokio-rustls", "postgres", "uuid", "json", "macros", "migrate"] }
+sqlx = { version = "=0.9.1", features = ["runtime-tokio", "tls-rustls-ring-webpki", "postgres", "uuid", "json", "macros", "migrate"] }
 
 # Encoding
 hex = "=0.4.3"
@@ -125,7 +125,7 @@ percent-encoding = "=2.3.2"
 async-trait = "=0.1.89"
 
 # Error handling
-thiserror = "=2.0.17"
+thiserror = "=2.0.18"
 anyhow = "=1.0.103"
 
 # Logging / tracing

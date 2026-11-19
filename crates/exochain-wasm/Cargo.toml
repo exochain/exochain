@@ -48,7 +48,7 @@ exo-economy    = { package = "exochain-economy", path = "../exo-economy", versio
 exo-pdp        = { package = "exochain-pdp", path = "../exo-pdp", version = "=0.4.0", default-features = false }
 
 # WASM bindings
-wasm-bindgen = "=0.2.100"
+wasm-bindgen = "=0.2.104"
 serde-wasm-bindgen = "0.6"
 js-sys = "0.3"
 
