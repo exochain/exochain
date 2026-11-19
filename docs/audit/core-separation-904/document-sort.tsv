@@ -1,0 +1,160 @@
+path	proposed_class	kind	proposed_disposition	linked_findings	proposed_action	terms
+.dockerignore	core runtime adapter	K2 config	pending	F-3; F-11; F-12; F-18; F-36; F-37	Review: patch an entry for a tree that leaves; otherwise follows the decision its term belongs to	pathref:web
+.env.example	core runtime adapter	K2 config	pending	F-3; F-11; F-12; F-18; F-36; F-37	Review: patch an entry for a tree that leaves; otherwise follows the decision its term belongs to	livesafe
+.gitignore	EXOCHAIN core	K2 config	pending	F-3; F-11; F-12; F-18; F-36; F-37	Review: patch an entry for a tree that leaves; otherwise follows the decision its term belongs to	commandbase; pathref:command-base; pathref:demo; pathref:web; vitallock
+AGENTS.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	commandbase; crosschecked; customer-zero; decision-forum-name; livesafe; pathref:livesafe; syntaxis
+AVC_MISSION_ECONOMICS_COMPACT.md	EXOCHAIN core	K4 product	pending	F-13	Review: follows the panel decision on the item it documents	apex-velocity
+CHANGELOG.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	archon; commandbase; crosschecked; cybermedica; decision-forum-name; exoforge; legaldyne; livesafe; lynk; pathref:command-base; pathref:cybermedica; pathref:web; syntaxis; zerodentity
+CONTRIBUTING.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	archon; exoforge; syntaxis
+Cargo.lock	third-party/vendor	K2 config	pending	F-3; F-11; F-12; F-18; F-36; F-37	Review: patch an entry for a tree that leaves; otherwise follows the decision its term belongs to	decision-forum-name
+Cargo.toml	EXOCHAIN core	K2 config	pending	F-3; F-11; F-12; F-18; F-36; F-37	Review: patch an entry for a tree that leaves; otherwise follows the decision its term belongs to	cybermedica; decision-forum-name; livesafe; pathref:cybermedica; pathref:livesafe
+Dockerfile	core runtime adapter	K2 config	pending	F-3; F-11; F-12; F-18; F-36; F-37	Review: patch an entry for a tree that leaves; otherwise follows the decision its term belongs to	decision-forum-name
+EXOCHAIN-FABRIC-PLATFORM.md	EXOCHAIN core	K1 standing	pending	F-50	Standing open: document owner and legal owner (PDF text not extracted)	hipaa-phi; pathref:web; zerodentity
+EXOCHAIN_AVC_Rust_PRD.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	commandbase; decision-forum-name
+EXOCHAIN_Custody_Native_Economy_Rust_PRD.md	EXOCHAIN core	K4 product	pending	F-13	Review: follows the panel decision on the item it documents	commandbase
+EXOCHAIN_Specification_v2.2.pdf	EXOCHAIN core	K1 standing	pending	F-50	Standing open: document owner and legal owner (PDF text not extracted)	binary-not-scanned
+EXOCHAIN_Whitepaper_v1.0.pdf	EXOCHAIN core	K1 standing	pending	F-50	Standing open: document owner and legal owner (PDF text not extracted)	binary-not-scanned
+GAP-REGISTRY.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	crosschecked; decision-forum-name; honorgood; pathref:Initiatives; zerodentity
+HONOR_GOOD_COMPACT.md	EXOCHAIN core	K4 product	pending	F-13	Review: follows the panel decision on the item it documents	honorgood; path-name:honorgood
+INTEGRATION.md	core runtime adapter	K5 living	patch	F-19	Review required at the split; update product paths and repository references	commandbase; exoforge; lynk
+README.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	apex-velocity; archon; cognitiveplane; commandbase; crosschecked; cybermedica; decision-forum-name; exoforge; honorgood; legaldyne; livesafe; lynk; pathref:command-base; pathref:cybermedica; pathref:demo; pathref:exoforge; pathref:livesafe; syntaxis
+SECURITY.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	pathref:demo
+SUPPORT.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	exoforge
+VERSIONING.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	exoforge; lynk
+docker-compose.yml	core runtime adapter	K2 config	pending	F-3; F-11; F-12; F-18; F-36; F-37	Review: patch an entry for a tree that leaves; otherwise follows the decision its term belongs to	livesafe
+docs/0DENTITY-APP-SPEC.md	EXOCHAIN core	K4 product	pending	F-12	Review: follows the panel decision on the item it documents	path-name:zerodentity; telegram; zerodentity
+docs/ASI-REPORT-FEATURE.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	syntaxis
+docs/INDEX.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	archon; commandbase; decision-forum-name; exoforge; heartfield; honorgood; livesafe; pathref:demo; syntaxis
+docs/adr/ADR-001-authority-of-text.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	decision-forum-name
+docs/architecture/ARCHITECTURE.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	decision-forum-name
+docs/architecture/THREAT-MODEL.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	decision-forum-name
+docs/audit/CLAIMS-REMEDIATION-2026-05-09.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	commandbase; pathref:command-base; pathref:demo
+docs/audit/GAUNTLET-AUTHZ-MCP-VALIDATION-2026-05-15.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	commandbase; crosschecked; livesafe
+docs/audit/GAUNTLET-CRYPTO-CANONICAL-VALIDATION-2026-05-15.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	commandbase; pathref:command-base
+docs/audit/GAUNTLET-CURRENT-MAIN-VALIDATION-2026-05-15.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	decision-forum-name
+docs/audit/GAUNTLET-DETERMINISM-VALIDATION-2026-05-15.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	zerodentity
+docs/audit/GAUNTLET-EDGE-CASE-VALIDATION-2026-05-15.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	zerodentity
+docs/audit/GAUNTLET-GATEWAY-SURFACE-VALIDATION-2026-05-15.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	decision-forum-name
+docs/audit/GAUNTLET-RESILIENCE-VALIDATION-2026-05-15.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	commandbase; pathref:command-base; telegram
+docs/audit/GAUNTLET-SUPPLY-CHAIN-VALIDATION-2026-05-15.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	commandbase; pathref:command-base
+docs/audit/GAUNTLET-ZERODENTITY-ERROR-PROPAGATION-VALIDATION-2026-05-15.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	path-name:zerodentity; zerodentity
+docs/audit/REPO-TRUTH-BASELINE.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	decision-forge; decision-forum-name; pathref:demo; pathref:web
+docs/audit/REVIEW-2026-04-19-PLAN.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	pathref:web
+docs/audit/REVIEW-2026-04-19.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	decision-forum-name; livesafe; pathref:web; zerodentity
+docs/audit/TIER-ONE-READINESS-AUDIT.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	decision-forum-name; exoforge
+docs/audit/WO-009-no-admin-bypass-audit.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	decision-forum-name
+docs/audit/codex-security-findings-2026-05-16-triage.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	archon; decision-forum-name; exoforge; heartfield; pathref:demo; pathref:exoforge; zerodentity
+docs/audit/codex-security-findings-2026-05-20-0857-validation.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	commandbase; exoforge; pathref:command-base; syntaxis
+docs/audit/codex-security-findings-2026-05-20-validation.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	commandbase; crosschecked; exoforge; livesafe; pathref:command-base; pathref:demo; pathref:web; syntaxis; vitallock; zerodentity
+docs/audit/exochain-code-review-report-run4-design-evidence-2026-09-04.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	crosschecked; exoforge; livesafe; zerodentity
+docs/audit/exochain-code-review-report-run4-formal-evidence-2026-09-04.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	crosschecked; livesafe; lynk; pathref:livesafe; zerodentity
+docs/audit/exochain-code-review-report-run4-validation-2026-08-28.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	livesafe; lynk; pathref:livesafe; zerodentity
+docs/avc/README.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	livesafe; lynk
+docs/avc/livesafe-public-output-ceremony.md	EXOCHAIN core	K4 product	pending	F-9; F-11	Review: follows the panel decision on the item it documents	livesafe; path-name:livesafe
+docs/c2/AI-IRB-COHORT.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	decision-forum-name
+docs/c2/CCIR.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	decision-forum-name; exoforge
+docs/c2/CHAIRMAN-ESCALATION.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	commandbase
+docs/c2/CROSSCHECK-RECEIPTS.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	crosschecked; decision-forum-name
+docs/c2/DAILY-ATTENTION-PROTOCOL.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	archon; decision-forum-name
+docs/c2/DOGFOOD-REHEARSAL-2026-07-12.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	commandbase; decision-forum-name; exoforge; pathref:command-base
+docs/c2/DOGFOOD.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	pathref:gap
+docs/c2/MISSION-GRAPH.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	honorgood; zerodentity
+docs/c2/README.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	archon; decision-forum-name; exoforge; pathref:exoforge
+docs/c2/RUNTIME-TOPOLOGY.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	archon; commandbase; exoforge; livesafe
+docs/c2/SECRETS-ACTIVATION.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	commandbase; pathref:gap
+docs/c2/TWO-PERSON-GATE.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	commandbase; decision-forum-name
+docs/c2/mission-graph.yaml	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	commandbase; cybermedica; heartfield; honorgood; livesafe; pathref:command-base; pathref:livesafe; zerodentity
+docs/c2/nodes/adjacent-surfaces.md	EXOCHAIN core	K4 product	pending	F-19	Review: follows the panel decision on the item it documents	commandbase; livesafe
+docs/c2/nodes/avc-root-trust.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	zerodentity
+docs/c2/nodes/economy-honorgood.md	EXOCHAIN core	K4 product	pending	F-13	Review: follows the panel decision on the item it documents	honorgood; path-name:honorgood
+docs/c2/nodes/identity-0dentity.md	EXOCHAIN core	K4 product	pending	F-12	Review: follows the panel decision on the item it documents	path-name:zerodentity; zerodentity
+docs/catapult-integration-report.md	EXOCHAIN core	K4 product	pending	F-14	Review: follows the panel decision on the item it documents	commandbase; decision-forum-name; paperclip; pathref:command-base
+docs/continuous-release.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	lynk
+docs/council/CR-004-AVC-TIMESTAMP-FINALITY-COUNCIL-INPUT.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	exoforge
+docs/council/OPTIMIZED-SPEC.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	decision-forum-name; syntaxis
+docs/council/PANEL-1-GOVERNANCE.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	decision-forum-name
+docs/council/PANEL-2-LEGAL.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	decision-forum-name
+docs/council/PANEL-3-ARCHITECTURE.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	decision-forum-name
+docs/council/PANEL-4-SECURITY.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	decision-forum-name
+docs/council/PANEL-5-OPERATIONS.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	decision-forum-name; livesafe; syntaxis
+docs/dagdb/api/openapi.json	core runtime adapter	K5 living	patch	F-19	Review required at the split; update product paths and repository references	hipaa-phi
+docs/dagdb/full-migration/code-trace.md	core runtime adapter	K5 living	patch	F-19	Review required at the split; update product paths and repository references	commandbase; crosschecked; cybermedica; decision-forum-name; livesafe; pathref:command-base; pathref:cybermedica; pathref:demo; pathref:site; pathref:web; vitallock; zerodentity
+docs/dagdb/full-migration/quality-matrix.md	core runtime adapter	K5 living	patch	F-19	Review required at the split; update product paths and repository references	commandbase; cybermedica; pathref:command-base; pathref:cybermedica; pathref:demo; pathref:site; pathref:web; zerodentity
+docs/dagdb/llm-usage-custody.md	core runtime adapter	K5 living	patch	F-19	Review required at the split; update product paths and repository references	lynk
+docs/economy/AVC_MISSION_ECONOMICS_COMPACT.md	EXOCHAIN core	K4 product	pending	F-13	Review: follows the panel decision on the item it documents	apex-velocity; honorgood
+docs/economy/MISSION_ECONOMICS.md	EXOCHAIN core	K4 product	pending	F-13	Review: follows the panel decision on the item it documents	apex-velocity; commandbase; exoforge; honorgood
+docs/economy/README.md	EXOCHAIN core	K4 product	pending	F-13	Review: follows the panel decision on the item it documents	apex-velocity; commandbase; exoforge; honorgood
+docs/economy/examples/archon_exoforge_legacy_receipt.yml	EXOCHAIN core	K4 product	pending	F-13	Review: follows the panel decision on the item it documents	archon; exoforge; path-name:archon; path-name:exoforge
+docs/economy/examples/avc_client_services_mission.yml	EXOCHAIN core	K4 product	pending	F-13	Review: follows the panel decision on the item it documents	apex-velocity
+docs/economy/examples/paperclip_commandbase_legacy_receipt.yml	EXOCHAIN core	K4 product	pending	F-13	Review: follows the panel decision on the item it documents	commandbase; paperclip; path-name:commandbase; path-name:paperclip
+docs/execution-ledger/2026-05-10-commandbase.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	commandbase; path-name:commandbase
+docs/execution-ledger/2026-07-14-exochain-0.2.3-branch-reconciliation.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	archon; commandbase; crosschecked; cybermedica; decision-forum-name; exoforge; gap-incubator; honorgood; legaldyne; livesafe; pathref:livesafe; syntaxis; telegram; vitallock; zerodentity
+docs/governance/RATIFICATION-SLATE-2026-07-04.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	decision-forum-name; livesafe
+docs/grant/CODEX-CYBERSECURITY-GRANT-CLAIMS.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	commandbase; decision-forum-name
+docs/guides/ARCHON-INTEGRATION.md	core runtime adapter	K4 product	pending	F-33; F-49	Review: follows the panel decision on the item it documents	archon; exoforge; path-name:archon; pathref:demo; syntaxis
+docs/guides/GETTING-STARTED.md	core runtime adapter	K5 living	patch	F-19	Review required at the split; update product paths and repository references	archon; exoforge; syntaxis
+docs/guides/ai-agent-guide.md	core runtime adapter	K5 living	patch	F-19	Review required at the split; update product paths and repository references	lynk; pathref:Initiatives
+docs/guides/architecture-overview.md	core runtime adapter	K5 living	patch	F-19	Review required at the split; update product paths and repository references	cognitiveplane; commandbase; decision-forum-name; exoforge; pathref:command-base; pathref:exoforge
+docs/guides/cgr-developer-guide.md	core runtime adapter	K5 living	patch	F-19	Review required at the split; update product paths and repository references	decision-forum-name; paperclip
+docs/guides/constitutional-model.md	core runtime adapter	K5 living	patch	F-19	Review required at the split; update product paths and repository references	decision-forum-name
+docs/guides/crosschecked-anchor-authority-owner-runbook.md	core runtime adapter	K4 product	pending	F-10	Review: follows the panel decision on the item it documents	crosschecked; path-name:crosschecked
+docs/guides/developer-onboarding.md	core runtime adapter	K5 living	patch	F-19	Review required at the split; update product paths and repository references	archon; commandbase; decision-forum-name; exoforge; pathref:command-base; pathref:exoforge; sybil-cli; syntaxis; zerodentity
+docs/guides/mcp-integration.md	core runtime adapter	K5 living	patch	F-19	Review required at the split; update product paths and repository references	lynk
+docs/honorgood/BAILMENT_WRAPPED_TRANSACTIONS.md	EXOCHAIN core	K4 product	pending	F-13	Review: follows the panel decision on the item it documents	path-name:honorgood
+docs/honorgood/HONOR_GOOD_COMPACT.md	EXOCHAIN core	K4 product	pending	F-13	Review: follows the panel decision on the item it documents	archon; commandbase; exoforge; honorgood; paperclip; path-name:honorgood
+docs/honorgood/LEGACY_RECEIPTS.md	EXOCHAIN core	K4 product	pending	F-13	Review: follows the panel decision on the item it documents	archon; commandbase; exoforge; honorgood; paperclip; path-name:honorgood
+docs/honorgood/OPEN_PROVENANCE_COMPACT.md	EXOCHAIN core	K4 product	pending	F-13	Review: follows the panel decision on the item it documents	honorgood; path-name:honorgood
+docs/honorgood/TERMS_OF_BAILMENT.md	EXOCHAIN core	K4 product	pending	F-13	Review: follows the panel decision on the item it documents	honorgood; path-name:honorgood
+docs/honorgood/VALUE_CONTRIBUTION_NODES.md	EXOCHAIN core	K4 product	pending	F-13	Review: follows the panel decision on the item it documents	apex-velocity; commandbase; exoforge; honorgood; path-name:honorgood
+docs/legal/LICENSING-POSITION.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	crosschecked; customer-zero; cybermedica; decision-forum-name; legaldyne; livesafe; pathref:cybermedica; pathref:livesafe
+docs/policy/NATIONAL-POLICY-FRAMEWORK-CROSSWALK-2026.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	exoforge; pathref:demo; syntaxis
+docs/proof/avc-cornerstone-production-proof.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	archon; commandbase; crosschecked; exoforge; paperclip; pathref:exoforge
+docs/proof/avc-issue-713-production-closure-proof.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	archon
+docs/quality/archon-avc-quality-matrix.md	EXOCHAIN core	K4 product	pending	F-33; F-49	Review: follows the panel decision on the item it documents	archon; commandbase; exoforge; paperclip; path-name:archon; pathref:exoforge
+docs/reference/CRATE-REFERENCE.md	core runtime adapter	K5 living	patch	F-19	Review required at the split; update product paths and repository references	decision-forum-name
+docs/superpowers/lynk-coverage-evidence-2026-07-08.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	lynk; path-name:lynk
+docs/superpowers/plans/2026-07-05-livesafe-public-adapter-output-authorization.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	hipaa-phi; livesafe; path-name:livesafe; pathref:livesafe
+docs/superpowers/plans/2026-07-08-llm-usage-receipt-extensions.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	lynk
+docs/superpowers/plans/2026-07-12-presidential-mission-c2.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	archon; commandbase; crosschecked; decision-forum-name; exoforge; livesafe; pathref:command-base; pathref:demo; pathref:exoforge; pathref:gap
+docs/superpowers/plans/2026-08-28-release-0.2.6-security-remediation.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	decision-forum-name; livesafe; pathref:livesafe; zerodentity
+docs/superpowers/plans/2026-11-01-governed-agent-runtime.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	lynk
+docs/superpowers/specs/2026-11-01-governed-agent-runtime-design.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	lynk
+governance/COUNCIL-ASSESSMENT-EXO-VS-EXOCHAIN.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	syntaxis
+governance/EXOCHAIN-REFACTOR-PLAN.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	decision-forum-name; syntaxis
+governance/commercial-product-licensing.json	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	crosschecked; cybermedica; decision-forum-name; legaldyne; livesafe; pathref:cybermedica; pathref:livesafe
+governance/quality_gates.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	zerodentity
+governance/releases/published-release-snapshot.json	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	decision-forum-name
+governance/releases/v0.2.6/ISSUE-DISPOSITION.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	apex-velocity; crosschecked; lynk
+governance/releases/v0.2.6/PATH-CLASSIFICATION.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	crosschecked; decision-forum-name; livesafe; lynk; pathref:Initiatives; pathref:livesafe; zerodentity
+governance/releases/v0.2.6/RC.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	decision-forum-name; livesafe; lynk; pathref:livesafe; zerodentity
+governance/releases/v0.2.6/TEST-PLAN.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	crosschecked; livesafe; lynk; pathref:Initiatives; pathref:demo; pathref:livesafe; pathref:web; zerodentity
+governance/releases/v0.2.7/CI-REPRODUCIBILITY-DESIGN.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	crosschecked; zerodentity
+governance/releases/v0.2.7/CI-REPRODUCIBILITY-PLAN.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	pathref:gap; zerodentity
+governance/releases/v0.2.7/RECOVERY-DESIGN.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	lynk
+governance/releases/v0.2.7/RECOVERY-MANIFEST.json	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	crosschecked; decision-forum-name; lynk; zerodentity
+governance/releases/v0.2.7/RECOVERY-PLAN.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	lynk
+governance/releases/v0.2.7/RECOVERY-VALIDATION.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	lynk
+governance/releases/v0.2.7/RETAINED-CUSTODY.json	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	decision-forum-name
+governance/releases/v0.2.7/RETAINED-RECOVERY-PLAN.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	lynk
+governance/releases/v0.3.0/GOAL.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	legaldyne
+governance/releases/v0.3.1/ARCHITECTURE.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	commandbase; crosschecked; cybermedica; legaldyne; livesafe; lynk; zerodentity
+governance/releases/v0.3.1/DEMO.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	crosschecked
+governance/releases/v0.3.1/DEPENDENCY-GRAPH.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	lynk
+governance/releases/v0.3.1/GOAL.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	legaldyne; zerodentity
+governance/releases/v0.3.1/GOVERNANCE-DECISIONS.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	legaldyne
+governance/releases/v0.3.1/ISSUES.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	crosschecked; zerodentity
+governance/releases/v0.3.1/RELEASE-EVIDENCE.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	zerodentity
+governance/releases/v0.3.1/TEST-PLAN.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	crosschecked
+governance/releases/v0.3.1/schemas/claim-attestation.schema.json	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	crosschecked
+governance/releases/v0.3.1/specs/CLAIM-ATTESTATION.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	crosschecked
+governance/releases/v0.3.1/specs/MCP-A2A-DISCOVERY.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	lynk
+governance/releases/v0.3.1/specs/X402-SETTLEMENT.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	zerodentity
+governance/releases/v0.3.1/test-vectors/claim-stamp-request.json	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	crosschecked
+governance/releases/v0.4.0/RC.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	lynk
+governance/resolutions/CR-002-AUTONOMOUS-RECURSIVE-IMPROVEMENT-INFRASTRUCTURE.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	commandbase; crosschecked; decision-forum-name; exoforge; livesafe; pathref:command-base; pathref:demo; pathref:exoforge; vitallock
+governance/resolutions/CR-004-AVC-TIMESTAMP-FINALITY-AUTHORITY.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	exoforge
+governance/resolutions/CR-HG-001-honorgood-mission-economics.md	EXOCHAIN core	K3 dated	no_change	F-19; F-47	Keep as written; the register records that named products moved	apex-velocity; commandbase; exoforge; honorgood; path-name:honorgood
+governance/threat_matrix.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	archon; commandbase; decision-forum-name; exoforge; honorgood; paperclip; pathref:command-base; pathref:demo; pathref:exoforge
+governance/traceability_matrix.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	apex-velocity; archon; commandbase; decision-forum-name; exoforge; honorgood; pathref:command-base; pathref:demo; pathref:exoforge; pathref:web
+init-db.sh	core runtime adapter	K2 config	pending	F-3; F-11; F-12; F-18; F-36; F-37	Review: patch an entry for a tree that leaves; otherwise follows the decision its term belongs to	livesafe
+tarpaulin.toml	EXOCHAIN core	K2 config	pending	F-3; F-11; F-12; F-18; F-36; F-37	Review: patch an entry for a tree that leaves; otherwise follows the decision its term belongs to	telegram
