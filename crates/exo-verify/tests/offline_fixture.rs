@@ -741,3 +741,47 @@ fn proof_must_be_against_latest_trusted_head() {
         })
     );
 }
+
+/// The command-line verifier's own decoding, compiled from its source.
+#[allow(dead_code)]
+#[path = "../examples/verify_bundle.rs"]
+mod verify_bundle_cli;
+
+/// The command-line verifier reads the whole file: whitespace may follow the
+/// bundle, but trailing bytes or a second JSON value are rejected.
+#[test]
+fn cli_bundle_file_must_end_after_the_bundle() {
+    let (expected, _) = fixture();
+    for text in [
+        BUNDLE_JSON.to_owned(),
+        format!("{BUNDLE_JSON}\n"),
+        format!("  {BUNDLE_JSON} \r\n\t\n"),
+    ] {
+        assert_eq!(
+            verify_bundle_cli::decode_bundle_text(&text).unwrap(),
+            expected
+        );
+    }
+    let trimmed = BUNDLE_JSON.trim_end();
+    for text in [
+        format!("{trimmed}\nTHIS IS NOT JSON"),
+        format!("{trimmed}{trimmed}"),
+        format!("{trimmed}\n{trimmed}\n"),
+        format!("{trimmed} {{}}"),
+        format!("{trimmed},"),
+    ] {
+        assert!(
+            matches!(
+                verify_bundle_cli::decode_bundle_text(&text),
+                Err(VerifyError::MalformedBundle { reason }) if reason.contains("after the receipt bundle")
+            ),
+            "trailing input must be rejected: {:?}",
+            &text[trimmed.len()..]
+        );
+    }
+    // The version check still comes first for a real v1 file.
+    assert!(matches!(
+        verify_bundle_cli::decode_bundle_text(V1_BUNDLE_JSON),
+        Err(VerifyError::UnsupportedBundleVersion { .. })
+    ));
+}
