@@ -27,7 +27,9 @@
 
 use std::{fs, process::ExitCode};
 
-use exo_verify::{ReceiptBundle, TrustInputs, verify_receipt_bundle};
+use exo_verify::{
+    ReceiptBundle, TrustInputs, VerifyError, decode_receipt_bundle, verify_receipt_bundle,
+};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -35,8 +37,20 @@ fn main() -> ExitCode {
         eprintln!("usage: verify_bundle <receipt-bundle.json> <trust-inputs.json>");
         return ExitCode::from(2);
     };
-    let bundle: ReceiptBundle = match read_json(bundle_path) {
-        Ok(value) => value,
+    let bundle = match fs::read_to_string(bundle_path) {
+        Ok(text) => decode_bundle_text(&text),
+        Err(error) => {
+            eprintln!("cannot read receipt bundle {bundle_path}: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    let bundle = match bundle {
+        Ok(bundle) => bundle,
+        Err(error @ VerifyError::UnsupportedBundleVersion { .. }) => {
+            println!("receipt bundle {bundle_path}");
+            println!("  FAILED: {error}");
+            return ExitCode::from(1);
+        }
         Err(error) => {
             eprintln!("cannot read receipt bundle {bundle_path}: {error}");
             return ExitCode::from(2);
@@ -67,7 +81,7 @@ fn main() -> ExitCode {
             );
             println!(
                 "  human approval present: {} (signature not verified offline; see #911)",
-                verified.human_approval_present
+                verified.human_approval_present_unverified
             );
             ExitCode::SUCCESS
         }
@@ -77,6 +91,23 @@ fn main() -> ExitCode {
             ExitCode::from(1)
         }
     }
+}
+
+/// Decode a whole receipt bundle file.
+///
+/// The format tag is checked before version-specific fields, so an older
+/// bundle reports its version instead of a missing field. After the bundle,
+/// only whitespace may follow: trailing bytes or a second JSON value make the
+/// file malformed, as whole-file parsing would.
+pub fn decode_bundle_text(text: &str) -> Result<ReceiptBundle, VerifyError> {
+    let mut deserializer = serde_json::Deserializer::from_str(text);
+    let bundle = decode_receipt_bundle(&mut deserializer)?;
+    deserializer
+        .end()
+        .map_err(|error| VerifyError::MalformedBundle {
+            reason: format!("unexpected data after the receipt bundle: {error}"),
+        })?;
+    Ok(bundle)
 }
 
 fn read_json<T: serde::de::DeserializeOwned>(path: &str) -> Result<T, Box<dyn std::error::Error>> {

@@ -76,7 +76,7 @@ use exo_avc::{
     AvcReceiptRfc3161TimestampProof, AvcReceiptRfc3161TrustAnchorKind,
     AvcReceiptTimestampProvenance, AvcRegistryDurableState, AvcRegistryRead, AvcRegistryWrite,
     AvcRevocation, AvcSubjectAttestation, AvcTrustReceipt, AvcTrustReceiptEvidence,
-    AvcValidationRequest, AvcValidationResult, InMemoryAvcRegistry,
+    AvcValidationRequest, AvcValidationResult, AvcValidatorTreeHead, InMemoryAvcRegistry,
     LivesafePublicAdapterOutputAuthorizationDraft,
     LivesafePublicAdapterOutputAuthorizationEnvelope, LlmUsageEvidenceEnvelope,
     avc_action_commitment_hash, avc_action_descriptor_hash, avc_action_signature_payload,
@@ -99,7 +99,7 @@ use exo_core::{
 };
 use exo_dag::dag::{DagNode, compute_node_hash};
 use exo_root::{RootSignature, RootTrustBundle, verify_root_bundle, verify_root_signature};
-use exo_verify::{ReceiptInclusionProof, ReceiptTreeHead};
+use exo_verify::{LeafPath, ReceiptInclusionProof, ReceiptTreeHead};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use sqlx::{PgPool, Postgres, Row, Transaction};
@@ -970,6 +970,8 @@ struct ReceiptMmrCache {
     leaves: Vec<Hash256>,
     index: BTreeMap<Hash256, usize>,
     mmr: exo_dag::mmr::MerkleMountainRange,
+    /// Tree head signed at the current size, reused until the chain changes.
+    signed_head: Option<ReceiptTreeHead>,
 }
 
 impl ReceiptMmrCache {
@@ -978,10 +980,14 @@ impl ReceiptMmrCache {
         let mut pending = Vec::new();
         let mut cursor = registry.receipt_chain_head();
         let mut reached_tip = false;
+        let mut seen = BTreeSet::new();
         while let Some(receipt_id) = cursor {
             if Some(receipt_id) == tip {
                 reached_tip = true;
                 break;
+            }
+            if !seen.insert(receipt_id) {
+                anyhow::bail!("AVC receipt chain contains a cycle at receipt {receipt_id}");
             }
             let receipt = registry.get_receipt(&receipt_id).ok_or_else(|| {
                 anyhow::anyhow!("AVC receipt chain references missing receipt {receipt_id}")
@@ -992,6 +998,9 @@ impl ReceiptMmrCache {
         if tip.is_some() && !reached_tip {
             *self = Self::default();
         }
+        if !pending.is_empty() {
+            self.signed_head = None;
+        }
         for receipt_id in pending.into_iter().rev() {
             let position = exo_dag::mmr::append(&mut self.mmr, receipt_id);
             self.leaves.push(receipt_id);
@@ -1001,9 +1010,195 @@ impl ReceiptMmrCache {
     }
 }
 
-/// Build an inclusion proof for `receipt_id` against a freshly signed tree
-/// head over the current receipt chain. Returns `None` for receipts that are
-/// not part of the extended receipt chain.
+/// Sign the tree head over the cache's current size, or reuse the one
+/// already signed at that size. Returns `None` for an empty chain.
+fn signed_current_tree_head(
+    cache: &mut ReceiptMmrCache,
+    validator_did: &Did,
+    receipt_signer: &AvcReceiptSigner,
+) -> anyhow::Result<Option<ReceiptTreeHead>> {
+    let Some(&chain_head) = cache.leaves.last() else {
+        return Ok(None);
+    };
+    let tree_size = u64::try_from(cache.leaves.len())?;
+    if let Some(head) = cache.signed_head.as_ref()
+        && head.tree_size == tree_size
+        && head.chain_head == chain_head
+        && &head.validator_did == validator_did
+    {
+        return Ok(Some(head.clone()));
+    }
+    let mut head = ReceiptTreeHead {
+        validator_did: validator_did.clone(),
+        tree_size,
+        root: exo_dag::mmr::root(&cache.mmr),
+        chain_head,
+        chain_id: cache.leaves[0],
+        signature: Signature::empty(),
+    };
+    let payload = head
+        .signing_payload()
+        .map_err(|error| anyhow::anyhow!("AVC receipt tree head encoding failed: {error}"))?;
+    head.signature = receipt_signer(&payload);
+    cache.signed_head = Some(head.clone());
+    Ok(Some(head))
+}
+
+/// Records the validator's signed tree head in the registry whenever a
+/// receipt is committed, in the same durable write as the receipt.
+///
+/// After a validator rotation the node no longer holds the earlier
+/// validator's key. The stored head lets it keep serving proofs for that
+/// validator's receipts under a head the same validator signed, so the
+/// offline verifier's signer rule (tree head signer == receipt validator)
+/// holds without any delegation statement.
+#[derive(Clone)]
+struct TreeHeadRecorder {
+    mmr: Arc<Mutex<ReceiptMmrCache>>,
+    validator_did: Did,
+    receipt_signer: AvcReceiptSigner,
+}
+
+impl TreeHeadRecorder {
+    fn record(&self, registry: &mut InMemoryAvcRegistry) -> ApiResult<()> {
+        let tree_head_error = |error: anyhow::Error| {
+            tracing::error!(err = %error, "AVC receipt tree head recording failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "AVC receipt tree head recording failed".to_owned(),
+            )
+        };
+        let Some(public_key) = registry.resolve_receipt_validator_public_key(&self.validator_did)
+        else {
+            return Ok(());
+        };
+        let mut cache = self
+            .mmr
+            .lock()
+            .map_err(|_| tree_head_error(anyhow::anyhow!("AVC receipt MMR mutex poisoned")))?;
+        cache.sync(registry).map_err(tree_head_error)?;
+        let Some(head) =
+            signed_current_tree_head(&mut cache, &self.validator_did, &self.receipt_signer)
+                .map_err(tree_head_error)?
+        else {
+            return Ok(());
+        };
+        drop(cache);
+        let already_recorded = registry.validator_tree_heads().iter().any(|stored| {
+            stored.validator_did == head.validator_did
+                && stored.validator_public_key == public_key
+                && stored.tree_size == head.tree_size
+                && stored.root == head.root
+                && stored.chain_head == head.chain_head
+        });
+        if already_recorded {
+            return Ok(());
+        }
+        if head.verify_signature(&public_key).is_err() {
+            // The configured signer does not match the registered validator
+            // key. Never store a head that the stored key cannot verify.
+            tracing::warn!(
+                validator = %self.validator_did,
+                "AVC receipt tree head not recorded: signer does not match the registered validator key"
+            );
+            return Ok(());
+        }
+        registry.put_validator_tree_head(AvcValidatorTreeHead {
+            validator_did: head.validator_did,
+            validator_public_key: public_key,
+            tree_size: head.tree_size,
+            root: head.root,
+            chain_head: head.chain_head,
+            chain_id: head.chain_id,
+            signature: head.signature,
+        });
+        Ok(())
+    }
+}
+
+/// Whether `receipt` was signed by this node's current validator DID and,
+/// when both are known, its current key.
+fn signed_by_current_validator(
+    state: &AvcApiState,
+    registry: &InMemoryAvcRegistry,
+    receipt: &AvcTrustReceipt,
+) -> bool {
+    if receipt.validator_did != state.validator_did {
+        return false;
+    }
+    match (
+        receipt.signed_payload.as_deref(),
+        registry.resolve_receipt_validator_public_key(&state.validator_did),
+    ) {
+        (Some(bytes), Some(key)) => crypto::verify(bytes, &receipt.signature, &key),
+        _ => true,
+    }
+}
+
+/// The latest stored head signed by the receipt's own validator key that
+/// covers the receipt's position.
+fn stored_tree_head_for_receipt<'a>(
+    registry: &'a InMemoryAvcRegistry,
+    receipt: &AvcTrustReceipt,
+    position: usize,
+) -> Option<&'a AvcValidatorTreeHead> {
+    registry
+        .validator_tree_heads()
+        .iter()
+        .filter(|stored| {
+            stored.validator_did == receipt.validator_did
+                && usize::try_from(stored.tree_size).is_ok_and(|size| size > position)
+                && receipt.signed_payload.as_deref().is_none_or(|bytes| {
+                    crypto::verify(bytes, &receipt.signature, &stored.validator_public_key)
+                })
+        })
+        .max_by_key(|stored| stored.tree_size)
+}
+
+/// Assemble the proof for the leaf at `position` of `mmr`, whose leaves are
+/// `leaves`, against `tree_head` (which must commit to exactly that tree).
+fn build_inclusion_proof(
+    mmr: &exo_dag::mmr::MerkleMountainRange,
+    leaves: &[Hash256],
+    position: usize,
+    tree_head: ReceiptTreeHead,
+) -> anyhow::Result<ReceiptInclusionProof> {
+    let leaf_path = |at: usize| -> anyhow::Result<LeafPath> {
+        let path = exo_dag::mmr::prove(mmr, at)
+            .map_err(|error| anyhow::anyhow!("AVC receipt MMR proof failed: {error}"))?;
+        Ok(LeafPath {
+            siblings: path.siblings,
+            peak_index: u64::try_from(path.peak_index)?,
+        })
+    };
+    let proof = exo_dag::mmr::prove(mmr, position)
+        .map_err(|error| anyhow::anyhow!("AVC receipt MMR proof failed: {error}"))?;
+    let last = leaves.len() - 1;
+    let previous_leaf_path = position.checked_sub(1).map(leaf_path).transpose()?;
+    let chain_head_path = (position < last).then(|| leaf_path(last)).transpose()?;
+    let genesis_path = (position >= 2).then(|| leaf_path(0)).transpose()?;
+    Ok(ReceiptInclusionProof {
+        receipt_id: leaves[position],
+        leaf_index: u64::try_from(position)?,
+        siblings: proof.siblings,
+        peak_index: u64::try_from(proof.peak_index)?,
+        peaks: proof.peaks,
+        tree_head,
+        previous_leaf_path,
+        chain_head_path,
+        genesis_path,
+    })
+}
+
+/// Build an inclusion proof for `receipt_id`.
+///
+/// Receipts signed by the current validator are proven against a freshly
+/// signed head over the whole chain. Receipts from an earlier validator (or
+/// an earlier key of this validator) are proven against the latest head that
+/// validator key signed, as recorded at commit time, over the chain prefix it
+/// covered. Returns `None` for receipts outside the extended receipt chain,
+/// and for earlier-validator receipts with no stored head that still matches
+/// the chain (for example receipts committed before heads were recorded).
 fn receipt_inclusion_proof(
     state: &AvcApiState,
     registry: &InMemoryAvcRegistry,
@@ -1017,30 +1212,63 @@ fn receipt_inclusion_proof(
     let Some(&position) = cache.index.get(receipt_id) else {
         return Ok(None);
     };
-    let Some(&chain_head) = cache.leaves.last() else {
+    let Some(receipt) = registry.get_receipt(receipt_id) else {
         return Ok(None);
     };
-    let proof = exo_dag::mmr::prove(&cache.mmr, position)
-        .map_err(|error| anyhow::anyhow!("AVC receipt MMR proof failed: {error}"))?;
-    let mut tree_head = ReceiptTreeHead {
-        validator_did: state.validator_did.clone(),
-        tree_size: u64::try_from(cache.leaves.len())?,
-        root: exo_dag::mmr::root(&cache.mmr),
-        chain_head,
-        signature: Signature::empty(),
+    if signed_by_current_validator(state, registry, &receipt) {
+        let Some(tree_head) =
+            signed_current_tree_head(&mut cache, &state.validator_did, &state.receipt_signer)?
+        else {
+            return Ok(None);
+        };
+        return build_inclusion_proof(&cache.mmr, &cache.leaves, position, tree_head).map(Some);
+    }
+
+    let Some(stored) = stored_tree_head_for_receipt(registry, &receipt, position) else {
+        tracing::warn!(
+            receipt = %receipt_id,
+            validator = %receipt.validator_did,
+            "AVC receipt has no stored tree head signed by its own validator"
+        );
+        return Ok(None);
     };
-    let payload = tree_head
-        .signing_payload()
-        .map_err(|error| anyhow::anyhow!("AVC receipt tree head encoding failed: {error}"))?;
-    tree_head.signature = (state.receipt_signer)(&payload);
-    Ok(Some(ReceiptInclusionProof {
-        receipt_id: *receipt_id,
-        leaf_index: u64::try_from(position)?,
-        siblings: proof.siblings,
-        peak_index: u64::try_from(proof.peak_index)?,
-        peaks: proof.peaks,
-        tree_head,
-    }))
+    let size = usize::try_from(stored.tree_size)?;
+    if size > cache.leaves.len() {
+        tracing::warn!(
+            receipt = %receipt_id,
+            "AVC stored tree head is larger than the current receipt chain"
+        );
+        return Ok(None);
+    }
+    let leaves = &cache.leaves[..size];
+    let mut prefix = exo_dag::mmr::MerkleMountainRange::default();
+    for leaf in leaves {
+        exo_dag::mmr::append(&mut prefix, *leaf);
+    }
+    let tree_head = ReceiptTreeHead {
+        validator_did: stored.validator_did.clone(),
+        tree_size: stored.tree_size,
+        root: stored.root,
+        chain_head: stored.chain_head,
+        chain_id: stored.chain_id,
+        signature: stored.signature.clone(),
+    };
+    // A rollback can leave a stored head that no longer describes this
+    // chain. Serve it only if it still commits to exactly these leaves.
+    if exo_dag::mmr::root(&prefix) != tree_head.root
+        || leaves[size - 1] != tree_head.chain_head
+        || leaves[0] != tree_head.chain_id
+        || tree_head
+            .verify_signature(&stored.validator_public_key)
+            .is_err()
+    {
+        tracing::warn!(
+            receipt = %receipt_id,
+            "AVC stored tree head no longer matches the receipt chain"
+        );
+        return Ok(None);
+    }
+    build_inclusion_proof(&prefix, leaves, position, tree_head).map(Some)
 }
 
 async fn attach_receipt_inclusion(
@@ -1049,7 +1277,7 @@ async fn attach_receipt_inclusion(
 ) -> ApiResult<()> {
     let receipt_id = response.receipt.receipt_id;
     let proof_state = Arc::clone(state);
-    let proof = with_registry_blocking(Arc::clone(state), false, move |registry| {
+    let proof = with_registry_read_blocking(Arc::clone(state), move |registry| {
         receipt_inclusion_proof(&proof_state, registry, &receipt_id).map_err(|error| {
             tracing::error!(err = %error, "AVC receipt inclusion proof failed");
             (
@@ -1150,6 +1378,14 @@ pub struct AvcApiState {
 }
 
 impl AvcApiState {
+    fn tree_head_recorder(&self) -> TreeHeadRecorder {
+        TreeHeadRecorder {
+            mmr: Arc::clone(&self.receipt_mmr),
+            validator_did: self.validator_did.clone(),
+            receipt_signer: Arc::clone(&self.receipt_signer),
+        }
+    }
+
     /// Wrap a fresh registry in the standard `Arc<Mutex<_>>` envelope.
     #[cfg(test)]
     #[must_use]
@@ -2951,6 +3187,31 @@ where
     with_registry_blocking_then(state, persist_after, op, Ok).await
 }
 
+/// Run a read-only operation under the registry lock without the rollback
+/// and post-op clones that mutating paths need.
+async fn with_registry_read_blocking<T, F>(state: Arc<AvcApiState>, op: F) -> ApiResult<T>
+where
+    T: Send + 'static,
+    F: FnOnce(&InMemoryAvcRegistry) -> ApiResult<T> + Send + 'static,
+{
+    tokio::task::spawn_blocking(move || {
+        let guard = state.registry.lock().map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "AVC registry unavailable".into(),
+            )
+        })?;
+        op(&guard)
+    })
+    .await
+    .map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "AVC registry task failed".into(),
+        )
+    })?
+}
+
 async fn with_registry_blocking_then<T, F, A>(
     state: Arc<AvcApiState>,
     persist_after: bool,
@@ -3065,6 +3326,7 @@ fn finality_store_lock_error() -> ApiError {
 }
 
 fn clear_failed_allow_residue(
+    state: &AvcApiState,
     registry: &mut InMemoryAvcRegistry,
     session: &mut AllowAnchorSession,
 ) {
@@ -3085,8 +3347,20 @@ fn clear_failed_allow_residue(
     session.postgres_pending = false;
     session.postgres_planned = false;
     if removed_terminal {
+        refresh_tree_head_after_rollback(state, registry);
         session.persist_removal = true;
     }
+}
+
+/// After a rollback removed terminal receipts, re-record the current
+/// validator's head over the surviving chain, so the head persisted with the
+/// removal still proves the remaining receipts after a later rotation. The
+/// registry has already dropped the heads that named a removed receipt.
+fn refresh_tree_head_after_rollback(state: &AvcApiState, registry: &mut InMemoryAvcRegistry) {
+    // `record` logs its own failure. Without a refreshed head the earlier
+    // receipts fall back to having no proof after rotation; nothing invalid
+    // is stored.
+    let _ = state.tree_head_recorder().record(registry);
 }
 
 fn record_allow_commitment(
@@ -3138,11 +3412,12 @@ fn consume_lynk_attestation_fault(state: &AvcApiState) -> bool {
 }
 
 fn reject_missing_allow_anchor(
+    state: &AvcApiState,
     registry: &mut InMemoryAvcRegistry,
     session: &mut AllowAnchorSession,
     receipt: &AvcTrustReceipt,
 ) -> ApiError {
-    clear_failed_allow_residue(registry, session);
+    clear_failed_allow_residue(state, registry, session);
     exochain_finality_error(anyhow::anyhow!(
         "AVC Allow anchor is missing for receipt validator {}",
         receipt.validator_did
@@ -3178,6 +3453,7 @@ fn stage_sqlite_allow_anchors(
         }
         if noted.receipt.validator_did != state.validator_did || consume_allow_anchor_fault(state) {
             return Err(reject_missing_allow_anchor(
+                state,
                 registry,
                 session,
                 &noted.receipt,
@@ -3209,7 +3485,7 @@ fn stage_allow_anchor_plans(
         return Ok(());
     }
     let Some(store) = state.finality_store.clone() else {
-        clear_failed_allow_residue(registry, session);
+        clear_failed_allow_residue(state, registry, session);
         return Err(finality_store_missing_error());
     };
     let store = store.lock().map_err(|_| finality_store_lock_error())?;
@@ -3227,7 +3503,7 @@ async fn stage_postgres_allow_anchors(
     tx: &mut Transaction<'_, Postgres>,
 ) -> ApiResult<()> {
     let Some(store) = state.finality_store.clone() else {
-        clear_failed_allow_residue(registry, session);
+        clear_failed_allow_residue(state, registry, session);
         return Err(finality_store_missing_error());
     };
     let finality = {
@@ -3261,6 +3537,7 @@ async fn stage_postgres_allow_anchors(
         }
         if noted.receipt.validator_did != state.validator_did || consume_allow_anchor_fault(state) {
             return Err(reject_missing_allow_anchor(
+                state,
                 registry,
                 session,
                 &noted.receipt,
@@ -3556,6 +3833,7 @@ fn discard_allow_finish_failure(
     session.postgres_pending = false;
     session.postgres_planned = false;
     if removed_terminal {
+        refresh_tree_head_after_rollback(state, guard);
         session.persist_removal = true;
         return commit_registry_with_allow_anchors(state, guard, session, transaction, rollback);
     }
@@ -3904,6 +4182,23 @@ fn verify_subject_action_signature(
     })
 }
 
+/// Refuse to issue an externally timestamped receipt whose subject-signed
+/// time is later than the trusted receipt time: offline verification would
+/// reject it. Local-clock receipts never pass offline verification, so the
+/// check does not apply to them.
+fn reject_subject_time_after_trusted_time(
+    attestation: &AvcSubjectAttestation,
+    trusted_now: Timestamp,
+) -> ApiResult<()> {
+    if attestation.validation_now > trusted_now {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "subject action time is after the trusted receipt time".into(),
+        ));
+    }
+    Ok(())
+}
+
 fn verify_llm_usage_evidence_signature(
     registry: &InMemoryAvcRegistry,
     envelope: &LlmUsageEvidenceEnvelope,
@@ -3981,10 +4276,11 @@ fn prior_allow_replay_is_stable_denial(
 fn store_receipt_idempotent(
     registry: &mut InMemoryAvcRegistry,
     receipt: AvcTrustReceipt,
+    tree_heads: &TreeHeadRecorder,
 ) -> ApiResult<()> {
     let receipt_id = receipt.receipt_id;
     match registry.put_receipt(receipt.clone()) {
-        Ok(()) => Ok(()),
+        Ok(()) => tree_heads.record(registry),
         Err(exo_avc::AvcError::Registry { .. })
             if registry.get_receipt(&receipt_id).as_ref() == Some(&receipt) =>
         {
@@ -4104,6 +4400,7 @@ async fn handle_emit_receipt(
             )
         })?;
     let validator_did = state.validator_did.clone();
+    let tree_heads = state.tree_head_recorder();
     let receipt_signer = Arc::clone(&state.receipt_signer);
     let attestation_validator = validator_did.clone();
     let attestation_signer = Arc::clone(&receipt_signer);
@@ -4144,6 +4441,7 @@ async fn handle_emit_receipt(
     };
     let timestamp_evidence = trusted_receipt_timestamp_evidence(&state, &evidence_subject).await?;
     let trusted_now = timestamp_evidence.trusted_now;
+    let externally_timestamped = timestamp_evidence.external_timestamp_proof.is_some();
     let finality_store = state.finality_store.clone();
     let anchor_store = finality_store.clone();
     let anchor_signer = Arc::clone(&receipt_signer);
@@ -4158,6 +4456,9 @@ async fn handle_emit_receipt(
                 &subject_signature,
                 subject_public_key,
             )?;
+            if externally_timestamped {
+                reject_subject_time_after_trusted_time(&subject_attestation, trusted_now)?;
+            }
             let mut validation_request = submitted_request;
             validation_request.now = trusted_now;
             let validation = validate_avc(&validation_request, registry).map_err(map_avc_error)?;
@@ -4220,7 +4521,7 @@ async fn handle_emit_receipt(
                 |bytes| (receipt_signer)(bytes),
             )
             .map_err(map_avc_error)?;
-            store_receipt_idempotent(registry, receipt.clone())?;
+            store_receipt_idempotent(registry, receipt.clone(), &tree_heads)?;
             allow_anchors.note_allow(receipt.clone(), false);
             Ok(emit_receipt_response(receipt, validation))
         },
@@ -4294,6 +4595,7 @@ async fn handle_llm_usage_emit_receipt(
         "request",
     )?;
     let validator_did = state.validator_did.clone();
+    let tree_heads = state.tree_head_recorder();
     let receipt_signer = Arc::clone(&state.receipt_signer);
     let envelope = payload.llm_usage_evidence.clone();
     let llm_evidence_hash = llm_usage_evidence_hash(&envelope.evidence).map_err(map_avc_error)?;
@@ -4347,6 +4649,7 @@ async fn handle_llm_usage_emit_receipt(
     };
     let timestamp_evidence = trusted_receipt_timestamp_evidence(&state, &evidence_subject).await?;
     let trusted_now = timestamp_evidence.trusted_now;
+    let externally_timestamped = timestamp_evidence.external_timestamp_proof.is_some();
     let finality_store = state.finality_store.clone();
     let anchor_store = finality_store.clone();
     let anchor_signer = Arc::clone(&receipt_signer);
@@ -4371,6 +4674,9 @@ async fn handle_llm_usage_emit_receipt(
                 &subject_signature,
                 subject_public_key,
             )?;
+            if externally_timestamped {
+                reject_subject_time_after_trusted_time(&subject_attestation, trusted_now)?;
+            }
             let mut validation_request = submitted_request;
             validation_request.now = trusted_now;
             let validation = validate_avc(&validation_request, registry).map_err(map_avc_error)?;
@@ -4433,7 +4739,7 @@ async fn handle_llm_usage_emit_receipt(
                 |bytes| (receipt_signer)(bytes),
             )
             .map_err(map_avc_error)?;
-            store_receipt_idempotent(registry, receipt.clone())?;
+            store_receipt_idempotent(registry, receipt.clone(), &tree_heads)?;
             allow_anchors.note_allow(receipt.clone(), false);
             Ok(emit_receipt_response(receipt, validation))
         },
@@ -4488,6 +4794,7 @@ struct PublicOutputAuthorizationRequestParts {
     expires_at: Timestamp,
     validator_did: Did,
     receipt_signer: AvcReceiptSigner,
+    tree_heads: TreeHeadRecorder,
 }
 
 struct PublicOutputExternalMintPlan {
@@ -4719,7 +5026,7 @@ fn mint_stored_public_output_authorization(
         |bytes| (parts.receipt_signer)(bytes),
     )
     .map_err(map_avc_error)?;
-    store_receipt_idempotent(registry, receipt.clone())?;
+    store_receipt_idempotent(registry, receipt.clone(), &parts.tree_heads)?;
     let draft = LivesafePublicAdapterOutputAuthorizationDraft {
         receipt_id: receipt.receipt_id,
         ..pre_receipt_draft
@@ -5042,6 +5349,7 @@ async fn handle_public_output_authorization(
         expires_at: payload.expires_at,
         validator_did: state.validator_did.clone(),
         receipt_signer: Arc::clone(&state.receipt_signer),
+        tree_heads: state.tree_head_recorder(),
     };
     let envelope = if state.require_external_timestamp {
         authorize_public_output_with_required_external_timestamp(state, parts).await?
@@ -5073,7 +5381,7 @@ async fn handle_get_receipt_proof(
     let hash = parse_hash(&id)?;
     let proof_state = Arc::clone(&state);
     let (receipt, inclusion_proof) =
-        with_registry_blocking(Arc::clone(&state), false, move |registry| {
+        with_registry_read_blocking(Arc::clone(&state), move |registry| {
             let receipt = registry
                 .get_receipt(&hash)
                 .ok_or((StatusCode::NOT_FOUND, "receipt not found".into()))?;
@@ -7959,11 +8267,63 @@ mod tests {
         serde_json::from_slice(&read_body(response).await).unwrap()
     }
 
-    fn assert_inclusion_verifies(proof: &ReceiptInclusionProof, leaf_index: u64, tree_size: u64) {
+    #[tokio::test]
+    async fn emit_rejects_subject_time_after_trusted_time() {
+        let state = fresh_state();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(baseline_credential())
+            .unwrap();
+        let mut action = baseline_action(Did::new("did:exo:agent").unwrap());
+        action.action_id = Hash256::from_bytes([0x6c; 32]);
+        // The test timestamp authority answers 1_600_000; the agent claims later.
+        let validation = AvcValidationRequest {
+            credential: baseline_credential(),
+            action: Some(action),
+            now: Timestamp::new(1_600_001, 0),
+        };
+        let request = EmitReceiptRequest {
+            subject_signature: sign_action(&validation, &subject_keypair()),
+            validation,
+            subject_public_key: None,
+        };
+        let response = avc_router(Arc::clone(&state))
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/avc/receipts/emit")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&request).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            state
+                .registry
+                .lock()
+                .unwrap()
+                .receipt_chain_head()
+                .is_none()
+        );
+    }
+
+    fn assert_inclusion_verifies(
+        proof: &ReceiptInclusionProof,
+        receipt: &AvcTrustReceipt,
+        leaf_index: u64,
+        tree_size: u64,
+    ) {
+        assert_eq!(proof.receipt_id, receipt.receipt_id);
         assert_eq!(proof.leaf_index, leaf_index);
         assert_eq!(proof.tree_head.tree_size, tree_size);
         assert_eq!(proof.tree_head.validator_did, validator_did());
-        proof.verify_path().unwrap();
+        proof
+            .verify_path(receipt.previous_receipt_hash.as_ref())
+            .unwrap();
         proof
             .tree_head
             .verify_signature(&validator_keypair().public)
@@ -7998,9 +8358,14 @@ mod tests {
                 .verify_signed_payload(&validator_keypair().public)
                 .unwrap();
         }
-        assert_inclusion_verifies(first.receipt_inclusion.as_ref().unwrap(), 0, 1);
+        assert_inclusion_verifies(
+            first.receipt_inclusion.as_ref().unwrap(),
+            &first.receipt,
+            0,
+            1,
+        );
         let second_proof = second.receipt_inclusion.as_ref().unwrap();
-        assert_inclusion_verifies(second_proof, 1, 2);
+        assert_inclusion_verifies(second_proof, &second.receipt, 1, 2);
         assert_eq!(second_proof.tree_head.chain_head, second.receipt.receipt_id);
 
         // The proof endpoint re-proves an earlier receipt against the newer head.
@@ -8021,7 +8386,325 @@ mod tests {
         let proof: ReceiptProofResponse =
             serde_json::from_slice(&read_body(response).await).unwrap();
         assert_eq!(proof.receipt, first.receipt);
-        assert_inclusion_verifies(proof.inclusion_proof.as_ref().unwrap(), 0, 2);
+        assert_inclusion_verifies(
+            proof.inclusion_proof.as_ref().unwrap(),
+            &first.receipt,
+            0,
+            2,
+        );
+
+        // A third receipt needs the genesis path; every head names the chain
+        // by its first receipt.
+        let third = emit_action_for_inclusion(&state, 0x63).await;
+        let third_proof = third.receipt_inclusion.as_ref().unwrap();
+        assert_inclusion_verifies(third_proof, &third.receipt, 2, 3);
+        assert!(third_proof.genesis_path.is_some());
+        assert_eq!(third_proof.tree_head.chain_id, first.receipt.receipt_id);
+        assert_eq!(second_proof.tree_head.chain_id, first.receipt.receipt_id);
+    }
+
+    /// Open the durable state in `data_dir` as validator `did`, signing with
+    /// `keypair`, with every validator key in `validator_keys` registered the
+    /// way startup configuration registers them.
+    async fn durable_finality_state_as(
+        data_dir: &FsPath,
+        did: Did,
+        keypair: KeyPair,
+        validator_keys: Vec<(Did, PublicKey)>,
+    ) -> (Arc<AvcApiState>, Arc<Mutex<crate::store::SqliteDagStore>>) {
+        let finality_store = Arc::new(Mutex::new(
+            crate::store::SqliteDagStore::open(data_dir).unwrap(),
+        ));
+        let signer: AvcReceiptSigner = Arc::new(move |payload: &[u8]| keypair.sign(payload));
+        let mut state = AvcApiState::with_durable_registry(
+            data_dir,
+            did,
+            signer,
+            None,
+            Some(Arc::clone(&finality_store)),
+            false,
+        )
+        .await
+        .unwrap();
+        state.external_timestamp_source =
+            fixed_external_timestamp_source(Timestamp::new(1_600_000, 0));
+        {
+            let mut registry = state.registry.lock().unwrap();
+            registry.put_public_key(Did::new("did:exo:issuer").unwrap(), issuer_keypair().public);
+            registry.put_public_key(Did::new("did:exo:agent").unwrap(), subject_keypair().public);
+        }
+        state
+            .register_validator_public_keys(validator_keys)
+            .unwrap();
+        (Arc::new(state), finality_store)
+    }
+
+    async fn fetch_receipt_proof(
+        state: &Arc<AvcApiState>,
+        receipt_id: Hash256,
+    ) -> ReceiptProofResponse {
+        let response = avc_router(Arc::clone(state))
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("/api/v1/avc/receipts/{receipt_id}/proof"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        serde_json::from_slice(&read_body(response).await).unwrap()
+    }
+
+    /// Emit and anchor under validator A, restart under validator B with
+    /// both public keys registered, then export proofs and verify them
+    /// offline. A's receipts are proven under the last head A signed, and
+    /// B's under B's head, so the verifier's signer rule holds for both.
+    #[tokio::test]
+    async fn receipt_proofs_survive_validator_rotation_across_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let validator_a = validator_did();
+        let key_a = validator_keypair();
+        let validator_b = Did::new("did:exo:validator-b").unwrap();
+        let key_b = KeyPair::from_secret_bytes([0x5b; 32]).unwrap();
+        let both_keys = vec![
+            (validator_a.clone(), key_a.public),
+            (validator_b.clone(), key_b.public),
+        ];
+
+        let (first, second) = {
+            let (state, store) = durable_finality_state_as(
+                dir.path(),
+                validator_a.clone(),
+                validator_keypair(),
+                vec![(validator_a.clone(), key_a.public)],
+            )
+            .await;
+            state
+                .registry
+                .lock()
+                .unwrap()
+                .put_credential(baseline_credential())
+                .unwrap();
+            let first = emit_action_for_inclusion(&state, 0x71).await;
+            let second = emit_action_for_inclusion(&state, 0x72).await;
+            assert!(
+                second.exochain_finality_hash.is_some(),
+                "A's receipt is anchored"
+            );
+            drop(state);
+            drop(store);
+            (first.receipt, second.receipt)
+        };
+
+        let (state, _store) = durable_finality_state_as(
+            dir.path(),
+            validator_b.clone(),
+            KeyPair::from_secret_bytes([0x5b; 32]).unwrap(),
+            both_keys,
+        )
+        .await;
+        let third = emit_action_for_inclusion(&state, 0x73).await;
+        assert_eq!(third.receipt.validator_did, validator_b);
+        assert_eq!(third.receipt.previous_receipt_hash, Some(second.receipt_id));
+
+        let entry = |did: &Did, key: PublicKey, role| exo_verify::KeyBundleEntry {
+            did: did.clone(),
+            public_key: key,
+            roles: vec![role],
+            valid_from: None,
+            valid_until: None,
+        };
+        let trust = exo_verify::TrustInputs {
+            key_bundle: exo_verify::KeyBundle {
+                format: exo_verify::KEY_BUNDLE_FORMAT_V1.into(),
+                version: 1,
+                keys: vec![
+                    entry(
+                        &Did::new("did:exo:agent").unwrap(),
+                        subject_keypair().public,
+                        exo_verify::KeyRole::Agent,
+                    ),
+                    entry(&validator_a, key_a.public, exo_verify::KeyRole::Validator),
+                    entry(&validator_b, key_b.public, exo_verify::KeyRole::Validator),
+                ],
+            },
+            tsa: exo_verify::TsaTrust::default(),
+            latest_tree_head: None,
+            expected_chain_id: Some(first.receipt_id),
+        };
+
+        for (receipt, leaf_index, signer, tree_size) in [
+            (&first, 0, &validator_a, 2),
+            (&second, 1, &validator_a, 2),
+            (&third.receipt, 2, &validator_b, 3),
+        ] {
+            let exported = fetch_receipt_proof(&state, receipt.receipt_id).await;
+            assert_eq!(&exported.receipt, receipt);
+            // Export as a v2 bundle and read it back at the JSON boundary.
+            let bundle_json = serde_json::to_string(&exo_verify::ReceiptBundle {
+                format: exo_verify::RECEIPT_BUNDLE_FORMAT_V2.into(),
+                receipt: exported.receipt,
+                inclusion_proof: exported
+                    .inclusion_proof
+                    .expect("proof under the receipt's own validator"),
+            })
+            .unwrap();
+            let bundle = exo_verify::decode_receipt_bundle(
+                &mut serde_json::Deserializer::from_str(&bundle_json),
+            )
+            .unwrap();
+            let proof = &bundle.inclusion_proof;
+            assert_eq!(&proof.tree_head.validator_did, signer);
+            assert_eq!(proof.leaf_index, leaf_index);
+            assert_eq!(proof.tree_head.tree_size, tree_size);
+            exo_verify::verify_receipt_inclusion(&bundle.receipt, proof, &trust).unwrap();
+            bundle.receipt.verify_subject_attestation().unwrap();
+            // The test node timestamps with an operator key, so the full
+            // level-3 check stops at the time property, after identity.
+            assert!(matches!(
+                exo_verify::verify_receipt_bundle(&bundle, &trust),
+                Err(exo_verify::VerifyError::TimestampNotRfc3161 { .. })
+            ));
+        }
+
+        // Without the stored head, the current validator's head is the only
+        // one available, and the verifier rejects it for A's receipt.
+        let mut wrong = fetch_receipt_proof(&state, first.receipt_id)
+            .await
+            .inclusion_proof
+            .unwrap();
+        wrong.tree_head = fetch_receipt_proof(&state, third.receipt.receipt_id)
+            .await
+            .inclusion_proof
+            .unwrap()
+            .tree_head;
+        assert_eq!(
+            exo_verify::verify_receipt_inclusion(&first, &wrong, &trust),
+            Err(exo_verify::VerifyError::TreeHeadValidatorMismatch)
+        );
+    }
+
+    /// Emit two receipts under validator A, roll the second back through the
+    /// failed re-anchor path, then restart under validator B with both keys
+    /// registered. The first receipt is intact and anchored, so it must still
+    /// be proven under a head A signed over the surviving chain.
+    #[tokio::test]
+    async fn receipt_proofs_survive_rollback_then_validator_rotation() {
+        let dir = tempfile::tempdir().unwrap();
+        let validator_a = validator_did();
+        let key_a = validator_keypair();
+        let validator_b = Did::new("did:exo:validator-b").unwrap();
+        let key_b = KeyPair::from_secret_bytes([0x5b; 32]).unwrap();
+
+        let first = {
+            let (state, store) = durable_finality_state_as(
+                dir.path(),
+                validator_a.clone(),
+                validator_keypair(),
+                vec![(validator_a.clone(), key_a.public)],
+            )
+            .await;
+            state
+                .registry
+                .lock()
+                .unwrap()
+                .put_credential(baseline_credential())
+                .unwrap();
+            let first = emit_action_for_inclusion(&state, 0x91).await;
+            let second = emit_action_for_inclusion(&state, 0x92).await;
+            assert!(first.exochain_finality_hash.is_some());
+
+            // Re-emit the second action against an empty finality store with
+            // an anchor fault: the existing recovery path removes it.
+            let mut state = Arc::into_inner(state).unwrap();
+            let replacement_dir = tempfile::tempdir().unwrap();
+            state.finality_store = Some(open_finality_store(replacement_dir.path()));
+            state
+                .finality_anchor_faults_remaining
+                .store(1, std::sync::atomic::Ordering::SeqCst);
+            let state = Arc::new(state);
+            let (status, body) = post_allow_emit(
+                &state,
+                &baseline_credential(),
+                Hash256::from_bytes([0x92; 32]),
+            )
+            .await;
+            assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+            assert!(
+                state
+                    .registry
+                    .lock()
+                    .unwrap()
+                    .get_receipt(&second.receipt.receipt_id)
+                    .is_none(),
+                "the second receipt was rolled back"
+            );
+            // Back on the original finality store, where the first receipt's
+            // anchor lives, A still proves the first receipt.
+            let mut state = Arc::into_inner(state).unwrap();
+            state.finality_store = Some(Arc::clone(&store));
+            let state = Arc::new(state);
+            let proof = fetch_receipt_proof(&state, first.receipt.receipt_id)
+                .await
+                .inclusion_proof
+                .expect("proof while A is still active");
+            assert_eq!(proof.tree_head.tree_size, 1);
+            first.receipt
+        };
+        let durable =
+            load_file_durable_registry(&dir.path().join(AVC_REGISTRY_DURABLE_STATE_FILE)).unwrap();
+        assert!(
+            durable
+                .validator_tree_heads()
+                .iter()
+                .all(|head| head.tree_size == 1 && head.chain_head == first.receipt_id),
+            "the retained head must describe the surviving chain"
+        );
+
+        let (state, _store) = durable_finality_state_as(
+            dir.path(),
+            validator_b.clone(),
+            KeyPair::from_secret_bytes([0x5b; 32]).unwrap(),
+            vec![
+                (validator_a.clone(), key_a.public),
+                (validator_b.clone(), key_b.public),
+            ],
+        )
+        .await;
+        let exported = fetch_receipt_proof(&state, first.receipt_id).await;
+        let proof = exported
+            .inclusion_proof
+            .expect("intact anchored receipt keeps its proof after rotation");
+        assert_eq!(proof.tree_head.validator_did, validator_a);
+        assert_eq!(proof.tree_head.tree_size, 1);
+        let trust = exo_verify::TrustInputs {
+            key_bundle: exo_verify::KeyBundle {
+                format: exo_verify::KEY_BUNDLE_FORMAT_V1.into(),
+                version: 1,
+                keys: vec![
+                    exo_verify::KeyBundleEntry {
+                        did: Did::new("did:exo:agent").unwrap(),
+                        public_key: subject_keypair().public,
+                        roles: vec![exo_verify::KeyRole::Agent],
+                        valid_from: None,
+                        valid_until: None,
+                    },
+                    exo_verify::KeyBundleEntry {
+                        did: validator_a.clone(),
+                        public_key: key_a.public,
+                        roles: vec![exo_verify::KeyRole::Validator],
+                        valid_from: None,
+                        valid_until: None,
+                    },
+                ],
+            },
+            tsa: exo_verify::TsaTrust::default(),
+            latest_tree_head: None,
+            expected_chain_id: Some(first.receipt_id),
+        };
+        exo_verify::verify_receipt_inclusion(&first, &proof, &trust).unwrap();
     }
 
     #[tokio::test]
@@ -8064,11 +8747,13 @@ mod tests {
             },
             tsa: exo_verify::TsaTrust {
                 signer_spki_der_hex: vec!["00".into()],
-                issuing_ca_spki_der_hex: Vec::new(),
+                ..Default::default()
             },
+            latest_tree_head: None,
+            expected_chain_id: None,
         };
         let bundle = exo_verify::ReceiptBundle {
-            format: exo_verify::RECEIPT_BUNDLE_FORMAT_V1.into(),
+            format: exo_verify::RECEIPT_BUNDLE_FORMAT_V2.into(),
             receipt: emitted.receipt,
             inclusion_proof: emitted.receipt_inclusion.unwrap(),
         };
@@ -8099,6 +8784,75 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn receipt_proof_endpoint_requires_bearer_in_production_stack() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(Mutex::new(
+            crate::store::SqliteDagStore::open(dir.path()).unwrap(),
+        ));
+        let state = fresh_state_with_finality_store(store);
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(baseline_credential())
+            .unwrap();
+        let emitted = emit_action_for_inclusion(&state, 0x69).await;
+        let bearer = crate::auth::BearerAuth::from_bearer("proof-test-token");
+        let app =
+            avc_router(Arc::clone(&state)).layer(axum::middleware::from_fn(move |req, next| {
+                let auth = bearer.clone();
+                async move { crate::auth::require_bearer_on_writes(auth, req, next).await }
+            }));
+        let uri = format!("/api/v1/avc/receipts/{}/proof", emitted.receipt.receipt_id);
+        for (authorization, expected) in [
+            (None, StatusCode::UNAUTHORIZED),
+            (Some("Bearer wrong-token"), StatusCode::FORBIDDEN),
+            (Some("Bearer proof-test-token"), StatusCode::OK),
+        ] {
+            let mut request = Request::builder().method(Method::GET).uri(&uri);
+            if let Some(value) = authorization {
+                request = request.header("authorization", value);
+            }
+            let response = app
+                .clone()
+                .oneshot(request.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected, "{authorization:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn receipt_tree_head_is_signed_once_per_chain_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(Mutex::new(
+            crate::store::SqliteDagStore::open(dir.path()).unwrap(),
+        ));
+        let state = fresh_state_with_finality_store(store);
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(baseline_credential())
+            .unwrap();
+        let first = emit_action_for_inclusion(&state, 0x6a).await;
+        let cached = |state: &AvcApiState| state.receipt_mmr.lock().unwrap().signed_head.clone();
+        let head_after_emit = cached(&state).unwrap();
+        assert_eq!(head_after_emit.tree_size, 1);
+        {
+            let registry = state.registry.lock().unwrap();
+            let proof = receipt_inclusion_proof(&state, &registry, &first.receipt.receipt_id)
+                .unwrap()
+                .unwrap();
+            assert_eq!(proof.tree_head, head_after_emit);
+        }
+        let second = emit_action_for_inclusion(&state, 0x6b).await;
+        let head = cached(&state).unwrap();
+        assert_eq!(head.tree_size, 2);
+        assert_eq!(head.chain_head, second.receipt.receipt_id);
+    }
+
+    #[tokio::test]
     async fn receipt_mmr_rebuilds_after_terminal_receipt_rollback() {
         let dir = tempfile::tempdir().unwrap();
         let store = Arc::new(Mutex::new(
@@ -8113,7 +8867,12 @@ mod tests {
             .unwrap();
         let first = emit_action_for_inclusion(&state, 0x71).await;
         let second = emit_action_for_inclusion(&state, 0x72).await;
-        assert_inclusion_verifies(second.receipt_inclusion.as_ref().unwrap(), 1, 2);
+        assert_inclusion_verifies(
+            second.receipt_inclusion.as_ref().unwrap(),
+            &second.receipt,
+            1,
+            2,
+        );
 
         {
             let mut registry = state.registry.lock().unwrap();
@@ -8128,12 +8887,12 @@ mod tests {
             let proof = receipt_inclusion_proof(&state, &registry, &first.receipt.receipt_id)
                 .unwrap()
                 .unwrap();
-            assert_inclusion_verifies(&proof, 0, 1);
+            assert_inclusion_verifies(&proof, &first.receipt, 0, 1);
         }
 
         let third = emit_action_for_inclusion(&state, 0x73).await;
         let third_proof = third.receipt_inclusion.as_ref().unwrap();
-        assert_inclusion_verifies(third_proof, 1, 2);
+        assert_inclusion_verifies(third_proof, &third.receipt, 1, 2);
         assert_eq!(
             third.receipt.previous_receipt_hash,
             Some(first.receipt.receipt_id)
@@ -11360,8 +12119,14 @@ mod tests {
         )
         .unwrap();
 
-        store_receipt_idempotent(&mut registry, receipt.clone()).unwrap();
-        store_receipt_idempotent(&mut registry, receipt).unwrap();
+        store_receipt_idempotent(
+            &mut registry,
+            receipt.clone(),
+            &fresh_state().tree_head_recorder(),
+        )
+        .unwrap();
+        store_receipt_idempotent(&mut registry, receipt, &fresh_state().tree_head_recorder())
+            .unwrap();
         assert_eq!(registry.receipt_count(), 1);
     }
 
@@ -11500,7 +12265,9 @@ mod tests {
         .unwrap();
         let mut registry = InMemoryAvcRegistry::new();
 
-        let error = store_receipt_idempotent(&mut registry, receipt).unwrap_err();
+        let error =
+            store_receipt_idempotent(&mut registry, receipt, &fresh_state().tree_head_recorder())
+                .unwrap_err();
         assert_eq!(error.0, StatusCode::BAD_REQUEST);
         assert_eq!(registry.receipt_count(), 0);
     }

@@ -1,0 +1,21 @@
+[ca_critical]
+basicConstraints = critical, CA:TRUE
+keyUsage = critical, keyCertSign, cRLSign
+[ca_noncritical]
+basicConstraints = CA:TRUE
+keyUsage = critical, keyCertSign, cRLSign
+[leaf_good]
+basicConstraints = critical, CA:FALSE
+keyUsage = critical, digitalSignature
+extendedKeyUsage = critical, timeStamping
+[leaf_eku_noncritical]
+basicConstraints = critical, CA:FALSE
+keyUsage = critical, digitalSignature
+extendedKeyUsage = timeStamping
+[leaf_eku_multi]
+basicConstraints = critical, CA:FALSE
+keyUsage = critical, digitalSignature
+extendedKeyUsage = critical, timeStamping, serverAuth
+[leaf_no_key_usage]
+basicConstraints = critical, CA:FALSE
+extendedKeyUsage = critical, timeStamping

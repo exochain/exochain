@@ -164,8 +164,8 @@ pub use receipt::{
     create_trust_receipt_with_evidence, create_trust_receipt_with_subject_attestation,
 };
 pub use registry::{
-    AvcRegistryDurableState, AvcRegistryRead, AvcRegistryWrite, InMemoryAvcRegistry,
-    RegisteredIssuerKey,
+    AvcRegistryDurableState, AvcRegistryRead, AvcRegistryWrite, AvcValidatorTreeHead,
+    InMemoryAvcRegistry, RegisteredIssuerKey,
 };
 pub use revocation::{
     AVC_REVOCATION_SIGNING_DOMAIN, AvcRevocation, AvcRevocationReason, revoke_avc,
