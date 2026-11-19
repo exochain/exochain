@@ -549,8 +549,17 @@ awk -F'\t' '$3=="normal" && $4=="no" {print $2}' \
   docs/audit/core-separation-904/workspace-dependency-edges.tsv | sort | uniq -c
 ```
 
-The closure sizes are a transitive walk of the same rows; no script for them
-is committed. Nothing is compiled.
+The closure sizes are a transitive walk of the same rows:
+
+```bash
+python3 docs/audit/core-separation-904/closure_sizes.py \
+  docs/audit/core-separation-904/workspace-dependency-edges.tsv \
+  docs/audit/core-separation-904/path-classification.tsv
+```
+
+It prints, for each crate, the number of other workspace crates it reaches
+in the three closures, and the size of each closure taken from the 20
+core-class crates together. Nothing is compiled.
 
 ## Path classification of this record
 
@@ -559,7 +568,8 @@ is committed. Nothing is compiled.
 | `docs/audit/core-separation-904/02-DEPENDENCY-CLOSURE-AND-BOUNDARIES.md` | EXOCHAIN core (governance evidence) |
 | `docs/audit/core-separation-904/dependency_graph.py` | EXOCHAIN core (governance evidence) |
 | `docs/audit/core-separation-904/workspace-dependency-edges.tsv` | EXOCHAIN core (governance evidence) |
+| `docs/audit/core-separation-904/closure_sizes.py` | EXOCHAIN core (governance evidence) |
 
-Core regression statement: this record adds three files under `docs/audit/`.
+Core regression statement: this record adds four files under `docs/audit/`.
 It changes nothing under `crates/`, `packages/`, `governance/`, `tools/`,
 `.github/` or any deployment file, and it does not edit `GAP-REGISTRY.md`.

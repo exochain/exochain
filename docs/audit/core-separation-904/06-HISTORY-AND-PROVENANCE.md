@@ -127,11 +127,12 @@ decisions.
 7. **Reading.** Every finding below was checked against the cited file,
    line, commit or table.
 
-Steps 4 to 6 were run with helper scripts kept outside the repository. The
-scripts are not covered by this record's digests. Reproduction gives
-commands for the licence-history and join facts; the reference counts
-(F-47), the document search and the PDF checks (F-50) are described by rule
-only and are supplied results, not fully reproducible from this record.
+Step 5 is `reference_counts.py` in this directory. Steps 4 and 6 were run
+with helper scripts kept outside the repository, which are not covered by
+this record's digests. Reproduction gives commands for the licence-history
+and join facts and for the reference counts (F-47); the document search and
+the PDF checks (F-50) are described by rule only and are supplied results,
+not fully reproducible from this record.
 
 ## The history at the audited commit
 
@@ -465,11 +466,13 @@ In core and adapter text files:
 | File-level references to a commit reachable from the audited commit | 502, in 72 files |
 | Other 40-character strings that are commits in the local clone but not reachable from the audited commit | 190 |
 | Other 40-character strings that are tag objects | 11 |
+| Other 40-character strings that are a blob or a tree in the local clone | 3 |
 | Other 40-character strings that match no object in the local clone | 64 |
 | Links to `github.com/exochain/exochain/pull/…` | 792 |
 | Links to `…/issues/…` | 15 |
 | Links to `…/releases/…` | 9 |
 | Links to `…/actions/…` | 7 |
+| Links to `…/discussions/…` | 1 |
 | Links to the repository itself | 41 |
 
 406 of the 502 are in `docs/execution-ledger/` and 34 in
@@ -812,8 +815,16 @@ gh api repos/exochain/exochain/contributors
 directory. The last command needs network access and a GitHub token.
 
 The counts in F-44 and F-45 come from filtering the two tables on the
-columns named in `history_scan.py`. The reference counts in F-47 come from
-a helper script that is not tracked; its rule is given in Method item 5.
+columns named in `history_scan.py`. The reference counts in F-47 come from:
+
+```bash
+python -I docs/audit/core-separation-904/reference_counts.py . e6ecf4388a69fa3a1a352ebda4c8226697dcfd2e docs/audit/core-separation-904/path-classification.tsv
+```
+
+Its counts of references to commits reachable from the audited commit, and
+of links, depend only on that commit. Its counts of the other 40-character
+strings depend on which other objects the local clone holds, so they can
+differ between clones.
 
 ## Path classification of this record
 
@@ -823,6 +834,7 @@ a helper script that is not tracked; its rule is given in Method item 5.
 | `docs/audit/core-separation-904/history_scan.py` | EXOCHAIN core | Part 1 rule C5 |
 | `docs/audit/core-separation-904/history-commits.tsv` | EXOCHAIN core | Part 1 rule C5 |
 | `docs/audit/core-separation-904/history-paths.tsv` | EXOCHAIN core | Part 1 rule C5 |
+| `docs/audit/core-separation-904/reference_counts.py` | EXOCHAIN core | Part 1 rule C5 |
 
 No file under `crates/`, `packages/`, `governance/`, `tools/`, CI or
 deployment was changed for this record.
