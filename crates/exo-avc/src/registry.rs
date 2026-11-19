@@ -615,7 +615,10 @@ impl InMemoryAvcRegistry {
     ///
     /// A non-terminal extended receipt stays in place: removing it would break
     /// the durable chain. The head rewinds to that receipt's
-    /// `previous_receipt_hash`.
+    /// `previous_receipt_hash`. Recorded validator tree heads whose chain head
+    /// is the removed receipt describe a chain that no longer exists, so they
+    /// are dropped in the same mutation; the caller re-records a head over the
+    /// surviving chain before persisting.
     pub fn remove_terminal_extended_receipt(
         &mut self,
         receipt_id: &Hash256,
@@ -634,6 +637,8 @@ impl InMemoryAvcRegistry {
         if receipt.has_extended_evidence() {
             self.receipt_chain_head = receipt.previous_receipt_hash;
         }
+        self.validator_tree_heads
+            .retain(|head| head.chain_head != *receipt_id);
         Ok(())
     }
 

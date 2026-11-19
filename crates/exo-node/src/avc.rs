@@ -3326,6 +3326,7 @@ fn finality_store_lock_error() -> ApiError {
 }
 
 fn clear_failed_allow_residue(
+    state: &AvcApiState,
     registry: &mut InMemoryAvcRegistry,
     session: &mut AllowAnchorSession,
 ) {
@@ -3346,8 +3347,20 @@ fn clear_failed_allow_residue(
     session.postgres_pending = false;
     session.postgres_planned = false;
     if removed_terminal {
+        refresh_tree_head_after_rollback(state, registry);
         session.persist_removal = true;
     }
+}
+
+/// After a rollback removed terminal receipts, re-record the current
+/// validator's head over the surviving chain, so the head persisted with the
+/// removal still proves the remaining receipts after a later rotation. The
+/// registry has already dropped the heads that named a removed receipt.
+fn refresh_tree_head_after_rollback(state: &AvcApiState, registry: &mut InMemoryAvcRegistry) {
+    // `record` logs its own failure. Without a refreshed head the earlier
+    // receipts fall back to having no proof after rotation; nothing invalid
+    // is stored.
+    let _ = state.tree_head_recorder().record(registry);
 }
 
 fn record_allow_commitment(
@@ -3399,11 +3412,12 @@ fn consume_lynk_attestation_fault(state: &AvcApiState) -> bool {
 }
 
 fn reject_missing_allow_anchor(
+    state: &AvcApiState,
     registry: &mut InMemoryAvcRegistry,
     session: &mut AllowAnchorSession,
     receipt: &AvcTrustReceipt,
 ) -> ApiError {
-    clear_failed_allow_residue(registry, session);
+    clear_failed_allow_residue(state, registry, session);
     exochain_finality_error(anyhow::anyhow!(
         "AVC Allow anchor is missing for receipt validator {}",
         receipt.validator_did
@@ -3439,6 +3453,7 @@ fn stage_sqlite_allow_anchors(
         }
         if noted.receipt.validator_did != state.validator_did || consume_allow_anchor_fault(state) {
             return Err(reject_missing_allow_anchor(
+                state,
                 registry,
                 session,
                 &noted.receipt,
@@ -3470,7 +3485,7 @@ fn stage_allow_anchor_plans(
         return Ok(());
     }
     let Some(store) = state.finality_store.clone() else {
-        clear_failed_allow_residue(registry, session);
+        clear_failed_allow_residue(state, registry, session);
         return Err(finality_store_missing_error());
     };
     let store = store.lock().map_err(|_| finality_store_lock_error())?;
@@ -3488,7 +3503,7 @@ async fn stage_postgres_allow_anchors(
     tx: &mut Transaction<'_, Postgres>,
 ) -> ApiResult<()> {
     let Some(store) = state.finality_store.clone() else {
-        clear_failed_allow_residue(registry, session);
+        clear_failed_allow_residue(state, registry, session);
         return Err(finality_store_missing_error());
     };
     let finality = {
@@ -3522,6 +3537,7 @@ async fn stage_postgres_allow_anchors(
         }
         if noted.receipt.validator_did != state.validator_did || consume_allow_anchor_fault(state) {
             return Err(reject_missing_allow_anchor(
+                state,
                 registry,
                 session,
                 &noted.receipt,
@@ -3817,6 +3833,7 @@ fn discard_allow_finish_failure(
     session.postgres_pending = false;
     session.postgres_planned = false;
     if removed_terminal {
+        refresh_tree_head_after_rollback(state, guard);
         session.persist_removal = true;
         return commit_registry_with_allow_anchors(state, guard, session, transaction, rollback);
     }
@@ -8567,6 +8584,127 @@ mod tests {
             exo_verify::verify_receipt_inclusion(&first, &wrong, &trust),
             Err(exo_verify::VerifyError::TreeHeadValidatorMismatch)
         );
+    }
+
+    /// Emit two receipts under validator A, roll the second back through the
+    /// failed re-anchor path, then restart under validator B with both keys
+    /// registered. The first receipt is intact and anchored, so it must still
+    /// be proven under a head A signed over the surviving chain.
+    #[tokio::test]
+    async fn receipt_proofs_survive_rollback_then_validator_rotation() {
+        let dir = tempfile::tempdir().unwrap();
+        let validator_a = validator_did();
+        let key_a = validator_keypair();
+        let validator_b = Did::new("did:exo:validator-b").unwrap();
+        let key_b = KeyPair::from_secret_bytes([0x5b; 32]).unwrap();
+
+        let first = {
+            let (state, store) = durable_finality_state_as(
+                dir.path(),
+                validator_a.clone(),
+                validator_keypair(),
+                vec![(validator_a.clone(), key_a.public)],
+            )
+            .await;
+            state
+                .registry
+                .lock()
+                .unwrap()
+                .put_credential(baseline_credential())
+                .unwrap();
+            let first = emit_action_for_inclusion(&state, 0x91).await;
+            let second = emit_action_for_inclusion(&state, 0x92).await;
+            assert!(first.exochain_finality_hash.is_some());
+
+            // Re-emit the second action against an empty finality store with
+            // an anchor fault: the existing recovery path removes it.
+            let mut state = Arc::into_inner(state).unwrap();
+            let replacement_dir = tempfile::tempdir().unwrap();
+            state.finality_store = Some(open_finality_store(replacement_dir.path()));
+            state
+                .finality_anchor_faults_remaining
+                .store(1, std::sync::atomic::Ordering::SeqCst);
+            let state = Arc::new(state);
+            let (status, body) = post_allow_emit(
+                &state,
+                &baseline_credential(),
+                Hash256::from_bytes([0x92; 32]),
+            )
+            .await;
+            assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+            assert!(
+                state
+                    .registry
+                    .lock()
+                    .unwrap()
+                    .get_receipt(&second.receipt.receipt_id)
+                    .is_none(),
+                "the second receipt was rolled back"
+            );
+            // Back on the original finality store, where the first receipt's
+            // anchor lives, A still proves the first receipt.
+            let mut state = Arc::into_inner(state).unwrap();
+            state.finality_store = Some(Arc::clone(&store));
+            let state = Arc::new(state);
+            let proof = fetch_receipt_proof(&state, first.receipt.receipt_id)
+                .await
+                .inclusion_proof
+                .expect("proof while A is still active");
+            assert_eq!(proof.tree_head.tree_size, 1);
+            first.receipt
+        };
+        let durable =
+            load_file_durable_registry(&dir.path().join(AVC_REGISTRY_DURABLE_STATE_FILE)).unwrap();
+        assert!(
+            durable
+                .validator_tree_heads()
+                .iter()
+                .all(|head| head.tree_size == 1 && head.chain_head == first.receipt_id),
+            "the retained head must describe the surviving chain"
+        );
+
+        let (state, _store) = durable_finality_state_as(
+            dir.path(),
+            validator_b.clone(),
+            KeyPair::from_secret_bytes([0x5b; 32]).unwrap(),
+            vec![
+                (validator_a.clone(), key_a.public),
+                (validator_b.clone(), key_b.public),
+            ],
+        )
+        .await;
+        let exported = fetch_receipt_proof(&state, first.receipt_id).await;
+        let proof = exported
+            .inclusion_proof
+            .expect("intact anchored receipt keeps its proof after rotation");
+        assert_eq!(proof.tree_head.validator_did, validator_a);
+        assert_eq!(proof.tree_head.tree_size, 1);
+        let trust = exo_verify::TrustInputs {
+            key_bundle: exo_verify::KeyBundle {
+                format: exo_verify::KEY_BUNDLE_FORMAT_V1.into(),
+                version: 1,
+                keys: vec![
+                    exo_verify::KeyBundleEntry {
+                        did: Did::new("did:exo:agent").unwrap(),
+                        public_key: subject_keypair().public,
+                        roles: vec![exo_verify::KeyRole::Agent],
+                        valid_from: None,
+                        valid_until: None,
+                    },
+                    exo_verify::KeyBundleEntry {
+                        did: validator_a.clone(),
+                        public_key: key_a.public,
+                        roles: vec![exo_verify::KeyRole::Validator],
+                        valid_from: None,
+                        valid_until: None,
+                    },
+                ],
+            },
+            tsa: exo_verify::TsaTrust::default(),
+            latest_tree_head: None,
+            expected_chain_id: Some(first.receipt_id),
+        };
+        exo_verify::verify_receipt_inclusion(&first, &proof, &trust).unwrap();
     }
 
     #[tokio::test]
