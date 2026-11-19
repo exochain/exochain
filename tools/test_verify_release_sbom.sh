@@ -89,12 +89,11 @@ canonical_one="$test_root/canonical-one"
 canonical_two="$test_root/canonical-two"
 digest_one="$(run_validator "$raw_root" "$metadata_file" "$lock_file" "$canonical_one")"
 digest_two="$(run_validator "$raw_root" "$metadata_file" "$lock_file" "$canonical_two")"
-# Regenerated with cargo-cyclonedx 0.5.9 after adding the exochain-verify
-# crate (33 workspace crates). Two independent canonical validations produced
-# identical bytes and digest. The change is the new first-party package and
-# its dependency edges (RFC 3161 crates moved from exochain-node to
-# exochain-verify); no new third-party package entered Cargo.lock.
-expected_digest=772544d3d17262aa40e77256e07fa1579a7efb2bdbdcf880c6603d794399bc72
+# Regenerated with cargo-cyclonedx 0.5.9 after the sqlx 0.9.1 / rusqlite
+# 0.41.1 upgrade (patched libsqlite3-sys 0.39.1; rsa and other sqlx 0.8
+# packages left Cargo.lock). Two independent canonical validations produced
+# identical bytes and digest.
+expected_digest=064ee474d760bbb5dcb9160f2353e9ca1651b4664a5a06d260e389300793ef75
 [ "$digest_one" = "$expected_digest" ] && [ "$digest_two" = "$expected_digest" ] \
   || fail "exact cargo-cyclonedx 0.5.9 corpus did not produce the reviewed canonical digest"
 /usr/bin/diff -ru "$canonical_one" "$canonical_two" >/dev/null \

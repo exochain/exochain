@@ -568,11 +568,13 @@ impl ScopedDagDbSchema {
         let mut conn = PgConnection::connect(&cleanup_database_url)
             .await
             .expect("connect to DAG DB gateway test database");
-        sqlx::raw_sql(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
-            .execute(&mut conn)
-            .await
-            .expect("drop stale DAG DB gateway test schema");
-        sqlx::raw_sql(&format!("CREATE SCHEMA {schema}"))
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "DROP SCHEMA IF EXISTS {schema} CASCADE"
+        )))
+        .execute(&mut conn)
+        .await
+        .expect("drop stale DAG DB gateway test schema");
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
             .execute(&mut conn)
             .await
             .expect("create DAG DB gateway test schema");
@@ -595,10 +597,12 @@ impl Drop for ScopedDagDbSchema {
                 let mut conn = PgConnection::connect(&database_url)
                     .await
                     .expect("connect for DAG DB gateway schema cleanup");
-                sqlx::raw_sql(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
-                    .execute(&mut conn)
-                    .await
-                    .expect("drop DAG DB gateway test schema");
+                sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+                    "DROP SCHEMA IF EXISTS {schema} CASCADE"
+                )))
+                .execute(&mut conn)
+                .await
+                .expect("drop DAG DB gateway test schema");
             });
         })
         .join()

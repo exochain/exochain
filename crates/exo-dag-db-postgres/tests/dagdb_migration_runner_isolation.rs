@@ -42,18 +42,23 @@ impl TestPool {
             .connect(&database_url)
             .await
             .expect("connect to EXO_DAGDB_TEST_DATABASE_URL");
-        sqlx::query(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
-            .execute(&pool)
-            .await
-            .expect("drop existing runner test schema");
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP SCHEMA IF EXISTS {schema} CASCADE"
+        )))
+        .execute(&pool)
+        .await
+        .expect("drop existing runner test schema");
         Some(Self { pool, schema })
     }
 
     async fn drop_schema(&self) {
-        sqlx::query(&format!("DROP SCHEMA IF EXISTS {} CASCADE", self.schema))
-            .execute(&self.pool)
-            .await
-            .expect("drop runner test schema");
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP SCHEMA IF EXISTS {} CASCADE",
+            self.schema
+        )))
+        .execute(&self.pool)
+        .await
+        .expect("drop runner test schema");
     }
 }
 
@@ -91,10 +96,10 @@ async fn schema_scoped_runner_provisions_tables_and_own_ledger() {
 
     // The runner has its OWN `_sqlx_migrations` ledger inside the dedicated
     // schema (separate tracking), recording the dag-db migration versions.
-    let ledger_versions: Vec<i64> = sqlx::query_scalar(&format!(
+    let ledger_versions: Vec<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT version FROM {}._sqlx_migrations ORDER BY version",
         test.schema
-    ))
+    )))
     .fetch_all(&test.pool)
     .await
     .expect("the dedicated schema must carry its own _sqlx_migrations ledger");
@@ -108,10 +113,10 @@ async fn schema_scoped_runner_provisions_tables_and_own_ledger() {
 
     // A representative dag-db query answers against the provisioned schema: the
     // memory-objects table (queried by the runtime) is present and queryable.
-    let memory_rows: i64 = sqlx::query_scalar(&format!(
+    let memory_rows: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT count(*) FROM {}.dagdb_memory_objects",
         test.schema
-    ))
+    )))
     .fetch_one(&test.pool)
     .await
     .expect("representative dag-db query must answer against the provisioned schema");
@@ -134,11 +139,13 @@ async fn dagdb_runner_does_not_collide_with_gateway_migration_ledger() {
     // schema rather than `public` so the shared test database is not polluted,
     // while still exercising the cross-crate version reuse.)
     let gateway_schema = format!("{}_gateway", test.schema);
-    sqlx::query(&format!("CREATE SCHEMA {gateway_schema}"))
-        .execute(&test.pool)
-        .await
-        .expect("create gateway-style schema");
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CREATE SCHEMA {gateway_schema}"
+    )))
+    .execute(&test.pool)
+    .await
+    .expect("create gateway-style schema");
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "CREATE TABLE {gateway_schema}._sqlx_migrations ( \
             version BIGINT PRIMARY KEY, \
             description TEXT NOT NULL, \
@@ -146,16 +153,16 @@ async fn dagdb_runner_does_not_collide_with_gateway_migration_ledger() {
             success BOOLEAN NOT NULL, \
             checksum BYTEA NOT NULL, \
             execution_time BIGINT NOT NULL )"
-    ))
+    )))
     .execute(&test.pool)
     .await
     .expect("create gateway-style _sqlx_migrations");
     for version in CROSS_CRATE_COLLISION_VERSIONS {
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "INSERT INTO {gateway_schema}._sqlx_migrations \
              (version, description, success, checksum, execution_time) \
              VALUES ($1, 'gateway-owned migration', true, $2, 0)"
-        ))
+        )))
         .bind(version)
         // A gateway checksum that is deliberately different from the dag-db one.
         .bind(vec![0xAB_u8; 48])
@@ -173,9 +180,9 @@ async fn dagdb_runner_does_not_collide_with_gateway_migration_ledger() {
 
     // The gateway ledger is untouched: still exactly the two gateway rows with
     // their gateway checksums.
-    let gateway_rows = sqlx::query(&format!(
+    let gateway_rows = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT version, checksum FROM {gateway_schema}._sqlx_migrations ORDER BY version"
-    ))
+    )))
     .fetch_all(&test.pool)
     .await
     .expect("read gateway ledger after dag-db run");
@@ -191,10 +198,10 @@ async fn dagdb_runner_does_not_collide_with_gateway_migration_ledger() {
 
     // The dag-db ledger lives in its own schema and records the same version
     // integers under the dag-db checksums — separate tracking, no collision.
-    let dagdb_versions: Vec<i64> = sqlx::query_scalar(&format!(
+    let dagdb_versions: Vec<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT version FROM {}._sqlx_migrations ORDER BY version",
         test.schema
-    ))
+    )))
     .fetch_all(&test.pool)
     .await
     .expect("dag-db ledger present in dedicated schema");
@@ -205,10 +212,12 @@ async fn dagdb_runner_does_not_collide_with_gateway_migration_ledger() {
         );
     }
 
-    sqlx::query(&format!("DROP SCHEMA IF EXISTS {gateway_schema} CASCADE"))
-        .execute(&test.pool)
-        .await
-        .expect("drop gateway-style schema");
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP SCHEMA IF EXISTS {gateway_schema} CASCADE"
+    )))
+    .execute(&test.pool)
+    .await
+    .expect("drop gateway-style schema");
     test.drop_schema().await;
 }
 

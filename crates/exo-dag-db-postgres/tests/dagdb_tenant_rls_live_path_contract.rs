@@ -372,7 +372,7 @@ async fn rls_requires_bound_tenant_context_for_live_path_tables() {
 
     for table in TENANT_TABLES {
         let query = format!("SELECT count(*) FROM {}", table.name);
-        let result = sqlx::query_scalar::<_, i64>(&query)
+        let result = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(&query[..]))
             .fetch_one(&rls_pool.pool)
             .await;
         assert!(
@@ -425,13 +425,13 @@ async fn rls_blocks_cross_tenant_reads_and_writes_for_live_path_tables() {
             "UPDATE {} SET tenant_id = tenant_id WHERE tenant_id = 'tenant-a'",
             table.name
         );
-        let updated = sqlx::query(&update_query)
+        let updated = sqlx::query(sqlx::AssertSqlSafe(&update_query[..]))
             .execute(&mut *tenant_b_tx)
             .await
             .expect("cross-tenant update is filtered by RLS")
             .rows_affected();
         let delete_query = format!("DELETE FROM {} WHERE tenant_id = 'tenant-a'", table.name);
-        let deleted = sqlx::query(&delete_query)
+        let deleted = sqlx::query(sqlx::AssertSqlSafe(&delete_query[..]))
             .execute(&mut *tenant_b_tx)
             .await
             .expect("cross-tenant delete is filtered by RLS")
@@ -488,7 +488,7 @@ async fn count_tenant_rows(
     tenant_id: &str,
 ) -> i64 {
     let query = format!("SELECT count(*) FROM {table_name} WHERE tenant_id = $1");
-    sqlx::query_scalar::<_, i64>(&query)
+    sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(&query[..]))
         .bind(tenant_id)
         .fetch_one(&mut **tx)
         .await
@@ -1238,11 +1238,13 @@ impl TestDb {
         let mut admin = PgConnection::connect(database_url)
             .await
             .expect("connect to configured DAG DB test database URL");
-        sqlx::raw_sql(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
-            .execute(&mut admin)
-            .await
-            .expect("drop existing RLS live-path test schema");
-        sqlx::raw_sql(&format!("CREATE SCHEMA {schema}"))
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "DROP SCHEMA IF EXISTS {schema} CASCADE"
+        )))
+        .execute(&mut admin)
+        .await
+        .expect("drop existing RLS live-path test schema");
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
             .execute(&mut admin)
             .await
             .expect("create RLS live-path test schema");
@@ -1285,10 +1287,12 @@ impl Drop for TestDb {
                 let mut conn = PgConnection::connect(&database_url)
                     .await
                     .expect("connect for RLS live-path cleanup");
-                sqlx::raw_sql(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
-                    .execute(&mut conn)
-                    .await
-                    .expect("drop RLS live-path test schema");
+                sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+                    "DROP SCHEMA IF EXISTS {schema} CASCADE"
+                )))
+                .execute(&mut conn)
+                .await
+                .expect("drop RLS live-path test schema");
             });
         })
         .join()
@@ -1312,30 +1316,30 @@ impl RlsCheckedPool {
 
         let role_name = format!("dagdb_rls_{}_{}", label, process::id());
         drop_rls_role_if_exists(&db.pool, &role_name).await;
-        sqlx::raw_sql(&format!(
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "CREATE ROLE {role_name} LOGIN PASSWORD '{RLS_TEST_ROLE_PASSWORD}'"
-        ))
+        )))
         .execute(&db.pool)
         .await
         .expect("create RLS checked pool role");
-        sqlx::raw_sql(&format!(
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "GRANT USAGE ON SCHEMA {} TO {role_name}",
             db.schema
-        ))
+        )))
         .execute(&db.pool)
         .await
         .expect("grant schema usage to RLS checked pool role");
-        sqlx::raw_sql(&format!(
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {} TO {role_name}",
             db.schema
-        ))
+        )))
         .execute(&db.pool)
         .await
         .expect("grant table privileges to RLS checked pool role");
-        sqlx::raw_sql(&format!(
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "GRANT EXECUTE ON FUNCTION {}.dagdb_current_tenant_id() TO {role_name}",
             db.schema
-        ))
+        )))
         .execute(&db.pool)
         .await
         .expect("grant tenant helper execution to RLS checked pool role");
@@ -1381,11 +1385,11 @@ async fn drop_rls_role_if_exists(pool: &PgPool, role_name: &str) {
     if !exists {
         return;
     }
-    sqlx::raw_sql(&format!("DROP OWNED BY {role_name}"))
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP OWNED BY {role_name}")))
         .execute(pool)
         .await
         .expect("drop RLS checked pool role privileges");
-    sqlx::raw_sql(&format!("DROP ROLE {role_name}"))
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP ROLE {role_name}")))
         .execute(pool)
         .await
         .expect("drop RLS checked pool role");

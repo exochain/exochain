@@ -445,11 +445,13 @@ impl TestDb {
         let mut conn = PgConnection::connect(database_url.as_str())
             .await
             .expect("connect to EXO_DAGDB_TEST_DATABASE_URL");
-        sqlx::raw_sql(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
-            .execute(&mut conn)
-            .await
-            .expect("drop existing graph persistence test schema");
-        sqlx::raw_sql(&format!("CREATE SCHEMA {schema}"))
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "DROP SCHEMA IF EXISTS {schema} CASCADE"
+        )))
+        .execute(&mut conn)
+        .await
+        .expect("drop existing graph persistence test schema");
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
             .execute(&mut conn)
             .await
             .expect("create graph persistence test schema");
@@ -463,10 +465,13 @@ impl TestDb {
     }
 
     async fn set_search_path(&mut self) {
-        sqlx::raw_sql(&format!("SET search_path TO {}, public", self.schema))
-            .execute(&mut self.conn)
-            .await
-            .expect("set graph persistence search_path");
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "SET search_path TO {}, public",
+            self.schema
+        )))
+        .execute(&mut self.conn)
+        .await
+        .expect("set graph persistence search_path");
     }
 
     async fn apply_schema(&mut self) {
@@ -493,10 +498,12 @@ impl Drop for TestDb {
                 let mut conn = PgConnection::connect(&database_url)
                     .await
                     .expect("connect for graph persistence cleanup");
-                sqlx::raw_sql(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
-                    .execute(&mut conn)
-                    .await
-                    .expect("drop graph persistence test schema");
+                sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+                    "DROP SCHEMA IF EXISTS {schema} CASCADE"
+                )))
+                .execute(&mut conn)
+                .await
+                .expect("drop graph persistence test schema");
             });
         })
         .join()

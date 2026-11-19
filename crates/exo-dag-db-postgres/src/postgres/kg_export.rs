@@ -1689,7 +1689,7 @@ async fn count_exo_dag_rows(tx: &mut Transaction<'_, Postgres>) -> Result<u32> {
 
 async fn count_query(
     tx: &mut Transaction<'_, Postgres>,
-    sql: &str,
+    sql: &'static str,
     scope_and_id: &[&String; 3],
 ) -> Result<u32> {
     let count: i64 = sqlx::query_scalar(sql)
