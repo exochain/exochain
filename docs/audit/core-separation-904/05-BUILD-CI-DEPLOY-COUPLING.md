@@ -191,9 +191,22 @@ The advisories the two logs name:
 
 The run list for this workflow on `main` shows success at the four
 preceding runs (`3d0941be` on 2026-10-23, `c4ea410f` and `2be25492` on
-2026-11-01, `0d3dafd1` on 2026-11-05). Whether the failure comes from the
-audited commit's changes or from advisories published since the last green
-run was not determined.
+2026-11-01, `0d3dafd1` on 2026-11-05; run `41973463555`). The audited
+commit is the only commit between `0d3dafd1` and itself. Between the two,
+`Cargo.lock` gains one package, the workspace's own `exochain-verify`
+0.4.0 (668 to 669 packages); every crate in the table above has the same
+version at both commits, and `deny.toml` and `.cargo/audit.toml` are
+unchanged. So the failure does not come from the audited commit's changes:
+the same dependency set passed on 2026-11-05 and failed on 2026-11-17, and
+what changed is the advisory database. The first draft of this record said
+this "was not determined"; it was corrected after review.
+
+The advisory database keeps moving. A later run of the same workflow on an
+unrelated documentation branch (`44915232517`, 2026-11-21) also reports
+RUSTSEC-2026-0543: `chrono` 0.4.44 is unmaintained, with no safe upgrade,
+and it is in the core closure (`exochain-core`, `exochain-gateway`,
+`exochain-node`, `exochain-verify`). It is not in the audited run, which
+the table above describes.
 
 One part of the cause is visible. `deny.toml:75-81` ignores `pin-utils`
 under the placeholder id `RUSTSEC-0000-0000` (added by commit `bfbfc902` on

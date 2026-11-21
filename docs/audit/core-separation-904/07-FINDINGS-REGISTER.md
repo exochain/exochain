@@ -456,8 +456,8 @@ Limits of the sort:
 
 Later parts changed what earlier parts say. The earlier records were not
 edited; the later statement governs. The exception is the owner's review
-of this record, after which parts 3, 4 and 6 were corrected in place (last
-row).
+of this record, after which parts 3, 4, 5 and 6 were corrected in place
+(last two rows).
 
 | Earlier statement or gap | Part | Correction | Source |
 | --- | --- | --- | --- |
@@ -468,6 +468,7 @@ row).
 | F-19: 140 documents | 3 | 159 scan paths in the same locations; not reconciled (above) | This record |
 | F-22 and F-31 summary cells read "Yes" under blocking | 4, 5 | Their full text blocks a claim, not the copy; the register follows the full text | This record |
 | No part read `TERMS-CONDITIONS-AND-PRIVACY.md`; O-25 and F-44 said no contributor terms existed; the two PDFs' text was not extracted; CyberMedica's earlier licence statements had no finding | 3, 4, 6 | Corrected in place: part 4 reads the terms file and its first version (O-25, F-22, F-29, new F-52); part 6 carries the history (F-43, F-44, F-50, D-3, D-7, D-12); part 3 records the PDF extraction | Owner review on the pull request |
+| F-31 said the cause of the advisory failures "was not determined" | 5 | Corrected in place: the lockfile changed only by the workspace's own `exochain-verify` and the advisory configuration did not change since the last green run, so the cause is advisories published in between; a later run also reports RUSTSEC-2026-0543 (`chrono`) | Maintainer review on the pull request |
 
 The checker prints seven notes where a register row carries more or fewer
 disposition words than the part's one-line summary row. In each case the
