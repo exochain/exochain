@@ -76,7 +76,7 @@ Nothing was compiled or run.
 | Integration | Any tool, product or system outside the core that calls it. `AGENTS.md` calls these adjacent surfaces |
 | Gateway, node | The core's two server programs (`exo-gateway`, and `exochain` built from `exo-node`) |
 | AVC | Autonomous Volition Credential: the core's credential and receipt system (`exo-avc`) |
-| DAG DB | The core's governed graph memory, served over five gateway routes |
+| DAG DB | The core's governed graph memory, served over twelve gateway routes |
 | MCP | Model Context Protocol, the tool interface AI agents use |
 | F-n, O-n, D-n | A finding, observation or disclosure requirement from parts 1 to 7. Part 7's register lists them. Those cited here: F-1 to F-6 (which boundary crates travel with the core), F-9, F-10, F-13 (product names in the core's API), F-12 (ExoForge, 0dentity and Telegram surfaces in the node), F-15, F-16, F-35 (product tests inside core tests), F-26, F-39 (package contents unverified), F-44 (standing of the copyright holder named in headers), F-48 and D-8 (verifying releases after a split), O-31 (products linking to the core by file path) |
 
@@ -102,22 +102,47 @@ the fact comes from a one-off read-only survey and was not re-read.
 | --- | --- | --- | --- | --- |
 | Discovery document | `GET /.well-known/exochain.json` on the gateway: base URL, health and AVC route paths, SDK locations, MCP transport metadata | None. No version field; `base_url` is a fixed string; the SDK entries are repository paths, not package names | Nothing | Read: `crates/exo-gateway/src/rest.rs:33-104` |
 | AVC routes (node) | Issue, validate, delegate, revoke, emit and read receipts, receipt proofs | A response type for `GET /api/v1/avc/protocol` carries current, minimum and maximum protocol version, a schema version and a deprecation window in days. The handler was not read | The node's admin bearer token for writes and for reading trust objects | Read: `crates/exo-node/src/avc.rs:2477-2486`, `crates/exo-node/src/auth.rs:17-31`; route list by survey |
-| DAG DB routes (gateway) | Five mounted `POST` routes: route, context-packet, writeback, import, export | `schema_version` in the response bodies of those five routes. Request bodies and the shared error envelope are not versioned (`INTEGRATION.md:304`). An OpenAPI 3.1 file is hand-authored and covered by a test "when main integration runs it" (`INTEGRATION.md:310-311`) | A write signature, with consent checked against stored state (`INTEGRATION.md:93-99`). Header names by survey | Read: `INTEGRATION.md:71-104, 273-317`. `AGENTS.md` says some activation evidence for this runtime is still pending |
+| DAG DB routes (gateway) | Twelve mounted routes. Nine `POST`: intake, route, context-packet, validate, writeback, import, export, trust-check, council/decision. Three `GET`: receipts/:receipt_hash, catalog/:catalog_id, routes/:route_id. The gateway's own router includes them, so the node's server serves them too | Each of the twelve response types carries a `schema_version`. Request bodies and the shared error envelope are not versioned (`INTEGRATION.md:304`). The hand-authored OpenAPI 3.1 file describes five of the twelve, and is covered by a test "when main integration runs it" (`INTEGRATION.md:310-311`) | For writeback, import and export, a write signature with consent checked against stored state (`INTEGRATION.md:93-99`). What the other nine require was not read. Header names by survey | Read: `crates/exo-gateway/src/dagdb.rs:620-653` (the route table), `crates/exo-gateway/src/server.rs:4617-4639` (where the gateway mounts it), `docs/dagdb/api/openapi.json` (paths only), `INTEGRATION.md:71-104, 273-317`. The handlers of the seven routes the documentation omits were seen to exist (`dagdb.rs:661-1035`), not read. `AGENTS.md` says some activation evidence for this runtime is still pending |
 | Other gateway and node routes | Decisions, audit, sessions, agents, identity, tenants, governance, challenges, passport, provenance, economy, and product-named routes | None found | Session bearer (gateway) or admin bearer (node) | Survey |
 | MCP server (node) | stdio, and HTTP with server-sent events. Discovery metadata says loopback only and public transport off | MCP protocol `2024-11-05` | A signed `constitutional_context` on every tool call. A transport bearer, by survey | Read: `crates/exo-node/src/mcp/tools/mod.rs:17-62`, `middleware.rs:28`, `handler.rs:320`, `rest.rs:93-95`. The listener's binding and bearer check were not read |
 | Packages | Rust `exochain-sdk`; WASM bridge (`@exochain/exochain-wasm`); `@exochain/sdk` (npm); `exochain` (PyPI); `@exochain/llm-proxy` | One number, 0.4.0. `PROTOCOL_VERSION` in the npm and Python packages equals the package version | Depends on the route called | Read: `Cargo.toml:66`, `packages/exochain-sdk/src/index.ts:35`, `packages/exochain-sdk/package.json:3`, `packages/exochain-py/exochain/__init__.py:75`, `packages/exochain-py/pyproject.toml:23`, `packages/exochain-llm-proxy/package.json:3`. Package contents unverified (F-26) |
 | Offline verifier | Crate directory `exo-verify`, package name `exochain-verify`: checks an AVC receipt's signatures, its inclusion in the receipt chain, signer identity against a key bundle, and an RFC 3161 timestamp, with no network call | Key bundle and receipt bundle format constants | A key bundle the caller supplies; no credential | Read: `crates/exo-verify/src/lib.rs:17-44` |
 
-**The discovery document does not match what its host serves.** The
-gateway serves the document, and the document lists five AVC paths under
-a fixed `base_url`. A search of the gateway source found those paths only
-in the discovery type and in tests; the AVC routes are in the node. The
-node source does not mention the discovery document. The five DAG DB
-routes the gateway does serve are not in it. One path is written in the
-router's own syntax (`/api/v1/avc/receipts/:hash`). Whether a deployment
-puts both programs behind one host was not examined. As it stands, a
-client that follows the document may be sent to a host that does not
-answer.
+**The DAG DB documentation and the router disagree.** At the audited
+commit `dagdb_router` mounts twelve routes (`crates/exo-gateway/src/dagdb.rs:620-653`),
+and the gateway's router mounts that router
+(`crates/exo-gateway/src/server.rs:4617-4639`). `INTEGRATION.md:83-86` and
+`AGENTS.md:130-133` say the gateway serves exactly five. `INTEGRATION.md:99-102`
+and `:291-302` call the other seven "reserved" DTO surfaces that are not
+mounted. This record takes the router as the inventory, because it is what
+a client reaches. Whether the seven are meant to be served, and whether
+they meet the same consent and fail-closed obligations as the five, was
+not established: their handlers were seen, not read, and no route was
+called.
+
+**The discovery document is right for the node and wrong for the
+standalone gateway.** The gateway's router serves it
+(`crates/exo-gateway/src/server.rs:4548`), and it lists five AVC paths. The
+AVC routes are in the node (`crates/exo-node/src/avc.rs:5613-5642`). The two
+programs differ:
+
+- The node merges its AVC router into `extra_router`
+  (`crates/exo-node/src/main.rs:1451-1467`) and passes it to
+  `serve_with_extra_routes` (`:1517-1521`), which merges it into the
+  gateway's router (`crates/exo-gateway/src/server.rs:4524-4529`,
+  `5004-5027`). In the node the document and the AVC routes are on one
+  server, with no proxy needed.
+- The standalone `exo-gateway` program calls `serve`
+  (`crates/exo-gateway/src/main.rs:97`), which passes no extra routes
+  (`server.rs:4996-4998`). It serves the document but none of the five AVC
+  paths in it. A client that follows the document from that program is
+  sent to routes it does not answer.
+
+Three problems hold in both programs. `base_url` is the fixed string
+`https://exochain.io` (`crates/exo-gateway/src/rest.rs:76`), not the
+address of the server answering. The twelve DAG DB routes both programs
+serve are not listed. One path is written in the router's own syntax
+(`/api/v1/avc/receipts/:hash`).
 
 **MCP.** The registry sorts tools into classes
 (`crates/exo-node/src/mcp/tools/mod.rs:19-62`):
@@ -160,7 +185,8 @@ These are what the reading and the survey found, not proofs of absence.
 | --- | --- | --- |
 | No list of which interfaces are supported for outside use | An integrator cannot tell a stable route from an internal one | F-26, F-39 |
 | The only HTTP contract file found covers DAG DB. MCP tools carry their own JSON Schemas; the v0.3.1 schemas are proposals | Other HTTP routes have to be learned from Rust source | None |
-| The discovery document has no version, points at repository paths, and lists routes its host does not serve | It is the one place a client is told where to send a request | None |
+| The discovery document has no version, a fixed `base_url`, repository paths for the SDKs, and no DAG DB routes. Served by the standalone gateway, it lists AVC routes that program does not serve | It is the one place a client is told where to send a request | None |
+| The DAG DB documentation lists five routes; the router mounts twelve | An integrator reading the documentation does not know seven routes exist, or what they promise | None |
 | A version can be checked before a call only for AVC. DAG DB reports its version in the response, after a write has happened | An integration cannot refuse an unsupported contract before it has changed state | None |
 | No deprecation rule outside AVC | `VERSIONING.md:216-217` says the public API may change between minor versions | None |
 | Product names are in routes, credentials and the SDK | A neutral integrator would be reading another product's name in its own calls | F-9, F-10, F-13 |

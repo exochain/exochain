@@ -51,9 +51,12 @@ addresses are reduced to their domain; file contents are never read, so
 `name_flag` is a statement about a file name only.
 
 Deterministic for a given commit: no clock, no network, sorted path output.
-The git options that can change the text of `git log` are set on the command
-line (see PINNED and LOG_FLAGS), so a user or system setting such as
-`log.showSignature` does not change the tables. Replacement refs and grafts
+The git options found to change the text of `git log` are set on the
+command line (see PINNED and LOG_FLAGS), so a user or system setting such as
+`log.showSignature` or `log.showRoot` does not change the tables. The list
+was built by reading git's documentation; it is not proven complete.
+`log.showRoot` was missed at first: set to false, it drops the root commit's
+files and changes both tables. Replacement refs and grafts
 in the repository itself are not disabled.
 """
 
@@ -90,7 +93,7 @@ FMT = "%x01%H%x1f%aI%x1f%an%x1f%ae%x1f%cn%x1f%P%x1f%s%x1f" \
       "%(trailers:key=Signed-off-by,valueonly,separator=%x1e)%x02"
 
 # The scan must not depend on the user's or the machine's git configuration.
-# Every option that can change the text of these two `git log` calls is set
+# Every option found to change the text of these two `git log` calls is set
 # here, on the command line, where it overrides any configuration file.
 GIT = ["git", "--no-pager"]
 PINNED = [
@@ -99,8 +102,9 @@ PINNED = [
     "-c", "i18n.logOutputEncoding=UTF-8", "-c", "diff.renames=true",
     "-c", "diff.renameLimit=1000", "-c", "diff.relative=false",
     "-c", "diff.noprefix=false", "-c", "color.ui=false",
+    "-c", "log.showRoot=true",
 ]
-LOG_FLAGS = ["--no-color", "--no-show-signature", "--no-mailmap",
+LOG_FLAGS = ["--root", "--no-color", "--no-show-signature", "--no-mailmap",
              "--no-decorate", "--no-notes", "--encoding=UTF-8"]
 
 

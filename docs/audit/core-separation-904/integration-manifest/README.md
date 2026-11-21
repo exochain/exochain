@@ -57,7 +57,7 @@ says its early drafts have no standing, and that applies here:
 |---|---|
 | `exochain-integration.schema.json` | The schema, JSON Schema draft 2020-12. |
 | `example.exochain-integration.json` | A filled-in manifest for an invented tool. It validates. It names core release 0.4.0, which is not published, so the tool could not reach level 1 today. |
-| `check_manifest_schema.py` | Checks the schema, the example and 112 cases; also validates manifests named on the command line. |
+| `check_manifest_schema.py` | Checks the schema, the example, 112 cases and one check of its own printed report; also validates manifests named on the command line. |
 
 ## How to use it
 
@@ -72,6 +72,10 @@ Validate a manifest:
 ```bash
 python -I check_manifest_schema.py path/to/exochain-integration.json
 ```
+
+When an entry under `interfaces` fails, the report gives the schema's
+general message for the entry and, indented below it, the reason inside
+the entry, such as `interfaces/1 - 'version' is a required property`.
 
 The checker needs the Python package `jsonschema` (4.x). It compiles
 nothing and calls no network. Only the Python validator has been run.

@@ -377,6 +377,23 @@ def schema_paths(validator, doc):
     return paths
 
 
+def report_lines(validator, doc):
+    """The lines check_files prints for one document's errors.
+
+    A failed oneOf (an interface entry) is followed by the errors inside
+    the branch it was meant for, so the missing or invalid field is named.
+    """
+    lines = []
+    errors = sorted(validator.iter_errors(doc), key=lambda e: [str(p) for p in e.path])
+    for error in errors:
+        lines.append(f"   {'/'.join(str(p) for p in error.path) or '(root)'} - {error.message}")
+        if error.validator == "oneOf":
+            for inner in branch_errors(error):
+                where = "/".join(str(p) for p in list(error.path) + list(inner.path))
+                lines.append(f"      {where or '(root)'} - {inner.message}")
+    return errors, lines
+
+
 def check_files(validator, names):
     bad = 0
     for name in names:
@@ -387,12 +404,23 @@ def check_files(validator, names):
             print(name, "cannot be read as JSON:", error)
             bad += 1
             continue
-        errors = sorted(validator.iter_errors(doc), key=lambda e: [str(p) for p in e.path])
+        errors, lines = report_lines(validator, doc)
         print(name, "valid in shape" if not errors else f"{len(errors)} error(s)")
-        for error in errors:
-            print("  ", "/".join(str(p) for p in error.path) or "(root)", "-", error.message)
+        for line in lines:
+            print(line)
         bad += bool(errors)
     return bad
+
+
+def output_failures(validator, example):
+    """Check that the printed report names the field inside a failed interface."""
+    doc = copy.deepcopy(example)
+    del doc["interfaces"][1]["version"]
+    _, lines = report_lines(validator, doc)
+    wanted = "interfaces/1 - 'version' is a required property"
+    if not any(line.strip() == wanted for line in lines):
+        return [f"registry verifier without a version: report lacks '{wanted}': {lines}"]
+    return []
 
 
 def main():
@@ -419,8 +447,10 @@ def main():
             failures.append(f"{description}: expected invalid")
         elif not all(where in path for path in paths):
             failures.append(f"{description}: rejected, but not only by '{where}': {paths}")
+    failures.extend(output_failures(validator, example))
     print("cases", len(VALID) + len(INVALID), "expected valid", len(VALID),
           "expected invalid", len(INVALID))
+    print("report checks 1")
     for failure in failures:
         print("FAIL", failure)
     sys.exit(1 if failures else 0)
