@@ -201,8 +201,9 @@ the same dependency set passed on 2026-11-05 and failed on 2026-11-17, and
 what changed is the advisory database. The first draft of this record said
 this "was not determined"; it was corrected after review.
 
-The advisory database keeps moving. A later run of the same workflow on an
-unrelated documentation branch (`44915232517`, 2026-11-21) also reports
+The advisory database keeps moving. A later run of the same workflow, on a push to
+this pull request's own branch (`audit/904-core-separation` at `d0287be4`;
+run `44915232517`, 2026-11-21), also reports
 RUSTSEC-2026-0543: `chrono` 0.4.44 is unmaintained, with no safe upgrade,
 and it is in the core closure (`exochain-core`, `exochain-gateway`,
 `exochain-node`, `exochain-verify`). It is not in the audited run, which

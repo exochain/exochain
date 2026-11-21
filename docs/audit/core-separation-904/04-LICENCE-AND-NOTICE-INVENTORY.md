@@ -532,11 +532,18 @@ the commit that added it:
 | Commit or tag | Date | Files with the Apache-2.0 header | `cybermedica/package.json` licence | `cybermedica/LICENSE` |
 | --- | --- | --- | --- | --- |
 | `16582d68` (tree added) | 2026-05-26 | 254 of 271 | `Apache-2.0` | absent |
-| `v0.2.0-beta` | 2026-06-30 | 367 of 384 | `Apache-2.0` | absent |
+| `v0.2.0-beta` | 2026-07-02 | 367 of 384 | `Apache-2.0` | absent |
 | `livesafe-v0.1.0-beta` | 2026-07-03 | 367 of 384 | `Apache-2.0` | absent |
 | `v0.2.1-beta` | 2026-07-08 | 367 of 384 | `Apache-2.0` | absent |
 | `22d3f7f1` | 2026-07-10 | 367 of 386 | `UNLICENSED` | added |
 | `857149e7` | 2026-07-10 | none; 367 carry the proprietary SPDX identifier | `UNLICENSED` | present |
+
+The `v0.2.0-beta` row is the published tag: tag object `f1574502`, target
+`2d4baec1`, tagged and released on 2026-07-02. The clone this record was
+made from held a different `v0.2.0-beta` tag (`86c96e91`, target
+`af6db398`, 2026-06-30) that is not the one on GitHub, and the row first
+gave its date; a maintainer review caught it. The counts are the same at
+both commits. Every other tag in the clone matches the published one.
 
 Over the same weeks the root `README.md` described the repository as
 Apache-2.0 except `livesafe/`: at `v0.2.1-beta` its line 357 reads
@@ -615,7 +622,9 @@ Forwarding records where the question goes. It does not settle it.
 - No CI run was read. Statements about CI describe what `ci.yml` contains,
   not whether a step passes or is required.
 - No package or crate archive was built or inspected.
-- Binary files and the two PDFs were not read.
+- Binary files were not read. The two root PDFs were read only as text
+  extracted with `pdftotext -layout` after the owner's review (part 3); the
+  terms they state are recorded in F-29 and part 6, F-50.
 - Cross-references to parts 1 and 3 rely on those records as written
   (`path-classification.tsv`, `03-PRODUCT-FINGERPRINTS.md`).
 - Adjacent trees were inventoried by header and licence file only; their

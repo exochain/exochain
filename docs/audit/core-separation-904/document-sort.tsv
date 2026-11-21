@@ -9,11 +9,11 @@ CONTRIBUTING.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split;
 Cargo.lock	third-party/vendor	K2 config	pending	F-3; F-11; F-12; F-18; F-36; F-37	Review: patch an entry for a tree that leaves; otherwise follows the decision its term belongs to	decision-forum-name
 Cargo.toml	EXOCHAIN core	K2 config	pending	F-3; F-11; F-12; F-18; F-36; F-37	Review: patch an entry for a tree that leaves; otherwise follows the decision its term belongs to	cybermedica; decision-forum-name; livesafe; pathref:cybermedica; pathref:livesafe
 Dockerfile	core runtime adapter	K2 config	pending	F-3; F-11; F-12; F-18; F-36; F-37	Review: patch an entry for a tree that leaves; otherwise follows the decision its term belongs to	decision-forum-name
-EXOCHAIN-FABRIC-PLATFORM.md	EXOCHAIN core	K1 standing	pending	F-50	Standing open: document owner and legal owner (PDF text not extracted)	hipaa-phi; pathref:web; zerodentity
+EXOCHAIN-FABRIC-PLATFORM.md	EXOCHAIN core	K1 standing	pending	F-50	Standing open: document owner and legal owner (PDF text extracted: specification marked CONFIDENTIAL; whitepaper states CC BY-NC-SA 4.0)	hipaa-phi; pathref:web; zerodentity
 EXOCHAIN_AVC_Rust_PRD.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	commandbase; decision-forum-name
 EXOCHAIN_Custody_Native_Economy_Rust_PRD.md	EXOCHAIN core	K4 product	pending	F-13	Review: follows the panel decision on the item it documents	commandbase
-EXOCHAIN_Specification_v2.2.pdf	EXOCHAIN core	K1 standing	pending	F-50	Standing open: document owner and legal owner (PDF text not extracted)	binary-not-scanned
-EXOCHAIN_Whitepaper_v1.0.pdf	EXOCHAIN core	K1 standing	pending	F-50	Standing open: document owner and legal owner (PDF text not extracted)	binary-not-scanned
+EXOCHAIN_Specification_v2.2.pdf	EXOCHAIN core	K1 standing	pending	F-50	Standing open: document owner and legal owner (PDF text extracted: specification marked CONFIDENTIAL; whitepaper states CC BY-NC-SA 4.0)	binary-not-scanned
+EXOCHAIN_Whitepaper_v1.0.pdf	EXOCHAIN core	K1 standing	pending	F-50	Standing open: document owner and legal owner (PDF text extracted: specification marked CONFIDENTIAL; whitepaper states CC BY-NC-SA 4.0)	binary-not-scanned
 GAP-REGISTRY.md	EXOCHAIN core	K5 living	patch	F-19	Review required at the split; update product paths and repository references	crosschecked; decision-forum-name; honorgood; pathref:Initiatives; zerodentity
 HONOR_GOOD_COMPACT.md	EXOCHAIN core	K4 product	pending	F-13	Review: follows the panel decision on the item it documents	honorgood; path-name:honorgood
 INTEGRATION.md	core runtime adapter	K5 living	patch	F-19	Review required at the split; update product paths and repository references	commandbase; exoforge; lynk

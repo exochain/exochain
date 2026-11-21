@@ -257,9 +257,14 @@ to apply the Apache License to your work") is removed. The file has not
 changed since. The same content (blob `58f6cab5`) is the `LICENSE` in
 `packages/exochain-sdk/`, `packages/exochain-llm-proxy/` and
 `packages/exochain-wasm/wasm/`. Part 4 described these four files as
-"Apache-2.0 text" and as identical to each other; it did not compare them
-with the text the Apache Software Foundation publishes. Neither did this
-record: the comparison here is only between the two commits.
+"Apache-2.0 text" and as identical to each other. After a maintainer
+review, both commits were compared word by word, ignoring whitespace, with
+the text the Apache Software Foundation publishes (`https://www.apache.org/licenses/LICENSE-2.0.txt`, fetched
+2026-11-21, SHA-256 `cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30`). `eda286e5` matches it. The current file
+differs from it in exactly the two places above: section 5 has "and" where
+the published text has "or", and the appendix is missing, although line 38
+still says "an example is provided in the Appendix below". What those
+differences mean is for the accountable legal owner.
 
 **The root manifest.** The new root `8089b6aa` (2026-03-18) declared
 `license = "AGPL-3.0-or-later"` in `Cargo.toml` and contained no `LICENSE`
@@ -345,7 +350,7 @@ the standard Apache-2.0 text until the file is compared with it. Reporting
 the dated facts above is not blocked. Copying the files is not blocked;
 describing the copy as Apache-2.0 without qualification is.
 
-### F-44. One author name is recorded on most core commits; the contribution terms changed once and no acceptance is recorded
+### F-44. One author name is recorded on most core commits; the contribution terms changed once, and acceptance by individual contributors was not verified
 
 By git author name:
 
@@ -381,8 +386,12 @@ What the repository records about the terms of those contributions:
   (`TERMS-CONDITIONS-AND-PRIVACY.md` §5, lines 64-73). That text dates from
   2026-05-10 (`49fa8f5e`). From 2025-12-16 until then the same file held a
   contributor licence agreement in favour of "EXOCHAIN Foundation DAO LLC"
-  (F-43). How a contributor accepts either text, and whether any did, is
-  not recorded. The first draft of this record said no contributor
+  (F-43). Both versions describe how contributors indicate agreement. The
+  earlier agreement says that submitting a pull request or patch does (§10,
+  lines 143 and 174 at `158cbce2`); the present terms say that contributing
+  to an Exochain repository does (line 28). This audit did not verify
+  acceptance by individual contributors or determine the legal effect for
+  any contribution. The first draft of this record said no contributor
   agreement or inbound-licence statement existed; its search included the
   root `*.md` files and missed this one.
 - No certificate of origin or sign-off rule was found. The search covered
@@ -424,7 +433,8 @@ author-name record, which today exists only in git.
 
 Proposed disposition: pending, accountable legal owner. The owner decides
 whether the headers' holder is correct, whether the terms file's §5 is the
-inbound rule and how acceptance is recorded, what the earlier agreement
+inbound rule, what can be established about acceptance for particular
+contributions, what the earlier agreement
 means for contributions made under it, and whether the 290 files may take the header. A `patch` to add
 headers stays conditional on that answer, as in F-22. **Blocking** for an
 "Apache-2.0 core" claim that covers the 290 files (carried from F-22).
@@ -761,7 +771,7 @@ No filter was specified or run, so these are expected effects:
 | F-41 | Two unrelated histories joined on 2026-03-18; 7,925 build-output paths were committed and later removed | `no_change` to history; inspection pending | Only for a history option that keeps those objects |
 | F-42 | 95 commits change core and product paths together | Pending, split plan | Only for a filtered-history option |
 | F-43 | Licence statements changed: the `LICENSE` text was edited; AGPL in the root manifest for two days and in a demo package until May, inside two tags; 204 `command-base/` files Apache-headed for two months, and `cybermedica/` for six weeks, inside three tags; the terms file named a DAO LLC and held a contributor agreement until 2026-05-10 | Pending, legal owner | Yes: claims about legal effect, "always Apache-2.0", or standard licence text |
-| F-44 | One author name on 1,380 of 1,479 non-merge commits that touch core or adapter paths; other parties credited in trailers; no sign-off; inbound terms changed in 2026-05 from a contributor agreement to an Apache-2.0 statement, with no acceptance recorded; no record of the holder's standing | Pending, legal owner | Yes: Apache-2.0 claim over the 290 headerless files |
+| F-44 | One author name on 1,380 of 1,479 non-merge commits that touch core or adapter paths; other parties credited in trailers; no sign-off; inbound terms changed in 2026-05 from a contributor agreement to an Apache-2.0 statement; both say how agreement is indicated, and acceptance by individual contributors was not verified; no record of the holder's standing | Pending, legal owner | Yes: Apache-2.0 claim over the 290 headerless files |
 | F-45 | 221 non-merge commits name an AI tool or agent (lower bound) | Pending, legal owner; disclose | Yes: any wholly-human-authored claim |
 | F-46 | 1,235 unsigned commits and 575 merges against rules requiring signatures and linear history | `patch` rules or enforcement | Yes: claims that all commits are signed or verified |
 | F-47 | 502 commit references and 792 pull-request links in core and adapter records point at the legacy repository; this audit's tables add more | `patch` under the split plan | Yes: cutover |

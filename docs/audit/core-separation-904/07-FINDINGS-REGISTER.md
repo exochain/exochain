@@ -210,7 +210,7 @@ one and this record suggests none (8 rows).
 | F-41 | Two histories joined; 7,925 build-output paths committed, later removed | `no_change` to history; inspection pending | split plan owner † | conditional |
 | F-42 | 95 commits change core and product paths together | pending | split plan owner | conditional |
 | F-43 | Licence statements changed over time, inside tags; the terms file held a contributor agreement until 2026-05-10 | pending | legal owner | claim |
-| F-44 | One author name on 1,380 of 1,479 non-merge commits that touch core or adapter paths; inbound terms changed in 2026-05; no record of acceptance or of the holder's standing | pending | legal owner | claim |
+| F-44 | One author name on 1,380 of 1,479 non-merge commits that touch core or adapter paths; inbound terms changed in 2026-05; acceptance by individual contributors not verified; no record of the holder's standing | pending | legal owner | claim |
 | F-45 | 221 non-merge commits name an AI tool or agent (lower bound) | pending; disclose | legal owner | claim |
 | F-46 | 1,235 unsigned commits and 575 merges against the stated rules | `patch` | core maintainers | claim |
 | F-47 | 502 commit references and 792 pull-request links in core and adapter records point at the legacy repository | `patch` under the split plan | split plan owner | cutover |
@@ -457,11 +457,11 @@ Limits of the sort:
 Later parts changed what earlier parts say. The earlier records were not
 edited; the later statement governs. The exception is the owner's review
 of this record, after which parts 3, 4, 5 and 6 were corrected in place
-(last two rows).
+(last three rows).
 
 | Earlier statement or gap | Part | Correction | Source |
 | --- | --- | --- | --- |
-| `LICENSE` described as Apache-2.0 text | 4 | The file was edited after the first commit (wording in section 5, and the appendix removed). It has not been compared with the published text, so "Apache-2.0 text" is unconfirmed | Part 6, F-43 |
+| `LICENSE` described as Apache-2.0 text | 4 | The file was edited after the first commit (wording in section 5, and the appendix removed). Compared with the published text after a maintainer review: the first commit matches it, and the current file differs in those two places | Part 6, F-43 |
 | O-24 records an AGPL field in the root manifest and looks no further | 4 | A second AGPL declaration, in `demo/packages/exochain-wasm/package.json`, lasted until 2026-05-09 and is inside two tags | Part 6, F-43 |
 | 17 PDF files recorded as an observation (O-5, O-37) | 1, 6 | Raised to finding F-51 | Part 6 |
 | Counts of product coupling taken by proposed class alone | 3, 5 | Part 5 found the gap: vendor-class paths inside product trees are missed (`livesafe/Cargo.lock`). Counts are by directory as well as class (O-29). `omission_groups.py` therefore groups by tree first | Part 5 |
@@ -469,6 +469,7 @@ of this record, after which parts 3, 4, 5 and 6 were corrected in place
 | F-22 and F-31 summary cells read "Yes" under blocking | 4, 5 | Their full text blocks a claim, not the copy; the register follows the full text | This record |
 | No part read `TERMS-CONDITIONS-AND-PRIVACY.md`; O-25 and F-44 said no contributor terms existed; the two PDFs' text was not extracted; CyberMedica's earlier licence statements had no finding | 3, 4, 6 | Corrected in place: part 4 reads the terms file and its first version (O-25, F-22, F-29, new F-52); part 6 carries the history (F-43, F-44, F-50, D-3, D-7, D-12); part 3 records the PDF extraction | Owner review on the pull request |
 | F-31 said the cause of the advisory failures "was not determined" | 5 | Corrected in place: the lockfile changed only by the workspace's own `exochain-verify` and the advisory configuration did not change since the last green run, so the cause is advisories published in between; a later run also reports RUSTSEC-2026-0543 (`chrono`) | Maintainer review on the pull request |
+| F-44 said no acceptance of the contribution terms was recorded; F-43 had not compared `LICENSE` with the published text; F-52 dated `v0.2.0-beta` from a local tag that differs from the published one; the K1 rows and part 4's limits still said the PDFs were unread; part 5 called the later CI run's branch unrelated | 4, 5, 6 | Corrected in place: F-44 records how both versions say agreement is indicated and that individual acceptance was not verified; F-43 records the comparison; F-52 uses the published tag (2026-07-02, same counts); `document-sort.tsv` regenerated; part 5 names this pull request's branch | Maintainer re-review on the pull request |
 
 The checker prints seven notes where a register row carries more or fewer
 disposition words than the part's one-line summary row. In each case the
@@ -671,9 +672,9 @@ gh issue view 904 --repo exochain/exochain --json state,updatedAt,comments
 
 | Table | SHA-256 |
 | --- | --- |
-| `findings-register.tsv` | `bdf880fa4b9baf85252d7e38bfdbcf1c31ed7a009421ae35f5c496d0b4f8eda5` |
+| `findings-register.tsv` | `39bf3d39eee8f0b0cbd517f29b294b9068b60641e6ffb9c20c63715856a61e7a` |
 | `proposed-omissions.tsv` | `1acf98f452caac67038f96c06e2d5abd14eb10981e3b36c9131386a79ff4af85` |
-| `document-sort.tsv` | `5eb46661c5852df79e8d7b07f88bb34eb5ce8a80451c1cf45ce4de3473ca2eb9` |
+| `document-sort.tsv` | `25566329b90d80b00a23dd6587038470f6f783fe0eae8e6be738369539adead6` |
 
 The first command exits non-zero if the register and the parts disagree on
 which findings exist, their part, the vocabulary, links or status, or if a

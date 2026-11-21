@@ -57,7 +57,7 @@ PRODUCT = re.compile(r"honor_?good|econom|0dentity|zerodentity|catapult|livesafe
                      r"archon|commandbase|adjacent-surfaces|cybermedica|heartfield|exoforge",
                      re.IGNORECASE)
 ACTION = {
-    "K1 standing": ("pending", "F-50", "Standing open: document owner and legal owner (PDF text not extracted)"),
+    "K1 standing": ("pending", "F-50", "Standing open: document owner and legal owner (PDF text extracted: specification marked CONFIDENTIAL; whitepaper states CC BY-NC-SA 4.0)"),
     "K2 config": ("pending", "F-3; F-11; F-12; F-18; F-36; F-37",
                   "Review: patch an entry for a tree that leaves; otherwise follows the decision its term belongs to"),
     "K3 dated": ("no_change", "F-19; F-47", "Keep as written; the register records that named products moved"),
