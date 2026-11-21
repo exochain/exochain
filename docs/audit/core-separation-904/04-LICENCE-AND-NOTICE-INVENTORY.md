@@ -93,7 +93,11 @@ The repository's licensing documents were then read in full:
 `LICENSE`, the five proprietary licence files, `README.md` (License
 section), `docs/legal/LICENSING-POSITION.md`,
 `governance/commercial-product-licensing.json`, `deny.toml`,
-`tools/license_headers.py` and `tools/test_proprietary_license_boundaries.sh`.
+`tools/license_headers.py`, `tools/test_proprietary_license_boundaries.sh`
+and `TERMS-CONDITIONS-AND-PRIVACY.md`, with that file's first version
+(`158cbce2`, 2025-12-16). The terms file was left out of the first drafts
+of this record and read after the owner's review; the passages that rely
+on it say so.
 
 ## What the repository says its licensing is
 
@@ -105,6 +109,26 @@ section), `docs/legal/LICENSING-POSITION.md`,
 | `docs/legal/LICENSING-POSITION.md` §2 | The Apache grant applies to "the canonical Rust trust primitives in `crates/`" and to "core-supporting tooling, CI rules, governance records, and documentation **that carry an explicit Apache-2.0 notice**". "It does not apply to product-branded applications, product shells, customer-zero surfaces, or product demos." |
 | Same, §2a | "Product-branded demo or prototype code has the same product license posture." |
 | `governance/commercial-product-licensing.json` | Five commercial products, each `apache_by_proximity: false` |
+| `TERMS-CONDITIONS-AND-PRIVACY.md` §2 (line 38) | Exochain software is Apache-2.0 "Unless expressly stated otherwise in a specific repository, release package, file header, notice, or written agreement" |
+| Same, §5 (line 64; representations at lines 70-73) | Unless the contributor says otherwise in writing, a contribution submitted for inclusion "will be submitted under the Apache License 2.0" |
+| Same, §6 (line 79) | Governance materials, explanatory documentation, white papers and other non-software content "are not automatically licensed under Apache License 2.0" |
+| Same, §8 (line 103) and §21 (lines 214, 216) | Some assets may be owned by third parties, "including private trusts"; the governing-law clause reads `[Insert State]` and `[Insert County and State]` |
+
+The position document and the terms file agree that non-software content
+needs an express notice: the first extends the grant to documentation
+"that carry an explicit Apache-2.0 notice", the second says such content
+is "not automatically" Apache-2.0. For software they point in different
+directions: the position document grants for named areas, while the terms
+file's §2 applies Apache-2.0 unless something says otherwise.
+
+The terms file has had two texts. From `158cbce2` (2025-12-16) until
+`49fa8f5e` (2026-05-10) it was a 590-line document that named the
+Foundation as "EXOCHAIN Foundation DAO LLC", a limited liability company
+formed under Wyoming law (line 31), and contained a contributor licence
+agreement granting that company copyright and patent licences in each
+contribution (section 10, lines 141-155). The tags `v0.1.0-alpha` and
+`v0.1.0-beta` contain that version. The present text names no legal form
+for the Foundation. Part 6 carries the history (F-43, F-44).
 
 There are nine licence files. No tracked file is named `NOTICE*` or
 `COPYING*`:
@@ -256,6 +280,16 @@ what the grant covers:
   are two files part 3 named in F-9:
   `crates/exo-avc/tests/livesafe_public_output_ceremony_tests.rs` and
   `crates/exo-node/src/livesafe_public_output_ceremony_cli.rs`.
+- The terms file reads the other way for software. Its §2 makes Exochain
+  software Apache-2.0 unless "a specific repository, release package, file
+  header, notice, or written agreement" says otherwise, so on its wording a
+  source file is not outside the grant for lacking a header. Its §6 says
+  governance materials and explanatory documentation are "not
+  automatically" Apache-2.0, which agrees with the position document for
+  the 43 files in `docs/` and the 15 in `governance/`. The two documents
+  therefore give different answers for headerless source and the same
+  answer for headerless documents. Which governs, and whether a SQL
+  migration or a fixture is software in §2's sense, is for the legal owner.
 
 Adding a header is a licence statement. Whether the Foundation can make it
 for each file depends on who wrote the file and on what terms, which is
@@ -434,18 +468,34 @@ Three further points:
 - One unsupported-type file does carry the header
   (`tools/python-release-requirements.in`).
 - The two root PDFs (specification and whitepaper) are excluded by the tool
-  and binary to this script. Whether they state a licence, and which, is
-  unknown.
+  and binary to this script. Their text was extracted after the owner's
+  review (part 3, "Not scanned"). The whitepaper's "Appendix C: Document
+  Information" (page 40) gives the authors as "EXOCHAIN Foundation
+  Architecture Team" and the licence as "CC BY-NC-SA 4.0", a non-commercial
+  licence. The specification is marked "Classification: CONFIDENTIAL" on
+  its cover and in a running header on all 76 pages, and names "EXOCHAIN
+  Foundation" as document owner. Apart from the trademark rules of its
+  Appendix H, no licence statement was found in its text (part 6, F-50).
 
 The 47 `governance/` JSON files and the other governance and tooling files
 here fall under the position document's "explicit Apache-2.0 notice" wording
-and cannot carry a header. No document says how such files are covered.
+and cannot carry a header. The terms file covers them only in general
+words: its §6 says governance materials and documentation are "not
+automatically" Apache-2.0 and may be used "by an express license notice",
+and its §2 makes software Apache-2.0 unless something says otherwise. No
+document gives a notice mechanism for a file type that cannot carry a
+header, or says on which side of §2 and §6 a JSON governance record falls.
+The whitepaper raises a different question: a root file under the root
+Apache `LICENSE`, proposed as core, states a non-commercial licence of its
+own. §6 is consistent with that; an Apache-2.0 claim for the root files is
+not.
 
 Proposed disposition: `no_change` to the files, **conditional** on the panel
 recording a notice mechanism for file types that cannot carry a header (for
 example a statement in the position document or a per-directory licence
-file). The PDFs are **open** and need a text extraction pass (also owed from
-part 3).
+file). The PDFs are **pending** with the document owner and the legal owner
+(part 6, F-50): their terms are now known, and the question is whether
+they stand.
 
 ### F-30. Vendor-class files inside proprietary trees
 
@@ -470,6 +520,58 @@ Proposed disposition: `adjacent_patch` (the tree owner decides whether
 generated files should be tracked and how they are marked). Does not block
 the core.
 
+### F-52. `cybermedica/` carried Apache-2.0 statements before it was made proprietary
+
+Issue #904: "CyberMedica was specifically identified as having different
+terms; escalate ambiguity instead of relicensing it." Part 1 classes the
+tree as adjacent, and F-28 records its present statements: its own
+proprietary `LICENSE`, `UNLICENSED` in `cybermedica/package.json`, and 367
+files with the proprietary SPDX identifier. Its earlier statements, from
+the commit that added it:
+
+| Commit or tag | Date | Files with the Apache-2.0 header | `cybermedica/package.json` licence | `cybermedica/LICENSE` |
+| --- | --- | --- | --- | --- |
+| `16582d68` (tree added) | 2026-05-26 | 254 of 271 | `Apache-2.0` | absent |
+| `v0.2.0-beta` | 2026-06-30 | 367 of 384 | `Apache-2.0` | absent |
+| `livesafe-v0.1.0-beta` | 2026-07-03 | 367 of 384 | `Apache-2.0` | absent |
+| `v0.2.1-beta` | 2026-07-08 | 367 of 384 | `Apache-2.0` | absent |
+| `22d3f7f1` | 2026-07-10 | 367 of 386 | `UNLICENSED` | added |
+| `857149e7` | 2026-07-10 | none; 367 carry the proprietary SPDX identifier | `UNLICENSED` | present |
+
+Over the same weeks the root `README.md` described the repository as
+Apache-2.0 except `livesafe/`: at `v0.2.1-beta` its line 357 reads
+"Apache-2.0 for all of this repository **except** the [`livesafe/`]
+subtree". `CHANGELOG.md:298-301` describes the July change as having
+"replaced residual Apache file grants in both proprietary subtrees". The
+terms file's §2, in its present text throughout this period, makes
+software Apache-2.0 unless a header, notice or agreement says otherwise;
+until 2026-07-10 this tree's headers and manifest said Apache-2.0. The
+repository is public.
+
+Not read: the tree's two product-requirements documents,
+`cybermedica/CyberMedica_QMS_PRD_Master.docx` and
+`cybermedica/CyberMedica_QMS_PRD_Master.pdf`, are binary and were not
+opened, so any terms they state are unknown. No tracked document was found
+that records the "different terms" the issue refers to, or an agreement
+with any party about this tree; no location outside the tree was searched
+for one. The tree was compared across these commits by header and manifest
+only.
+
+Why it matters for the split. The tree stays in the legacy repository, so
+the split moves none of it. The issue asks for the ambiguity to be
+escalated: the tree was public for about six weeks with Apache-2.0 headers
+and an Apache-2.0 manifest, inside three release tags, and was then marked
+proprietary. Whether those statements had any effect, whether the
+different terms the issue mentions predate them, and how the present
+marking relates to them are questions for the accountable legal owner.
+This record does not answer them.
+
+Proposed disposition: pending, accountable legal owner, escalated as the
+issue asks. No change to any statement in the tree, current or historical,
+is proposed. **Blocking** for any statement that CyberMedica was never
+offered under Apache-2.0, and for any relicensing of the tree, until the
+owner answers. Not blocking for the core copy.
+
 ## Findings summary
 
 | ID | Finding | Proposed disposition | Blocks cutover, and why |
@@ -481,8 +583,9 @@ the core.
 | F-26 | Licence-text placement in source; package contents unverified | `patch` for three units; rest pending (part 5, panel) | Per unit: resolve before distributing it |
 | F-27 | Product-named code under Apache headers | Pending: intent, authority and boundary are separate | Yes: with part 3's F-9 and F-10 |
 | F-28 | Adjacent is not a licence class | `adjacent_patch` | No |
-| F-29 | Files outside the header check; two PDFs | `no_change`, conditional on a recorded notice mechanism; PDFs open | PDFs open |
+| F-29 | Files outside the header check; two PDFs that state other terms (CC BY-NC-SA 4.0; CONFIDENTIAL) | `no_change`, conditional on a recorded notice mechanism; PDFs open with the owners (F-50) | No Apache-2.0 claim for the two PDFs |
 | F-30 | Vendor-class files inside proprietary trees | `adjacent_patch` | No |
+| F-52 | `cybermedica/` carried Apache-2.0 headers and manifest from 2026-05-26 to 2026-07-10, inside three tags, before it was made proprietary; escalated as the issue asks | Pending, accountable legal owner; no change to the tree proposed | Yes: any "never Apache-2.0" statement for the tree, and any relicensing of it |
 
 ## Observations forwarded to later parts
 
@@ -491,7 +594,7 @@ Forwarding records where the question goes. It does not settle it.
 | ID | Observation | Evidence | Goes to |
 | --- | --- | --- | --- |
 | O-24 | Before 2026-03-20 the root `Cargo.toml` declared `AGPL-3.0-or-later` while `LICENSE` held Apache-2.0 text. The position document calls it a scaffolding error. Whether anything was published or contributed under the AGPL field is a history question. | `docs/legal/LICENSING-POSITION.md` §7; `CHANGELOG.md:502` | Part 6 |
-| O-25 | `CONTRIBUTING.md` asks contributors to "uphold the Apache 2.0 License" (line 278). No contributor licence agreement, sign-off rule or inbound-licence statement was found by a search of that file. | `CONTRIBUTING.md` | Part 6 |
+| O-25 | `CONTRIBUTING.md` asks contributors to "uphold the Apache 2.0 License" (line 278). The root terms file states inbound terms: a contribution submitted for inclusion "will be submitted under the Apache License 2.0", with four contributor representations (§5, lines 64-73). From 2025-12-16 to 2026-05-10 the same file held a contributor licence agreement in favour of "EXOCHAIN Foundation DAO LLC" (section 10 of `158cbce2`). No sign-off rule was found. The first draft of this observation searched `CONTRIBUTING.md` only and said no inbound-licence statement existed; that was wrong. | `CONTRIBUTING.md`; `TERMS-CONDITIONS-AND-PRIVACY.md` and its history | Part 6 |
 | O-26 | `ci.yml` has licence steps in two places (lines 392-405): the root manifest field against the first line of `LICENSE`, and the proprietary boundary guard. Neither checks per-file headers. No licence check on npm or Python dependencies was found in `ci.yml`. What the boundary guard covers in full was not assessed. | `ci.yml` | Part 5 |
 | O-27 | The copyright holder is written three ways: "Exochain Foundation" (headers), "EXOCHAIN Foundation" with 2025–2026 (four guides), "ExoChain Team" (`tools/syntaxis/package.json`). | Inventory; manifest | Part 6 |
 | O-28 | Lockfiles in adjacent trees record MPL-2.0, CC-BY-4.0, Python-2.0 and packages with no licence field, by the lockfiles' own `license` fields; the packages were not inspected. They leave with their trees. | `package-lock.json` files under `demo/`, `livesafe/`, `site/`, `web/` | Adjacent owners |

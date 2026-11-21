@@ -245,7 +245,7 @@ these commits are written down.
 
 ### F-43. Licence statements changed during the history
 
-Five things are visible. This record states what the files said and when.
+Eight things are visible. This record states what the files said and when.
 It does not say what legal effect any of it has.
 
 **The licence text itself.** The root `LICENSE` has two commits. `eda286e5`
@@ -297,11 +297,35 @@ header. Three release tags fall in that window and contain the Apache-headed
 files: `v0.2.0-beta`, `v0.2.1-beta` and `livesafe-v0.1.0-beta`. The
 repository is public.
 
+**`cybermedica/`.** The tree was added on 2026-05-26 (`16582d68`) with the
+Apache-2.0 header on 254 of its 271 files and `Apache-2.0` in its
+`package.json`. At `v0.2.1-beta` (2026-07-08) 367 of 384 files carried the
+header. `22d3f7f1` and `857149e7` (both 2026-07-10) added
+`cybermedica/LICENSE`, changed the manifest to `UNLICENSED` and replaced
+the headers with the proprietary SPDX identifier. The tags `v0.2.0-beta`,
+`livesafe-v0.1.0-beta` and `v0.2.1-beta` contain the Apache-headed tree.
+Part 4, F-52, gives the dated table and escalates it, as the issue asks.
+
 **Other product trees in the same commit.** `97a4b973` also changed 117
 `demo/` paths, 119 `site/` paths and 68 `web/` paths. Today 114 of the
 `demo/` files have no header, and all 119 `site/` and 68 `web/` files still
 carry the Apache header (part 4). The content of the `demo/`, `site/` and
 `web/` files at `97a4b973` was not checked.
+
+**The terms file.** `TERMS-CONDITIONS-AND-PRIVACY.md` was added by
+`158cbce2` (2025-12-16) as a 590-line document. It named the Foundation as
+"EXOCHAIN Foundation DAO LLC", a limited liability company formed under
+Wyoming law (line 31). Its section 10 (lines 141-155) was a contributor
+licence agreement granting that company copyright and patent licences in
+each contribution, and its summary (line 21) says code contributions
+require accepting it. The tags `v0.1.0-alpha` and `v0.1.0-beta` contain
+that version. `49fa8f5e` (2026-05-10) replaced the text, and the header
+commit `97a4b973` followed the same day. The present version names no legal
+form for the Foundation and, in place of the agreement, says contributions
+are submitted under Apache-2.0 (§5). So the inbound terms changed once,
+from a licence agreement in favour of a named company to an Apache-2.0
+inbound statement. Whether any contributor accepted the earlier agreement,
+how, and whether it still binds anyone was not examined.
 
 Why it matters for the split. The legacy repository keeps these commits and
 tags. Whether a header that was public for two months has any continuing
@@ -321,7 +345,7 @@ the standard Apache-2.0 text until the file is compared with it. Reporting
 the dated facts above is not blocked. Copying the files is not blocked;
 describing the copy as Apache-2.0 without qualification is.
 
-### F-44. One author name is recorded on most core commits, and no separate contribution agreement was found
+### F-44. One author name is recorded on most core commits; the contribution terms changed once and no acceptance is recorded
 
 By git author name:
 
@@ -349,9 +373,20 @@ not established.
 What the repository records about the terms of those contributions:
 
 - No commit of the 2,176 carries a `Signed-off-by` trailer.
-- No contributor licence agreement, certificate of origin, sign-off rule or
-  inbound-licence statement was found. The search covered the root `*.md`
-  files, `.github/`, `governance/**/*.md` and `docs/legal/`.
+- The root terms file states inbound terms. Unless a contributor says
+  otherwise in writing, a contribution submitted for inclusion "will be
+  submitted under the Apache License 2.0", and the contributor represents
+  that they may submit it and that it is free of conflicting employment,
+  assignment or confidentiality obligations
+  (`TERMS-CONDITIONS-AND-PRIVACY.md` §5, lines 64-73). That text dates from
+  2026-05-10 (`49fa8f5e`). From 2025-12-16 until then the same file held a
+  contributor licence agreement in favour of "EXOCHAIN Foundation DAO LLC"
+  (F-43). How a contributor accepts either text, and whether any did, is
+  not recorded. The first draft of this record said no contributor
+  agreement or inbound-licence statement existed; its search included the
+  root `*.md` files and missed this one.
+- No certificate of origin or sign-off rule was found. The search covered
+  the root `*.md` files, `.github/`, `governance/**/*.md` and `docs/legal/`.
 - `CONTRIBUTING.md` line 278 asks contributors to "Uphold the Apache 2.0
   License". `LICENSING-POSITION.md` line 122 says the Apache patent grant
   "covers contributions made by ExoChain contributors".
@@ -359,7 +394,15 @@ What the repository records about the terms of those contributions:
 - The file headers name "Exochain Foundation" as copyright holder. No
   tracked document was found that identifies that body as a legal entity or
   records a transfer of rights from the authors to it. The search was the
-  same as above; other locations were not searched.
+  same as above; other locations were not searched. That holds for the tree
+  at the audited commit. In the history, the terms file's first version
+  (2025-12-16 to 2026-05-10) named the Foundation as "EXOCHAIN Foundation
+  DAO LLC", a Wyoming limited liability company, and took contributors'
+  licences in its name (F-43). No tracked document says whether that
+  company is the body the headers name. The present terms file adds that
+  some assets may be owned by third parties, "including private trusts"
+  (§8, line 103), and its governing-law clause is unfilled (§21, lines 214
+  and 216).
 
 Part 4's F-22 listed 290 non-adjacent files that are eligible for the
 standard header and lack it (213 adapter, 60 core, 17 vendor-class), and
@@ -370,15 +413,19 @@ than one name.
 Why it matters for the split. The tracked `LICENSE` has a section 5 on
 "Submission of Contributions" (lines 130-136; see F-43 for a wording change
 in it). Whether and how that section applies to any contribution here is
-for the accountable legal owner; this record takes no view. The history
+for the accountable legal owner; this record takes no view. The terms
+file's §5 states inbound terms in the same direction; whether it binds a
+contributor, and what the earlier agreement means for contributions made
+while it stood, is for the same owner. The history
 cannot show that the body named in the headers holds the rights the headers
 assert, and it does not show the employment or contract terms of any
 author. A new repository copied without history also loses the per-file
 author-name record, which today exists only in git.
 
 Proposed disposition: pending, accountable legal owner. The owner decides
-whether the headers' holder is correct, whether an inbound-licence rule is
-adopted, and whether the 290 files may take the header. A `patch` to add
+whether the headers' holder is correct, whether the terms file's §5 is the
+inbound rule and how acceptance is recorded, what the earlier agreement
+means for contributions made under it, and whether the 290 files may take the header. A `patch` to add
 headers stays conditional on that answer, as in F-22. **Blocking** for an
 "Apache-2.0 core" claim that covers the 290 files (carried from F-22).
 Copying the files is not blocked; the licence claim made about the copy is
@@ -608,12 +655,28 @@ normative.
 the author name "exochain" through the hosting web interface ("Add files
 via upload"). Their document information gives the author as "Un-named" and
 the producer as a word processor. No editable source for either is tracked.
-The only rights text found by string search is in embedded font notices.
 `CONTRIBUTING.md` line 34 says that if the code disagrees with the
-specification PDF, "the *code* is wrong". These checks identified no author
-and no licence statement for the file the repository treats as its
-governing specification. The PDFs were not rendered, so a statement inside
-the page text may have been missed.
+specification PDF, "the *code* is wrong". The first draft of this record
+found no author or licence statement by string search of the raw files.
+After the owner's review their text was extracted with `pdftotext -layout`
+(part 3, "Not scanned"):
+
+- the whitepaper's "Appendix C: Document Information" (page 40) gives the
+  authors as "EXOCHAIN Foundation Architecture Team" and the licence as
+  "CC BY-NC-SA 4.0";
+- the specification's cover reads "Classification: CONFIDENTIAL",
+  "Document Owner EXOCHAIN Foundation" and "Status DRAFT -- Authoritative
+  Source of Truth"; a running header "EXOCHAIN Fabric Platform v1.3 |
+  CONFIDENTIAL" is on all 76 pages; its Appendix H is a "Trademark & Mark
+  Usage Policy". Apart from that policy, no licence statement was found in
+  its text.
+
+So the document the repository makes normative is itself marked
+confidential, and a root file proposed as core states a non-commercial
+licence. The terms file's §6, which says white papers are "not
+automatically" Apache-2.0, is consistent with the whitepaper's licence; an
+Apache-2.0 claim for it is not. Removing the marking from
+`EXOCHAIN-FABRIC-PLATFORM.md` would leave the specification's in place.
 
 **Imported evidence.** Part 1 assigned no path to the class "imported
 evidence" and left the review to this part (O-9). The keyword search in
@@ -626,9 +689,11 @@ way.
 
 Proposed disposition: `patch` for `EXOCHAIN-FABRIC-PLATFORM.md` (the
 document owner removes the marking or the file is withheld from the core).
-Pending, document owner and legal owner, for the PDFs: record the author
-and the terms, and confirm the normative designation the Markdown file
-already states. As a precaution, **blocking** for copying those three files
+Pending, document owner and legal owner, for the PDFs: whether the
+specification's CONFIDENTIAL marking stands on a public file the
+repository treats as normative, whether the whitepaper's CC BY-NC-SA 4.0
+licence stands, and the normative designation the Markdown file already
+states. As a precaution, **blocking** for copying those three files
 under an Apache-2.0 claim until the owners answer. Not blocking for the
 rest of the core.
 
@@ -659,16 +724,16 @@ split plan and the panel, drawn from the findings above. None is in force.
 | --- | --- | --- |
 | D-1 | The source repository under its new name, and the exact source commit the files were copied from | Issue #904; F-47 |
 | D-2 | Whether it carries no history, or a filtered history; if filtered, the rule used and that commit identifiers differ from the source | F-41, F-42, F-47 |
-| D-3 | If no history is carried: that per-file author names and co-author trailers are recorded only in the source repository's history, and that those names are unverified | F-44 |
+| D-3 | If no history is carried: that per-file author names and co-author trailers are recorded only in the source repository's history, and that those names are unverified; and which inbound contribution terms stood at each date (a contributor licence agreement in favour of a named company until 2026-05-10, an Apache-2.0 inbound statement after) | F-43, F-44 |
 | D-4 | That the source history records commits naming AI tools as author or co-author | F-45 |
 | D-5 | That commit signatures in the source history are partial and were not verified | F-46 |
 | D-6 | Every omission or redaction made in copying, the reason, and its successor location where one exists, without reproducing sensitive removed content. Part 7 keeps the proposed list in its section "Proposed omissions and their successor locations" and in `proposed-omissions.tsv` | Issue #904; F-50, F-51 |
-| D-7 | That earlier licence statements differed: the root manifest field before 2026-03-20, the AGPL declaration in the WASM demo package until 2026-05-09 and the tags that contain it, the Apache headers on product files between 2026-05-10 and 2026-07-15, and the change to the `LICENSE` text, with a pointer to the legal position document | F-43 |
+| D-7 | That earlier licence statements differed: the root manifest field before 2026-03-20, the AGPL declaration in the WASM demo package until 2026-05-09 and the tags that contain it, the Apache headers on `command-base/` files between 2026-05-10 and 2026-07-15, the Apache headers and manifest on `cybermedica/` between 2026-05-26 and 2026-07-10, the earlier terms file naming a DAO LLC and holding a contributor agreement, and the change to the `LICENSE` text, with a pointer to the legal position document | F-43, F-52 |
 | D-8 | How to verify a release made before the split, naming the repository that holds its source commit and attestation | F-47, F-48 |
 | D-9 | For each kind of commit, pull-request and issue reference in copied records, whether it refers to the source repository | F-47 |
 | D-10 | If history is filtered: a published map from source to rewritten commit and tag identifiers, the commits dropped, how merges were handled, and that signatures on rewritten commits no longer verify | F-42, F-46, F-47 |
 | D-11 | Which branches and tags the legacy repository keeps, including the two tags outside the audited history | O-36, O-42 |
-| D-12 | The provenance questions still open at the time of the copy: attribution for the outside projects the core names, documents withheld or of unsettled standing, and that no content scan for secrets or third-party code was made | F-44, F-49, F-50, O-38 |
+| D-12 | The provenance questions still open at the time of the copy: attribution for the outside projects the core names, documents withheld or of unsettled standing (the specification marked CONFIDENTIAL, the whitepaper under a non-commercial licence), the change of contributor terms in 2026-05 and the company the earlier terms named, and that no content scan for secrets or third-party code was made | F-43, F-44, F-49, F-50, O-38 |
 | D-13 | The source commit of any later import from the legacy repository, not only the first copy | F-47 |
 
 Concerns that apply only if the new repository carries a filtered history.
@@ -695,14 +760,14 @@ No filter was specified or run, so these are expected effects:
 | --- | --- | --- | --- |
 | F-41 | Two unrelated histories joined on 2026-03-18; 7,925 build-output paths were committed and later removed | `no_change` to history; inspection pending | Only for a history option that keeps those objects |
 | F-42 | 95 commits change core and product paths together | Pending, split plan | Only for a filtered-history option |
-| F-43 | Licence statements changed: the `LICENSE` text was edited; AGPL in the root manifest for two days and in a demo package until May, inside two tags; 204 `command-base/` files Apache-headed for two months, inside three tags | Pending, legal owner | Yes: claims about legal effect, "always Apache-2.0", or standard licence text |
-| F-44 | One author name on 1,380 of 1,479 non-merge commits that touch core or adapter paths; other parties credited in trailers; no sign-off, separate agreement or holder record found | Pending, legal owner | Yes: Apache-2.0 claim over the 290 headerless files |
+| F-43 | Licence statements changed: the `LICENSE` text was edited; AGPL in the root manifest for two days and in a demo package until May, inside two tags; 204 `command-base/` files Apache-headed for two months, and `cybermedica/` for six weeks, inside three tags; the terms file named a DAO LLC and held a contributor agreement until 2026-05-10 | Pending, legal owner | Yes: claims about legal effect, "always Apache-2.0", or standard licence text |
+| F-44 | One author name on 1,380 of 1,479 non-merge commits that touch core or adapter paths; other parties credited in trailers; no sign-off; inbound terms changed in 2026-05 from a contributor agreement to an Apache-2.0 statement, with no acceptance recorded; no record of the holder's standing | Pending, legal owner | Yes: Apache-2.0 claim over the 290 headerless files |
 | F-45 | 221 non-merge commits name an AI tool or agent (lower bound) | Pending, legal owner; disclose | Yes: any wholly-human-authored claim |
 | F-46 | 1,235 unsigned commits and 575 merges against rules requiring signatures and linear history | `patch` rules or enforcement | Yes: claims that all commits are signed or verified |
 | F-47 | 502 commit references and 792 pull-request links in core and adapter records point at the legacy repository; this audit's tables add more | `patch` under the split plan | Yes: cutover |
 | F-48 | Release attestations and publication are tied to the current repository's identity (inferred) | Pending, release owner | Yes: first release from the new repository |
 | F-49 | Core code states material use of two outside MIT projects, with no notice found; Archon comparison open; built bundles show no third-party banners; proof fixtures lack a generation record | Pending; `no_change`; `patch` | No; "notices complete" stays conditional |
-| F-50 | A public file marked CONFIDENTIAL under an Apache header; a specification PDF and a whitepaper PDF with no author or terms identified | `patch`; pending | Yes (precaution): for those three files |
+| F-50 | A public Markdown file and the specification PDF it calls normative are both marked CONFIDENTIAL; the whitepaper PDF states CC BY-NC-SA 4.0 | `patch`; pending | Yes (precaution): for those three files |
 | F-51 | 17 tracked files named as health-record requests, not opened | Pending, LiveSafe owner and security panel | Yes: any "free of personal data" statement |
 
 ## Items earlier parts sent here
@@ -718,8 +783,8 @@ No filter was specified or run, so these are expected effects:
 | F-27, authority to grant the licence | Part 4 | **Not resolved.** No record of the holder's standing found (F-44) |
 | O-24, AGPL manifest field | Part 4 | Dated in F-43, which also finds a second AGPL declaration lasting until 2026-05-09; registry publication not checked |
 | `LICENSE` described as Apache-2.0 text | Part 4 | **New here** (F-43): the file was edited after the first commit; comparison with the published text still to do |
-| O-25, contributor terms | Part 4 | Confirmed absent across the wider search in F-44 |
-| O-27, three spellings of the copyright holder | Part 4 | Unchanged; no document defines the entity (F-44) |
+| O-25, contributor terms | Part 4 | **Corrected after the owner's review.** The terms file states inbound terms (§5) and held a contributor agreement until 2026-05-10 (F-43, F-44); the wider search had missed it |
+| O-27, three spellings of the copyright holder | Part 4 | Unchanged for the current tree; the terms file's first version named "EXOCHAIN Foundation DAO LLC" (F-44) |
 | F-39, package contents | Part 5 | **Not done here.** Still needs a release dry run on CI |
 
 ## Observations

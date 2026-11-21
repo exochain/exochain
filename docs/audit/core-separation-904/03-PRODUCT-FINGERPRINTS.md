@@ -558,7 +558,7 @@ and what is left.
 | Stray references in documents | 140 root, `docs/` and `governance/` files | F-19 | Per-file sort (part 7) |
 | Config | `.exochain/honorgood.yml`, `provenance.yml`, `mission_economics.yml`, `mcp.example.json`; `docker-compose.yml`, `init-db.sh`, `.env.example`; `Cargo.toml`, `.gitignore`, `.dockerignore`; `deploy/RAILWAY-HANDOFF.md` | F-11, F-13, F-18 | The three `.exochain/` files other than `honorgood.yml` follow F-13 but were not read line by line |
 | Examples | `crates/exo-api/examples/generate_crosschecked_anchor_fixtures.rs`; `docs/economy/examples/` (named legacy receipts) | F-10, F-13 | `packages/*/examples` matched only LYNK |
-| Assets | Binary fixtures named for CrossChecked; two root PDFs | F-10; "Not scanned" | Content of all 14 binaries |
+| Assets | Binary fixtures named for CrossChecked; two root PDFs | F-10; "Not scanned" | Content of 12 binaries; the two PDFs' text was extracted later ("Not scanned") |
 | CI paths | `ci.yml` steps for adjacent trees; `release.yml` LYNK jobs | F-16, O-20 | Full CI inventory (part 5) |
 | Agent artifacts | Core-class: `AGENTS.md`, `agents/*/AGENTS.md` (one has a `Co-Authored-By: Paperclip` line, `agents/graphql-engineer/AGENTS.md:92`; one references an ExoForge workflow) | F-19 | See next table |
 
@@ -591,10 +591,19 @@ Fourteen files contain a NUL byte and were not searched:
 Binary files with no NUL byte (for example the raw key and signature files
 in F-10) were decoded as text, which finds nothing useful in them.
 
-The two PDFs are the specification and whitepaper. Their text was not
-extracted, so whether they name products is unknown. That is fingerprint
-work, not licence work, and it is **open**: it needs a text extraction pass
-before the split record can say anything about them.
+The two PDFs are the specification and whitepaper. The scan did not
+extract their text. After the owner's review it was extracted with
+`pdftotext -layout` and searched for the product names of this part's term
+list. The specification names 0dentity (11 matches in the extracted text),
+LegalDyne (once) and LYNK (once); all three appear in its "Appendix H:
+Trademark & Mark Usage Policy" as reserved marks, and the last two appear
+only there. Neither file names LiveSafe, CyberMedica, CommandBase,
+CrossChecked, HonorGood, ExoForge, Heartfield, Archon, VitalLock, Syntaxis,
+Telegram or Decision Forum. The extracted text is not tracked, and
+`product-fingerprints.tsv` has no rows from it; the table is unchanged.
+The terms the two files state (the specification is marked CONFIDENTIAL;
+the whitepaper states CC BY-NC-SA 4.0) are recorded in part 4, F-29, and
+part 6, F-50.
 
 ## Findings summary
 

@@ -24,7 +24,7 @@ legal advice, and not a cryptographic certification.**
 Issue #904 asks the audit to "produce a findings register with each
 omission/redaction explained and linked to its successor location", and
 adds: "This is not a cryptographic certification." This record is that
-register. It collects the 51 findings of parts 1 to 6 in one table, says
+register. It collects the 52 findings of parts 1 to 6 in one table, says
 which of them block the split (#903) and which only block a statement,
 lists what is proposed to be left out of a new core repository and where
 each left-out item would live afterwards, and sets the result against the
@@ -45,7 +45,7 @@ observation.
 
 It establishes:
 
-- one row per finding F-1 to F-51, with the disposition its part proposed,
+- one row per finding F-1 to F-52, with the disposition its part proposed,
   the owner its part named, and what it blocks;
 - that the register and the six part records agree on which findings exist
   and which part defines each (checked by script);
@@ -83,7 +83,7 @@ It does not establish:
 | Tracked paths | 3,175 |
 | Path table (part 1) | `path-classification.tsv`, SHA-256 `0640fb42fa7d2b69ff13599d9e2ee25ea825bfa8cd4553a0ef5a7ac280d79667` |
 | Fingerprint table (part 3) | `product-fingerprints.tsv`, SHA-256 `92b105d61be0ae1a9e9bf0b275663270d9961be92e7825bf40c8b5c1da347a5b` |
-| Register | `findings-register.tsv`, 51 rows |
+| Register | `findings-register.tsv`, 52 rows |
 | Omission groups | `proposed-omissions.tsv`, 23 rows |
 | Document sort | `document-sort.tsv`, 159 rows |
 | Issue #904 | Open, no comments, read 2026-11-17 |
@@ -198,9 +198,10 @@ one and this record suggests none (8 rows).
 | F-26 | Licence-text placement; package contents unverified | `patch` (three units); rest pending | release owner † | release |
 | F-27 | Product-named code under Apache headers | pending | legal owner, Architecture panel † | cutover |
 | F-28 | Adjacent is not a licence class | `adjacent_patch` | tree owners † | none |
-| F-29 | Files outside the header check; two PDFs | `no_change`, conditional; PDFs pending | panel | claim |
+| F-29 | Files outside the header check; two PDFs that state other terms | `no_change`, conditional; PDFs pending | panel; document owner, legal owner | claim |
 | F-30 | Vendor-class files inside proprietary trees | `adjacent_patch` | tree owners | none |
 | F-49 | Stated use of two outside MIT projects, no notice found; Archon comparison open; proof fixtures lack a generation record | pending (Archon, attribution); `no_change` (`dist` bundles); `patch` (fixture record) | owner of `.archon/`, legal owner | claim |
+| F-52 | `cybermedica/` carried Apache-2.0 headers and manifest until 2026-07-10, inside three tags; escalated as the issue asks | pending | legal owner | claim |
 
 ### History and provenance (part 6)
 
@@ -208,16 +209,16 @@ one and this record suggests none (8 rows).
 | --- | --- | --- | --- | --- |
 | F-41 | Two histories joined; 7,925 build-output paths committed, later removed | `no_change` to history; inspection pending | split plan owner † | conditional |
 | F-42 | 95 commits change core and product paths together | pending | split plan owner | conditional |
-| F-43 | Licence statements changed over time, inside tags | pending | legal owner | claim |
-| F-44 | One author name on 1,380 of 1,479 non-merge commits that touch core or adapter paths; no holder record found | pending | legal owner | claim |
+| F-43 | Licence statements changed over time, inside tags; the terms file held a contributor agreement until 2026-05-10 | pending | legal owner | claim |
+| F-44 | One author name on 1,380 of 1,479 non-merge commits that touch core or adapter paths; inbound terms changed in 2026-05; no record of acceptance or of the holder's standing | pending | legal owner | claim |
 | F-45 | 221 non-merge commits name an AI tool or agent (lower bound) | pending; disclose | legal owner | claim |
 | F-46 | 1,235 unsigned commits and 575 merges against the stated rules | `patch` | core maintainers | claim |
 | F-47 | 502 commit references and 792 pull-request links in core and adapter records point at the legacy repository | `patch` under the split plan | split plan owner | cutover |
 | F-48 | Release attestations tied to the current repository identity (inferred) | pending | release owner | release |
-| F-50 | A public file marked CONFIDENTIAL; two PDFs with no author or terms | `patch`; pending | document owner, legal owner | cutover (those three files, under an Apache-2.0 claim) |
+| F-50 | A public file and the specification PDF marked CONFIDENTIAL; the whitepaper PDF states CC BY-NC-SA 4.0 | `patch`; pending | document owner, legal owner | cutover (those three files, under an Apache-2.0 claim) |
 | F-51 | 17 tracked files named as health-record requests, not opened | pending | LiveSafe owner, Security panel | claim |
 
-Totals: 22 `cutover`, 2 `release`, 12 `claim`, 4 `conditional`, 11 `none`.
+Totals: 22 `cutover`, 2 `release`, 13 `claim`, 4 `conditional`, 11 `none`.
 
 ## What blocks the split
 
@@ -255,8 +256,9 @@ statements that the findings rule out today, and what each would need.
 
 | Statement | Why not, today | Finding |
 | --- | --- | --- |
-| "The core is free of product material" | Product names are in public APIs, a route, credentials, schema and an erasure path; 14 binary files, two of them PDFs, were not scanned; unnamed product logic was not searched for | F-9 to F-13, F-18, F-20; part 3 "Not scanned" |
-| "The core is Apache-2.0 throughout" | 290 eligible files lack the header; who may apply it is not recorded | F-22, F-44 |
+| "The core is free of product material" | Product names are in public APIs, a route, credentials, schema and an erasure path; 12 binary files were not scanned, and the specification PDF names 0dentity, LegalDyne and LYNK; unnamed product logic was not searched for | F-9 to F-13, F-18, F-20; part 3 "Not scanned" |
+| "The core is Apache-2.0 throughout" | 290 eligible files lack the header; who may apply it is not recorded; a root PDF states CC BY-NC-SA 4.0 and another is marked CONFIDENTIAL; the terms file says documentation is not automatically Apache-2.0 | F-22, F-29, F-44, F-50 |
+| "CyberMedica, or the products, were never offered under Apache-2.0" | `cybermedica/` files carried the Apache header and its manifest said Apache-2.0 from 2026-05-26 to 2026-07-10, and 204 `command-base/` files carried the header from 2026-05-10 to 2026-07-15, inside three release tags | F-43, F-52 |
 | "The repository has always been Apache-2.0" or "ships the standard licence text" | The root manifest declared AGPL for two days, before the first tag; a demo package declared it until 2026-05-09, inside two tags; the `LICENSE` text was edited and has not been compared with the published text | F-43 |
 | "Third-party notices are complete" | No NOTICE file; two outside projects are named as sources without a notice; one comparison is open | F-24, F-49 |
 | "Published packages carry the right licence files" | Package contents were not inspected; that needs a release dry run | F-26, F-39 |
@@ -280,8 +282,8 @@ own row names one (O-28, O-30, O-32, O-36, O-38, O-42 do).
 | Architecture panel | Boundary crates and fixtures; form of product-name patches; class of `demo/`, `web/`, `gap/`, `tools/syntaxis/`; which record governs path class | F-1 to F-3, F-5, F-6, F-8 to F-11, F-12†, F-13†, F-14, F-17, F-27†, F-34†; part 1's 379 judgment rows; O-6, O-7, O-13 |
 | Security panel | DAG DB and `exo-api` in the core; LiveSafe tables and erasure; VitalLock constant; required checks; hosting; the 17 letters; identifiers in a tracked workflow; history secret scan | F-1, F-2, F-11, F-20, F-32, F-36, F-51; O-32, O-38; O-23 (suggested) |
 | Panel, not specified by the part | Notice mechanism for files outside the header check | F-24†, F-29 |
-| Accountable legal owner | Right to apply headers; effect of earlier licence statements; AI-assisted commits; notices; standing of three files | F-22, F-24†, F-27†, F-43, F-44, F-45, F-49, F-50; D-3, D-4, D-7, D-12 |
-| Document owner | The CONFIDENTIAL marking; author and terms of the two PDFs | F-50 |
+| Accountable legal owner | Right to apply headers; effect of earlier licence statements, CyberMedica's among them; contributor terms; AI-assisted commits; notices; standing of three files | F-22, F-24†, F-27†, F-29, F-43, F-44, F-45, F-49, F-50, F-52; D-3, D-4, D-7, D-12 |
+| Document owner | The CONFIDENTIAL markings on the Markdown file and the specification PDF; whether the whitepaper's CC BY-NC-SA 4.0 licence stands | F-29, F-50 |
 | Owner of `.archon/` | Comparison with the outside project | F-49 |
 | Split plan owner (#903) | History option; reference handling; legacy name; branches and tags kept; where disclosures are published | F-41†, F-42, F-47; O-36, O-42; D-1 to D-13 |
 | Release owner | Package contents; first release from a new repository | F-26†, F-39†, F-48; D-8 |
@@ -368,7 +370,7 @@ none; the split plan would need to supply replacements.
 | --- | ---: | --- | --- |
 | `tools/syntaxis/` | 12 | Part 2 proposes it stays in the legacy repository; core-class in part 1; MIT manifest under Apache headers (F-25) | Architecture panel |
 | `packages/exochain-sdk/dist`, `dist-test`; `packages/exochain-llm-proxy/dist` | 196 | Tracked build output. On provenance, part 6 proposes `no_change` (a string search found no third-party banners, F-49; the build was not reviewed). **Whether the new repository tracks build output at all is a separate question no part answers** (O-4): copy as tracked, or do not track and build at release | Not named; release owner suggested |
-| `EXOCHAIN-FABRIC-PLATFORM.md`, `EXOCHAIN_Specification_v2.2.pdf`, `EXOCHAIN_Whitepaper_v1.0.pdf` | 3 | Part 6 (F-50) blocks copying them *under an Apache-2.0 claim* until the owners answer. Its remedies: for the Markdown file, the document owner removes the marking or the file is withheld; for the PDFs, the author and terms are recorded and the normative designation the Markdown file states is confirmed. **This record adds its own suggestion**: hold all three out of the first copy until then. The PDFs' text was never extracted, so whether they name products is unknown | Document owner, legal owner |
+| `EXOCHAIN-FABRIC-PLATFORM.md`, `EXOCHAIN_Specification_v2.2.pdf`, `EXOCHAIN_Whitepaper_v1.0.pdf` | 3 | Part 6 (F-50) blocks copying them *under an Apache-2.0 claim* until the owners answer. Its remedies: for the Markdown file, the document owner removes the marking or the file is withheld; for the PDFs, the owners say whether the specification's CONFIDENTIAL marking and the whitepaper's CC BY-NC-SA 4.0 licence stand, and confirm the normative designation the Markdown file states. **This record adds its own suggestion**: hold all three out of the first copy until then. The PDFs' text was extracted after the owner's review: the specification names 0dentity, LegalDyne and LYNK, reserved marks in its Appendix H, and neither file names the other products (part 3, "Not scanned") | Document owner, legal owner |
 | Boundary crates and their documents | part 2 | Not proposed for omission. Option B for economy (issue #902) and the `exo-catapult`, `exo-messaging`, `exo-tenant` and `exo-cgr-*` questions would add omissions if chosen | Architecture panel |
 | `history-commits.tsv`, `history-paths.tsv`, and the other tables in this directory | this audit | They describe the legacy repository at one commit and cite its commit ids (F-47). This directory is not part of the audited tree. Suggested: keep the tables with the audit record wherever the panel files it, labelled as describing the source repository; do not regenerate them in the new one | Split plan owner |
 
@@ -416,7 +418,7 @@ numbers were **not reconciled row by row**. The sort covers the larger set.
 | K4 product | 24 | pending | Follows the decision on the item it documents; the table links each file to one finding by the product word in its path (F-13 for 16 of them): `docs/honorgood/`, `docs/economy/`, the two root "compact" files, `docs/0DENTITY-APP-SPEC.md`, the Archon, catapult, CrossChecked and LiveSafe-ceremony documents |
 | K3 dated | 75 | `no_change` | Kept as written. Release records, audit reports, the execution ledger, dated plans, council and resolution records, the changelog, and two governance files whose front matter was read |
 | K2 config | 9 | pending review | Root configuration and build inputs. An entry for a tree that leaves is patched (F-11, F-18, F-36, F-37). An entry that names a boundary item follows that decision instead: `Dockerfile` and `Cargo.lock` match on Decision Forum (F-3, F-17), `tarpaulin.toml` on Telegram (F-12, O-19). `Cargo.lock` is generated and is never edited by hand |
-| K1 standing | 3 | pending | The two PDFs (text not extracted) and `EXOCHAIN-FABRIC-PLATFORM.md` (F-50) |
+| K1 standing | 3 | pending | The two PDFs (the specification marked CONFIDENTIAL, the whitepaper under CC BY-NC-SA 4.0) and `EXOCHAIN-FABRIC-PLATFORM.md` (F-50) |
 
 **Dated records and moved products.** The 75 dated records name LiveSafe,
 CommandBase, CrossChecked, ExoForge and the other products as they stood
@@ -453,7 +455,9 @@ Limits of the sort:
 ## Corrections to earlier parts
 
 Later parts changed what earlier parts say. The earlier records were not
-edited; the later statement governs.
+edited; the later statement governs. The exception is the owner's review
+of this record, after which parts 3, 4 and 6 were corrected in place (last
+row).
 
 | Earlier statement or gap | Part | Correction | Source |
 | --- | --- | --- | --- |
@@ -463,6 +467,7 @@ edited; the later statement governs.
 | Counts of product coupling taken by proposed class alone | 3, 5 | Part 5 found the gap: vendor-class paths inside product trees are missed (`livesafe/Cargo.lock`). Counts are by directory as well as class (O-29). `omission_groups.py` therefore groups by tree first | Part 5 |
 | F-19: 140 documents | 3 | 159 scan paths in the same locations; not reconciled (above) | This record |
 | F-22 and F-31 summary cells read "Yes" under blocking | 4, 5 | Their full text blocks a claim, not the copy; the register follows the full text | This record |
+| No part read `TERMS-CONDITIONS-AND-PRIVACY.md`; O-25 and F-44 said no contributor terms existed; the two PDFs' text was not extracted; CyberMedica's earlier licence statements had no finding | 3, 4, 6 | Corrected in place: part 4 reads the terms file and its first version (O-25, F-22, F-29, new F-52); part 6 carries the history (F-43, F-44, F-50, D-3, D-7, D-12); part 3 records the PDF extraction | Owner review on the pull request |
 
 The checker prints seven notes where a register row carries more or fewer
 disposition words than the part's one-line summary row. In each case the
@@ -504,7 +509,7 @@ and it is carried to the panel named.
 | O-22 | LegalDyne in documents and one guard | No finding raised; its documents are in the sort |
 | O-23 | A personal account name and a maintainer's user name in non-adjacent files | **Open.** Sent to part 6, which did not take it up. Security panel suggested |
 | O-24 | Earlier AGPL manifest field | F-43 |
-| O-25 | No contributor terms found | F-44 |
+| O-25 | Contributor terms | Corrected after the owner's review: the terms file's §5 states inbound terms, and its first version held a contributor agreement (F-43, F-44); acceptance not recorded |
 | O-26 | Licence steps in CI; none per file, none for npm or Python | Unchanged (part 5); see F-22 |
 | O-27 | Copyright holder written three ways | Unchanged; F-44 |
 | O-28 | Other licences in adjacent lockfiles | Adjacent owners; leaves with the trees |
@@ -534,16 +539,16 @@ only says who would have to supply each and what it waits on.
 | --- | --- | --- | --- |
 | D-1 | Source repository and exact source commit | Legacy name; the commit actually copied | Split plan owner |
 | D-2 | No history or filtered history; the rule used | History option (F-41, F-42) | Split plan owner |
-| D-3 | Author names live only in the source history, unverified | History option | Split plan owner, legal owner (F-44) |
+| D-3 | Author names live only in the source history, unverified; inbound terms at each date | History option | Split plan owner, legal owner (F-43, F-44) |
 | D-4 | Source history names AI tools as author or co-author | Legal owner's policy decision (F-45) | Legal owner |
 | D-5 | Signatures partial and unverified | Nothing; can be stated now (F-46) | Core maintainers |
 | D-6 | Every omission or redaction, reason and successor location | Execution of the split; this record holds the proposals | Split plan owner |
-| D-7 | Earlier licence statements differed | Legal owner's answer (F-43) | Legal owner |
+| D-7 | Earlier licence statements differed, `cybermedica/` and the terms file among them | Legal owner's answer (F-43, F-52) | Legal owner |
 | D-8 | How to verify a pre-split release | Legacy name; F-48 | Release owner |
 | D-9 | Which references in copied records point at the source repository | Reference handling (F-47) | Split plan owner |
 | D-10 | If filtered: identifier map, dropped commits, merge handling, signature effect | Applies only to a filtered-history option | Split plan owner |
 | D-11 | Branches and tags the legacy repository keeps | #903 (O-36, O-42) | Split plan owner |
-| D-12 | Provenance questions still open at the copy | F-44, F-49, F-50, O-38 | Legal owner, Security panel |
+| D-12 | Provenance questions still open at the copy | F-43, F-44, F-49, F-50, O-38 | Legal owner, Security panel |
 | D-13 | Source commit of any later import | Applies to every import after the first | Core maintainers, once a process exists |
 
 ## Integration: what the split means for anything that connects to the core
@@ -585,7 +590,7 @@ beside it can close.
 | A read of the Decision Forum crate (9,145 lines) against a stated definition of "primitive" | F-17; part 2's condition on option A | Not done in part 3 |
 | Inspection of the 7,925 removed `target/` objects | F-41, before any history option that keeps them | Not opened |
 | A record of how the committed proof fixtures were generated, or regeneration in CI | F-8, F-49 | The adding commit records no machine, toolchain or command |
-| Text extraction from the two PDFs | F-29, F-50; part 3 "Not scanned" | No extraction tool was used |
+| Reading the two CyberMedica product-requirements binaries (`.docx` and `.pdf`) | F-52 | Not opened. (The two root PDFs' text was extracted after the owner's review; part 3, "Not scanned") |
 | Comparison of `.archon/` and named sources with the outside projects | F-24, F-49 | Not made |
 | Comparison of `LICENSE` with the published Apache-2.0 text | F-43 | Not made |
 | Signature verification | F-46 | Not attempted |
@@ -600,9 +605,9 @@ beside it can close.
 | Criterion (quoted) | Status | Basis |
 | --- | --- | --- |
 | "Inventory/dependency map identifies source SHA and receives review" | **Partly met.** The inventory (part 1) and dependency map (part 2) name the source commit and are reproducible. **Review has not occurred** | Parts 1, 2 |
-| "Findings cover history/provenance, product fingerprints, dependencies, builds, CI/CD, docs, and licences/notices" | **Met in coverage, with stated gaps.** Findings per category: history/provenance 10, product fingerprints 9, dependencies 6, builds 5, CI/CD 8, docs 2, licences/notices 10, inventory 1. Gaps are in "Evidence still owed" | Register |
+| "Findings cover history/provenance, product fingerprints, dependencies, builds, CI/CD, docs, and licences/notices" | **Met in coverage, with stated gaps.** Findings per category: history/provenance 10, product fingerprints 9, dependencies 6, builds 5, CI/CD 8, docs 2, licences/notices 11, inventory 1. Gaps are in "Evidence still owed" | Register |
 | "No unsupported Apache-2.0 or product-free claim" | **Met by this audit's own text**, which makes neither claim and lists why neither can be made. It cannot speak for other documents in the repository: part 4 and part 6 record existing statements that go further than the evidence (F-22, F-43) | Above |
-| "Every finding has evidence-backed disposition or is explicitly blocking" | **Partly met.** All 51 have a proposed disposition with the evidence cited in their part, or a pending one with what it waits on, and 40 say what they block. Whether each disposition is in fact backed by its evidence is what review has to judge; the one review round of this register found owner and blocking errors, since corrected. None is decided. Separately, eight findings have no owner named or suggested and fourteen have only a suggested one | Register |
+| "Every finding has evidence-backed disposition or is explicitly blocking" | **Partly met.** All 52 have a proposed disposition with the evidence cited in their part, or a pending one with what it waits on, and 41 say what they block. Whether each disposition is in fact backed by its evidence is what review has to judge; the one review round of this register found owner and blocking errors, since corrected. None is decided. Separately, eight findings have no owner named or suggested and fourteen have only a suggested one | Register |
 | "Panel review occurs before the split is ready for admin execution" | **Not met on the record.** No panel review is recorded: issue #904 has no comments and no part carries a review. Reviews outside the issue, if any, were not visible | Issue #904 |
 
 The issue is not ready to close, and #903 stays blocked.
@@ -619,7 +624,7 @@ The issue is not ready to close, and #903 stays blocked.
 - The `blocks` value is a reading (Method, item 2). Three of the `cutover`
   rows (F-15, F-16, F-35) are inferred from source reading, not from a
   failed run.
-- "Owner" repeats what the parts say for 29 findings and is this record's
+- "Owner" repeats what the parts say for 30 findings and is this record's
   inference for 14 (`owner_basis` column). Only issue #904's "proposed
   owner" line and its three panel names come from the issue; "accountable legal
   owner", "release owner", "operations owner", "split plan owner" and "core
@@ -665,7 +670,7 @@ gh issue view 904 --repo exochain/exochain --json state,updatedAt,comments
 
 | Table | SHA-256 |
 | --- | --- |
-| `findings-register.tsv` | `3c95257e9054f1388d38918f45f70c0f67b3020d42254ff28e95df9e3fc521a5` |
+| `findings-register.tsv` | `bdf880fa4b9baf85252d7e38bfdbcf1c31ed7a009421ae35f5c496d0b4f8eda5` |
 | `proposed-omissions.tsv` | `1acf98f452caac67038f96c06e2d5abd14eb10981e3b36c9131386a79ff4af85` |
 | `document-sort.tsv` | `5eb46661c5852df79e8d7b07f88bb34eb5ce8a80451c1cf45ce4de3473ca2eb9` |
 
