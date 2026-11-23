@@ -259,7 +259,7 @@ statements that the findings rule out today, and what each would need.
 | "The core is free of product material" | Product names are in public APIs, a route, credentials, schema and an erasure path; 12 binary files were not scanned, and the specification PDF names 0dentity, LegalDyne and LYNK; unnamed product logic was not searched for | F-9 to F-13, F-18, F-20; part 3 "Not scanned" |
 | "The core is Apache-2.0 throughout" | 290 eligible files lack the header; who may apply it is not recorded; a root PDF states CC BY-NC-SA 4.0 and another is marked CONFIDENTIAL; the terms file says documentation is not automatically Apache-2.0 | F-22, F-29, F-44, F-50 |
 | "CyberMedica, or the products, were never offered under Apache-2.0" | `cybermedica/` files carried the Apache header and its manifest said Apache-2.0 from 2026-05-26 to 2026-07-10, and 204 `command-base/` files carried the header from 2026-05-10 to 2026-07-15, inside three release tags | F-43, F-52 |
-| "The repository has always been Apache-2.0" or "ships the standard licence text" | The root manifest declared AGPL for two days, before the first tag; a demo package declared it until 2026-05-09, inside two tags; the `LICENSE` text was edited and has not been compared with the published text | F-43 |
+| "The repository has always been Apache-2.0" or "ships the standard licence text" | The root manifest declared AGPL for two days, before the first tag; a demo package declared it until 2026-05-09, inside two tags; the current `LICENSE` differs from the published text in two places (section 5 has "and" for "or"; the appendix is missing) | F-43 |
 | "Third-party notices are complete" | No NOTICE file; two outside projects are named as sources without a notice; one comparison is open | F-24, F-49 |
 | "Published packages carry the right licence files" | Package contents were not inspected; that needs a release dry run | F-26, F-39 |
 | "The core builds and passes tests on its own" | No test run without the sibling trees exists. The deploy image build compiles two binaries from `crates/` alone; its runs were not inspected | F-40 |
@@ -469,7 +469,7 @@ of this record, after which parts 3, 4, 5 and 6 were corrected in place
 | F-22 and F-31 summary cells read "Yes" under blocking | 4, 5 | Their full text blocks a claim, not the copy; the register follows the full text | This record |
 | No part read `TERMS-CONDITIONS-AND-PRIVACY.md`; O-25 and F-44 said no contributor terms existed; the two PDFs' text was not extracted; CyberMedica's earlier licence statements had no finding | 3, 4, 6 | Corrected in place: part 4 reads the terms file and its first version (O-25, F-22, F-29, new F-52); part 6 carries the history (F-43, F-44, F-50, D-3, D-7, D-12); part 3 records the PDF extraction | Owner review on the pull request |
 | F-31 said the cause of the advisory failures "was not determined" | 5 | Corrected in place: the lockfile changed only by the workspace's own `exochain-verify` and the advisory configuration did not change since the last green run, so the cause is advisories published in between; a later run also reports RUSTSEC-2026-0543 (`chrono`) | Maintainer review on the pull request |
-| F-44 said no acceptance of the contribution terms was recorded; F-43 had not compared `LICENSE` with the published text; F-52 dated `v0.2.0-beta` from a local tag that differs from the published one; the K1 rows and part 4's limits still said the PDFs were unread; part 5 called the later CI run's branch unrelated | 4, 5, 6 | Corrected in place: F-44 records how both versions say agreement is indicated and that individual acceptance was not verified; F-43 records the comparison; F-52 uses the published tag (2026-07-02, same counts); `document-sort.tsv` regenerated; part 5 names this pull request's branch | Maintainer re-review on the pull request |
+| F-44 said no acceptance of the contribution terms was recorded; F-43 had not compared `LICENSE` with the published text; F-52 dated `v0.2.0-beta` from a local tag that differs from the published one; the K1 rows and part 4's limits still said the PDFs were unread; part 5 called the later CI run's branch unrelated | 4, 5, 6 | Corrected in place: F-44 records how both versions say agreement is indicated and that individual acceptance was not verified; F-43 records the comparison, and the part 6 and part 7 summaries that still called it open were aligned after a further re-review, as was O-25; F-52 uses the published tag (2026-07-02, same counts); `document-sort.tsv` regenerated; part 5 names this pull request's branch | Maintainer re-review on the pull request |
 
 The checker prints seven notes where a register row carries more or fewer
 disposition words than the part's one-line summary row. In each case the
@@ -511,7 +511,7 @@ and it is carried to the panel named.
 | O-22 | LegalDyne in documents and one guard | No finding raised; its documents are in the sort |
 | O-23 | A personal account name and a maintainer's user name in non-adjacent files | **Open.** Sent to part 6, which did not take it up. Security panel suggested |
 | O-24 | Earlier AGPL manifest field | F-43 |
-| O-25 | Contributor terms | Corrected after the owner's review: the terms file's §5 states inbound terms, and its first version held a contributor agreement (F-43, F-44); acceptance not recorded |
+| O-25 | Contributor terms | Corrected after the owner's review: the terms file's §5 states inbound terms, and its first version held a contributor agreement (F-43, F-44). Both versions describe how contributors indicate agreement. The audit did not verify acceptance by individual contributors |
 | O-26 | Licence steps in CI; none per file, none for npm or Python | Unchanged (part 5); see F-22 |
 | O-27 | Copyright holder written three ways | Unchanged; F-44 |
 | O-28 | Other licences in adjacent lockfiles | Adjacent owners; leaves with the trees |
@@ -594,7 +594,7 @@ beside it can close.
 | A record of how the committed proof fixtures were generated, or regeneration in CI | F-8, F-49 | The adding commit records no machine, toolchain or command |
 | Reading the two CyberMedica product-requirements binaries (`.docx` and `.pdf`) | F-52 | Not opened. (The two root PDFs' text was extracted after the owner's review; part 3, "Not scanned") |
 | Comparison of `.archon/` and named sources with the outside projects | F-24, F-49 | Not made |
-| Comparison of `LICENSE` with the published Apache-2.0 text | F-43 | Not made |
+| Comparison of `LICENSE` with the published Apache-2.0 text | F-43 | Made after a maintainer review (part 6, F-43): two differences found. Their legal significance is open with the accountable legal owner |
 | Signature verification | F-46 | Not attempted |
 | A content scan of the tree and history for secrets and personal data | F-51, O-38 | Not run; the 17 letters were deliberately not opened |
 | Branch-protection settings as an administrator sees them | F-32, F-46 | The account used could not see them |

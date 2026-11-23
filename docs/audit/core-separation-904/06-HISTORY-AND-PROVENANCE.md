@@ -345,8 +345,10 @@ line 209 names Bob Stewart for legal and compliance matters).
 changed. The owner also decides whether the root `LICENSE` is restored to
 the published Apache-2.0 text (a `patch` if so). **Blocking** for any claim
 about the legal effect of past licence statements, for a statement that the
-core has always been Apache-2.0, and for a statement that the core carries
-the standard Apache-2.0 text until the file is compared with it. Reporting
+core has always been Apache-2.0, and for a statement that the current
+`LICENSE` is the standard Apache-2.0 text: the comparison above is complete
+and found the two differences. Their legal significance is for the
+accountable legal owner. Reporting
 the dated facts above is not blocked. Copying the files is not blocked;
 describing the copy as Apache-2.0 without qualification is.
 
@@ -792,7 +794,7 @@ No filter was specified or run, so these are expected effects:
 | F-24 and F-29, `dist` bundles | Part 4 | String search done (F-49); build not reviewed |
 | F-27, authority to grant the licence | Part 4 | **Not resolved.** No record of the holder's standing found (F-44) |
 | O-24, AGPL manifest field | Part 4 | Dated in F-43, which also finds a second AGPL declaration lasting until 2026-05-09; registry publication not checked |
-| `LICENSE` described as Apache-2.0 text | Part 4 | **New here** (F-43): the file was edited after the first commit; comparison with the published text still to do |
+| `LICENSE` described as Apache-2.0 text | Part 4 | **New here** (F-43): the file was edited after the first commit. Compared with the published text after a maintainer review: section 5 has "and" where the published text has "or", and the appendix is missing. Legal significance is for the accountable legal owner |
 | O-25, contributor terms | Part 4 | **Corrected after the owner's review.** The terms file states inbound terms (§5) and held a contributor agreement until 2026-05-10 (F-43, F-44); the wider search had missed it |
 | O-27, three spellings of the copyright holder | Part 4 | Unchanged for the current tree; the terms file's first version named "EXOCHAIN Foundation DAO LLC" (F-44) |
 | F-39, package contents | Part 5 | **Not done here.** Still needs a release dry run on CI |
