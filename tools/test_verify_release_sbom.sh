@@ -91,9 +91,10 @@ digest_one="$(run_validator "$raw_root" "$metadata_file" "$lock_file" "$canonica
 digest_two="$(run_validator "$raw_root" "$metadata_file" "$lock_file" "$canonical_two")"
 # Regenerated with cargo-cyclonedx 0.5.9 after the advisory lock upgrades
 # (libp2p-gossipsub 0.49.5, libp2p-quic 0.13.1, quinn-udp 0.5.16, rustix
-# 1.1.6, hyper 1.12.0; pin-utils removed). Two independent canonical
-# validations produced identical bytes and digest.
-expected_digest=1e611c719342a60d1deba959599fad12d43af9ef6d36ce4e07152b099f3bebc6
+# 1.1.6, hyper 1.12.0; pin-utils removed) and the url 2.5.9 /
+# form_urlencoded 1.2.3 lockfile bump (RUSTSEC-2026-0592). Two independent
+# canonical validations produced identical bytes and digest.
+expected_digest=481686491fad918b840b0140ed9326e15992f4f89a884fe792d512531eeb5498
 [ "$digest_one" = "$expected_digest" ] && [ "$digest_two" = "$expected_digest" ] \
   || fail "exact cargo-cyclonedx 0.5.9 corpus did not produce the reviewed canonical digest"
 /usr/bin/diff -ru "$canonical_one" "$canonical_two" >/dev/null \
