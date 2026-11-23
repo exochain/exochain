@@ -62,4 +62,10 @@ ignore = [
     # (or when the jiff/time migration recommended by the advisory lands).
     # https://github.com/exochain/exochain/pull/914 (refs #896)
     "RUSTSEC-2026-0543",
+
+    # libp2p-gossipsub 0.49.x unbounded PRUNE backoff state (DoS).
+    # Patched only in 0.50.1 (libp2p 0.44 family + aws-lc-rs). exochain-node only.
+    # Time-limited maintainer exception 2026-11-20, expires 2027-01-31.
+    # https://github.com/exochain/exochain/issues/922
+    "RUSTSEC-2026-0534",
 ]

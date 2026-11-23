@@ -90,6 +90,17 @@ ignore = [
     # exists or the migration lands.
     # https://github.com/exochain/exochain/pull/914 (refs #896)
     { id = "RUSTSEC-2026-0543", reason = "no patched release; accepted by maintainer 2026-11-17; revisit when fixed" },
+
+    # libp2p-gossipsub 0.49.x: unbounded PRUNE backoff state for unknown topics
+    # (RUSTSEC-2026-0534, GHSA-vrx6-jcp8-vm7m). Denial of service by memory
+    # exhaustion from a connected peer. Patched only in 0.50.1, which needs the
+    # libp2p-core 0.44 family and turns on aws-lc-rs (C crypto) through
+    # libp2p-quic 0.14 and libp2p-tls 0.7, against this file's pure-Rust crypto
+    # stance. Only exochain-node depends on it.
+    # Time-limited exception approved by the maintainer on 2026-11-20.
+    # EXPIRES 2027-01-31: remove this entry and upgrade, or re-approve, by then.
+    # https://github.com/exochain/exochain/issues/922
+    { id = "RUSTSEC-2026-0534", reason = "libp2p-gossipsub DoS; fix needs libp2p 0.50 + aws-lc-rs; time-limited maintainer exception 2026-11-20, expires 2027-01-31; https://github.com/exochain/exochain/issues/922" },
 ]
 
 # ---------------------------------------------------------------------------
