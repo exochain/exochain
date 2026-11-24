@@ -132,7 +132,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548
         with:
-          python-version: "3.11.14"
+          python-version: "3.11.18"
           cache: ""
       - name: Install Python SDK test and static-analysis dependencies
         run: "python -m pip --isolated install --disable-pip-version-check --require-hashes --only-binary=:all: --index-url=https://pypi.org/simple -r tools/python-release-requirements.lock"
