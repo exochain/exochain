@@ -69,10 +69,11 @@ pub fn check_duty_compliance(duty: &FiduciaryDuty, actions: &[AuditEntry]) -> Co
         }
         DutyType::Loyalty => {
             for e in actions {
-                if let Some(ref b) = e.beneficiary {
-                    if b != &duty.principal_did && e.actor == duty.fiduciary_did {
-                        reasons.push(format!("'{}' benefits {} not principal", e.action, b));
-                    }
+                if let Some(ref b) = e.beneficiary
+                    && b != &duty.principal_did
+                    && e.actor == duty.fiduciary_did
+                {
+                    reasons.push(format!("'{}' benefits {} not principal", e.action, b));
                 }
             }
         }

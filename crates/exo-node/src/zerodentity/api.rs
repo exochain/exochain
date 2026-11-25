@@ -563,21 +563,20 @@ fn axes_from_score(s: &ZerodentityScore) -> AxesResponse {
 }
 
 fn claim_matches_filters(claim: &IdentityClaim, params: &ClaimsQuery) -> bool {
-    if let Some(ref status) = params.status {
-        if claim.status.to_string().to_lowercase() != status.to_lowercase() {
-            return false;
-        }
+    if let Some(ref status) = params.status
+        && claim.status.to_string().to_lowercase() != status.to_lowercase()
+    {
+        return false;
     }
 
-    if let Some(ref claim_type) = params.claim_type {
-        if !claim
+    if let Some(ref claim_type) = params.claim_type
+        && !claim
             .claim_type
             .to_string()
             .to_lowercase()
             .contains(&claim_type.to_lowercase())
-        {
-            return false;
-        }
+    {
+        return false;
     }
 
     true

@@ -252,12 +252,12 @@ impl AuthorityRevocation {
                 reason: "revocation timestamp must not precede delegation creation".into(),
             });
         }
-        if let Some(expires) = &self.revoked_link.expires {
-            if *expires <= self.revoked_at {
-                return Err(AuthorityError::ExpiredLink {
-                    index: self.revoked_link.depth,
-                });
-            }
+        if let Some(expires) = &self.revoked_link.expires
+            && *expires <= self.revoked_at
+        {
+            return Err(AuthorityError::ExpiredLink {
+                index: self.revoked_link.depth,
+            });
         }
         if self.revoker_did != self.revoked_link.delegator_did {
             return Err(AuthorityError::PermissionDenied(format!(
@@ -735,12 +735,12 @@ impl DelegationRegistry {
                 did.as_str()
             )));
         }
-        if let Some(expires) = &parent.expires {
-            if expires.is_expired(now) {
-                return Err(AuthorityError::ExpiredLink {
-                    index: parent.depth,
-                });
-            }
+        if let Some(expires) = &parent.expires
+            && expires.is_expired(now)
+        {
+            return Err(AuthorityError::ExpiredLink {
+                index: parent.depth,
+            });
         }
 
         let parent_scope = parent.scope.iter().copied().collect::<BTreeSet<_>>();

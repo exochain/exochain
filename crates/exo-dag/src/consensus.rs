@@ -363,28 +363,28 @@ pub fn check_commit(state: &ConsensusState, node_hash: &Hash256) -> Option<Commi
         return None;
     }
 
-    if let Some(round_votes) = state.pending.get(&state.current_round) {
-        if let Some(votes) = round_votes.get(node_hash) {
-            let mut seen_voters = BTreeSet::new();
-            let quorum_votes: Vec<Vote> = votes
-                .iter()
-                .filter(|vote| {
-                    vote.node_hash == *node_hash
-                        && vote.round == state.current_round
-                        && state.config.validators.contains(&vote.voter)
-                        && seen_voters.insert(vote.voter.clone())
-                })
-                .take(quorum)
-                .cloned()
-                .collect();
+    if let Some(round_votes) = state.pending.get(&state.current_round)
+        && let Some(votes) = round_votes.get(node_hash)
+    {
+        let mut seen_voters = BTreeSet::new();
+        let quorum_votes: Vec<Vote> = votes
+            .iter()
+            .filter(|vote| {
+                vote.node_hash == *node_hash
+                    && vote.round == state.current_round
+                    && state.config.validators.contains(&vote.voter)
+                    && seen_voters.insert(vote.voter.clone())
+            })
+            .take(quorum)
+            .cloned()
+            .collect();
 
-            if seen_voters.len() >= quorum {
-                return Some(CommitCertificate {
-                    node_hash: *node_hash,
-                    votes: quorum_votes,
-                    round: state.current_round,
-                });
-            }
+        if seen_voters.len() >= quorum {
+            return Some(CommitCertificate {
+                node_hash: *node_hash,
+                votes: quorum_votes,
+                round: state.current_round,
+            });
         }
     }
 

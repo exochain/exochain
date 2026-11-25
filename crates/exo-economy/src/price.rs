@@ -83,12 +83,12 @@ impl PricingInputs {
     pub fn validate(&self) -> Result<(), EconomyError> {
         require_bp("network_load_bp", self.network_load_bp)?;
         require_bp("risk_bp", self.risk_bp)?;
-        if let Some(domain) = &self.market_domain {
-            if domain.trim().is_empty() {
-                return Err(EconomyError::EmptyField {
-                    field: "pricing_inputs.market_domain",
-                });
-            }
+        if let Some(domain) = &self.market_domain
+            && domain.trim().is_empty()
+        {
+            return Err(EconomyError::EmptyField {
+                field: "pricing_inputs.market_domain",
+            });
         }
         Ok(())
     }

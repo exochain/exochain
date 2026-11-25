@@ -188,10 +188,10 @@ fn verify_admin_or_livesafe_public_output_bearer(
         return Ok(());
     }
 
-    if let Some(verifier) = &scoped_auth.livesafe_public_adapter_output_authorization {
-        if verifier.verifies(provided) {
-            return Ok(());
-        }
+    if let Some(verifier) = &scoped_auth.livesafe_public_adapter_output_authorization
+        && verifier.verifies(provided)
+    {
+        return Ok(());
     }
 
     Err(StatusCode::FORBIDDEN)

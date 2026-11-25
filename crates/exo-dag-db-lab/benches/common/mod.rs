@@ -61,10 +61,10 @@ pub const SCALE_TIERS: [usize; 2] = [PRODUCTION_TIER, BEYOND_PRODUCTION_TIER];
 /// the contract tests instead of hanging or panicking. The resolved URL is
 /// never printed.
 pub fn resolve_database_url() -> Option<String> {
-    if let Ok(url) = std::env::var(DATABASE_URL_ENV) {
-        if !url.trim().is_empty() {
-            return Some(url);
-        }
+    if let Ok(url) = std::env::var(DATABASE_URL_ENV)
+        && !url.trim().is_empty()
+    {
+        return Some(url);
     }
     // Mirror tools/start_dagdb_local.sh defaults (host-published dev Postgres).
     let port = std::env::var("DAGDB_POSTGRES_PORT").unwrap_or_else(|_| "5433".to_owned());

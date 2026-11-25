@@ -1569,12 +1569,12 @@ fn validate_layer_relationships(report: &KgImportDryRunReport) -> Result<()> {
                 "placement targets unknown layer path {target_layer_path}"
             ));
         }
-        if let Some(created_child_layer_id) = placement.created_child_layer_id.as_deref() {
-            if !layers.contains_key(created_child_layer_id) {
-                return invalid_report(format!(
-                    "placement created_child_layer_id references unknown layer {created_child_layer_id}"
-                ));
-            }
+        if let Some(created_child_layer_id) = placement.created_child_layer_id.as_deref()
+            && !layers.contains_key(created_child_layer_id)
+        {
+            return invalid_report(format!(
+                "placement created_child_layer_id references unknown layer {created_child_layer_id}"
+            ));
         }
     }
 

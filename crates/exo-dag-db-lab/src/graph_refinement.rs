@@ -3236,7 +3236,7 @@ fn sha256_bytes_hex(bytes: &[u8]) -> String {
     }
     data.extend_from_slice(&bit_len.to_be_bytes());
 
-    for chunk in data.chunks_exact(64) {
+    for chunk in data.as_chunks::<64>().0 {
         let mut words = [0u32; 64];
         for (index, word) in words.iter_mut().enumerate().take(16) {
             let offset = index * 4;
@@ -5702,15 +5702,15 @@ mod tests {
         assert!(root.join(&generated.summary_path).exists());
         assert_eq!(generated.report_hash.len(), 64);
 
-        if let Ok(dataset_id) = env::var(GRAPH_DATASET_ID_OVERRIDE_ENV) {
-            if validate_graph_refinement_dataset_id(&dataset_id) {
-                let dataset_dir = root
-                    .join(GRAPH_EXPLORER_TARGET_DIR)
-                    .join("datasets")
-                    .join(dataset_id);
-                assert!(dataset_dir.join("refinement_report.json").exists());
-                assert!(dataset_dir.join("refinement_summary.md").exists());
-            }
+        if let Ok(dataset_id) = env::var(GRAPH_DATASET_ID_OVERRIDE_ENV)
+            && validate_graph_refinement_dataset_id(&dataset_id)
+        {
+            let dataset_dir = root
+                .join(GRAPH_EXPLORER_TARGET_DIR)
+                .join("datasets")
+                .join(dataset_id);
+            assert!(dataset_dir.join("refinement_report.json").exists());
+            assert!(dataset_dir.join("refinement_summary.md").exists());
         }
     }
 

@@ -496,12 +496,12 @@ fn resolve_token(
         });
     }
 
-    if let Some(expires_at) = record.expires_at {
-        if metadata.observed_at > expires_at {
-            return Err(GatewayError::AuthenticationFailed {
-                reason: format!("{kind} has expired"),
-            });
-        }
+    if let Some(expires_at) = record.expires_at
+        && metadata.observed_at > expires_at
+    {
+        return Err(GatewayError::AuthenticationFailed {
+            reason: format!("{kind} has expired"),
+        });
     }
 
     // The credential token may still be live while its bound DID has been

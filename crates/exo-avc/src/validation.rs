@@ -284,17 +284,16 @@ pub fn validate_avc<R: AvcRegistryRead>(
     if credential.created_at > request.now {
         reasons.insert(AvcReasonCode::NotYetValid);
     }
-    if let Some(expires) = credential.expires_at {
-        if expires.is_expired(&request.now) {
-            reasons.insert(AvcReasonCode::Expired);
-        }
+    if let Some(expires) = credential.expires_at
+        && expires.is_expired(&request.now)
+    {
+        reasons.insert(AvcReasonCode::Expired);
     }
-    if let Some(window) = &credential.constraints.allowed_time_window {
-        if unix_expiry_untrusted_at_genesis(&window.not_after, &request.now)
-            || !window.contains(&request.now)
-        {
-            reasons.insert(AvcReasonCode::OutsideTimeWindow);
-        }
+    if let Some(window) = &credential.constraints.allowed_time_window
+        && (unix_expiry_untrusted_at_genesis(&window.not_after, &request.now)
+            || !window.contains(&request.now))
+    {
+        reasons.insert(AvcReasonCode::OutsideTimeWindow);
     }
 
     // Signature: resolve issuer key and verify.
@@ -877,10 +876,9 @@ fn enforce_budget(
     if let (Some(cap), Some(estimate)) = (
         constraints.max_budget_minor_units,
         action.estimated_budget_minor_units,
-    ) {
-        if estimate > cap {
-            reasons.insert(AvcReasonCode::BudgetExceeded);
-        }
+    ) && estimate > cap
+    {
+        reasons.insert(AvcReasonCode::BudgetExceeded);
     }
 }
 
@@ -901,10 +899,9 @@ fn enforce_risk<R: AvcRegistryRead>(
         false
     };
     if let (Some(cap), Some(estimate)) = (constraints.max_action_risk_bp, action.estimated_risk_bp)
+        && estimate > cap
     {
-        if estimate > cap {
-            reasons.insert(AvcReasonCode::RiskExceeded);
-        }
+        reasons.insert(AvcReasonCode::RiskExceeded);
     }
 
     let autonomy_requires_approval = credential.delegated_intent.autonomy_level

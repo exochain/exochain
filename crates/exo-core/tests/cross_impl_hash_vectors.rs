@@ -82,7 +82,7 @@ fn cross_impl_hash_vectors_match_golden() -> Result<(), Box<dyn std::error::Erro
 }
 
 fn decode_hex(hex: &str, vector_file: &Path) -> Result<Vec<u8>, String> {
-    if hex.len() % 2 != 0 {
+    if !hex.len().is_multiple_of(2) {
         return Err(format!(
             "{} canonical_cbor_hex must be even-length",
             vector_file.display()
@@ -91,7 +91,9 @@ fn decode_hex(hex: &str, vector_file: &Path) -> Result<Vec<u8>, String> {
 
     let decoded = hex
         .as_bytes()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| {
             let high = decode_hex_digit(pair[0], vector_file)?;
             let low = decode_hex_digit(pair[1], vector_file)?;

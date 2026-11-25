@@ -274,12 +274,12 @@ impl MissionSettlement {
         if let Some(prev) = self.prev_settlement_hash {
             require_nonzero_hash(prev, "mission_settlement.prev_settlement_hash")?;
         }
-        if let Some(signature) = &self.signature {
-            if signature.is_empty() {
-                return Err(EconomyError::EmptySettlementSignature {
-                    receipt_id: "mission_settlement".into(),
-                });
-            }
+        if let Some(signature) = &self.signature
+            && signature.is_empty()
+        {
+            return Err(EconomyError::EmptySettlementSignature {
+                receipt_id: "mission_settlement".into(),
+            });
         }
         require_nonzero_timestamp(self.created_at, "mission_settlement.created_at")
     }

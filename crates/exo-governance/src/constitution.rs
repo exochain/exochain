@@ -519,13 +519,13 @@ impl Constitution {
         );
 
         for r in &results {
-            if !r.satisfied {
-                if let Some(FailureAction::Block) = &r.failure_action {
-                    return Err(GovernanceError::ConstitutionalViolation {
-                        constraint_id: r.constraint_id.clone(),
-                        reason: r.message.clone(),
-                    });
-                }
+            if !r.satisfied
+                && let Some(FailureAction::Block) = &r.failure_action
+            {
+                return Err(GovernanceError::ConstitutionalViolation {
+                    constraint_id: r.constraint_id.clone(),
+                    reason: r.message.clone(),
+                });
             }
         }
 

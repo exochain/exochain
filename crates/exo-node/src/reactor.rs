@@ -685,31 +685,31 @@ pub fn create_reactor_state(
         };
 
         // Restore the round number.
-        if let Ok(round) = st.load_consensus_round() {
-            if round > 0 {
-                while consensus_state.current_round < round {
-                    if let Err(err) = consensus_state.advance_round() {
-                        tracing::error!(
-                            err = %err,
-                            target_round = round,
-                            "Failed to restore consensus round"
-                        );
-                        break;
-                    }
+        if let Ok(round) = st.load_consensus_round()
+            && round > 0
+        {
+            while consensus_state.current_round < round {
+                if let Err(err) = consensus_state.advance_round() {
+                    tracing::error!(
+                        err = %err,
+                        target_round = round,
+                        "Failed to restore consensus round"
+                    );
+                    break;
                 }
-                tracing::info!(round, "Restored consensus round from store");
             }
+            tracing::info!(round, "Restored consensus round from store");
         }
 
         // Restore persisted validator set (may have been changed via governance).
-        if let Ok(persisted_validators) = st.load_validator_set() {
-            if !persisted_validators.is_empty() {
-                consensus_state.config.validators = persisted_validators;
-                tracing::info!(
-                    validators = consensus_state.config.validators.len(),
-                    "Restored validator set from store"
-                );
-            }
+        if let Ok(persisted_validators) = st.load_validator_set()
+            && !persisted_validators.is_empty()
+        {
+            consensus_state.config.validators = persisted_validators;
+            tracing::info!(
+                validators = consensus_state.config.validators.len(),
+                "Restored validator set from store"
+            );
         }
 
         let missing_public_keys =
@@ -726,14 +726,14 @@ pub fn create_reactor_state(
         if let Ok(certs) = st.load_certificates() {
             let count = certs.len();
             for cert in certs {
-                if !consensus::is_finalized(&consensus_state, &cert.node_hash) {
-                    if let Err(e) = consensus::commit_verified(
+                if !consensus::is_finalized(&consensus_state, &cert.node_hash)
+                    && let Err(e) = consensus::commit_verified(
                         &mut consensus_state,
                         cert,
                         &validator_public_keys,
-                    ) {
-                        tracing::warn!(err = %e, "Skipped unverifiable restored commit certificate");
-                    }
+                    )
+                {
+                    tracing::warn!(err = %e, "Skipped unverifiable restored commit certificate");
                 }
             }
             if count > 0 {
