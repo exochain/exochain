@@ -510,6 +510,32 @@ require_documentation(
 if documentation_failures:
     fail("documentation contracts:\n- " + "\n- ".join(documentation_failures))
 
+
+msrv = cargo["workspace"]["package"]["rust-version"]
+msrv_major_minor = ".".join(msrv.split(".")[:2])
+cgr_prover_msrv = tomllib.loads(read("crates/exo-cgr-prover/Cargo.toml"))["package"]["rust-version"]
+if cgr_prover_msrv != msrv:
+    fail(f"crates/exo-cgr-prover/Cargo.toml rust-version is {cgr_prover_msrv}, expected {msrv}")
+msrv_docs = [
+    "README.md",
+    "CONTRIBUTING.md",
+    "AGENTS.md",
+    "docs/guides/GETTING-STARTED.md",
+    "docs/guides/mcp-integration.md",
+    "docs/guides/sdk-quickstart-rust.md",
+    "site/src/app/(internet)/docs/getting-started/page.tsx",
+]
+for doc_path in msrv_docs:
+    doc_txt = read(doc_path)
+    if msrv_major_minor not in doc_txt and msrv not in doc_txt:
+        fail(f"{doc_path} must document current MSRV {msrv}")
+    if "1.85" in doc_txt:
+        fail(f"{doc_path} still references stale MSRV 1.85")
+if msrv_major_minor not in read("docs/guides/developer-onboarding.md"):
+    fail(f"docs/guides/developer-onboarding.md must document current MSRV {msrv}")
+if "1.85" in read("deploy/RAILWAY-HANDOFF.md"):
+    fail("deploy/RAILWAY-HANDOFF.md still references stale Rust 1.85")
+
 print("release documentation boundary checks passed")
 print(f"release version alignment test passed: {expected}")
 PY

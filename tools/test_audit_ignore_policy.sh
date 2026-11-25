@@ -62,18 +62,89 @@ import tomllib
 audit_path = sys.argv[1]
 expiry_only = sys.argv[2] == "1"
 
+EXPIRY_MARKER_RE = re.compile(
+    r"(?:\bexpir(?:e|es|ed|ing|y)?\b|\bapproved\s+until\b|\btime-limited\b|\buntil\s+\d{4}-\d{2}-\d{2}\b)",
+    re.IGNORECASE,
+)
+TRACKING_URL_RE = re.compile(r"^https://[A-Za-z0-9.-]+/\S+$")
+ADVISORY_ID_RE = re.compile(r'["\x27](RUSTSEC-\d{4}-\d{4}|GHSA-[A-Za-z0-9-]+)["\x27]')
+
+
+def collect_comment_declared_expiries(toml_text: str) -> dict[str, list[str]]:
+    """Scan contiguous # comment blocks immediately preceding advisory entries."""
+    found: dict[str, list[str]] = {}
+    block_comments: list[str] = []
+    in_ignore = False
+    for raw_line in toml_text.splitlines():
+        stripped = raw_line.strip()
+        if not in_ignore:
+            if stripped.startswith("ignore") and "[" in stripped:
+                in_ignore = True
+                block_comments = []
+            continue
+        if stripped == "]":
+            break
+        if not stripped:
+            block_comments = []
+            continue
+        if stripped.startswith("#"):
+            block_comments.append(stripped)
+            continue
+        match = ADVISORY_ID_RE.search(stripped)
+        if match:
+            adv_id = match.group(1)
+            joined = "\n".join(block_comments)
+            if EXPIRY_MARKER_RE.search(joined):
+                found.setdefault(adv_id, []).append(joined)
+            block_comments = []
+    return found
+
 
 def validate_expiry_policies(
     audit_ids: set[str],
     deny_ids: set[str],
+    deny_entries: list,
+    audit_text: str,
+    deny_text: str,
     exceptions: dict[str, dict[str, str]],
     today: datetime.date,
 ) -> list[str]:
     errors: list[str] = []
+
+    for adv_id in sorted(collect_comment_declared_expiries(audit_text)):
+        if adv_id not in exceptions:
+            errors.append(
+                f".cargo/audit.toml ignore {adv_id} declares a time-limited/expiry comment "
+                "without a matching rule in .cargo/audit-expiry.toml"
+            )
+
+    for adv_id in sorted(collect_comment_declared_expiries(deny_text)):
+        if adv_id not in exceptions:
+            errors.append(
+                f"deny.toml ignore {adv_id} declares a time-limited/expiry comment "
+                "without a matching rule in .cargo/audit-expiry.toml"
+            )
+
+    for entry in deny_entries:
+        if isinstance(entry, dict):
+            reason = entry.get("reason", "")
+            if EXPIRY_MARKER_RE.search(reason) and entry.get("id") not in exceptions:
+                errors.append(
+                    f"deny.toml ignore {entry.get('id')} declares expiry/time-limit in reason text "
+                    "without a matching rule in .cargo/audit-expiry.toml"
+                )
+
     for advisory_id, meta in sorted(exceptions.items()):
         if not isinstance(meta, dict):
             errors.append(f"exception {advisory_id} must be a table")
             continue
+
+        tracking = meta.get("tracking_issue")
+        if not isinstance(tracking, str) or not TRACKING_URL_RE.fullmatch(tracking):
+            errors.append(
+                f"exception {advisory_id} must define a valid https:// tracking_issue URL, got {tracking!r}"
+            )
+
         raw_expires = meta.get("expires")
         if not isinstance(raw_expires, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw_expires):
             errors.append(f"exception {advisory_id} has invalid expires format: {raw_expires!r}")
@@ -90,7 +161,6 @@ def validate_expiry_policies(
             )
 
         if today > expires_date:
-            tracking = meta.get("tracking_issue", "untracked")
             errors.append(
                 f"advisory exception {advisory_id} expired on {expires_date.isoformat()} "
                 f"(today {today.isoformat()}, tracking: {tracking})"
@@ -98,27 +168,82 @@ def validate_expiry_policies(
     return errors
 
 
-# Deterministic boundary self-tests: final allowed day passes, day after fails.
+# Deterministic boundary and bypass self-tests.
 sample_exceptions = {
     "RUSTSEC-2026-0534": {
         "expires": "2027-01-31",
         "tracking_issue": "https://github.com/exochain/exochain/issues/922",
     }
 }
+sample_audit = '[advisories]\nignore = [\n  # expires 2027-01-31\n  "RUSTSEC-2026-0534",\n]\n'
+sample_deny = (
+    '[advisories]\nignore = [\n'
+    '  # EXPIRES 2027-01-31\n'
+    '  { id = "RUSTSEC-2026-0534", reason = "approved until 2027-01-31" },\n'
+    ']\n'
+)
+sample_deny_entries = [{"id": "RUSTSEC-2026-0534", "reason": "approved until 2027-01-31"}]
+
 assert not validate_expiry_policies(
     {"RUSTSEC-2026-0534"},
     {"RUSTSEC-2026-0534"},
+    sample_deny_entries,
+    sample_audit,
+    sample_deny,
     sample_exceptions,
     datetime.date(2027, 1, 31),
 ), "boundary self-test failed: 2027-01-31 should be allowed"
+
 expired_errs = validate_expiry_policies(
     {"RUSTSEC-2026-0534"},
     {"RUSTSEC-2026-0534"},
+    sample_deny_entries,
+    sample_audit,
+    sample_deny,
     sample_exceptions,
     datetime.date(2027, 2, 1),
 )
 assert len(expired_errs) == 1 and "expired on 2027-01-31" in expired_errs[0], (
     f"boundary self-test failed: 2027-02-01 should fail, got {expired_errs!r}"
+)
+
+missing_tracking_errs = validate_expiry_policies(
+    {"RUSTSEC-2026-0534"},
+    {"RUSTSEC-2026-0534"},
+    sample_deny_entries,
+    sample_audit,
+    sample_deny,
+    {"RUSTSEC-2026-0534": {"expires": "2027-01-31"}},
+    datetime.date(2026, 11, 24),
+)
+assert any("tracking_issue" in err for err in missing_tracking_errs), (
+    f"self-test failed: missing tracking_issue must fail, got {missing_tracking_errs!r}"
+)
+
+bad_tracking_errs = validate_expiry_policies(
+    {"RUSTSEC-2026-0534"},
+    {"RUSTSEC-2026-0534"},
+    sample_deny_entries,
+    sample_audit,
+    sample_deny,
+    {"RUSTSEC-2026-0534": {"expires": "2027-01-31", "tracking_issue": "not-a-url"}},
+    datetime.date(2026, 11, 24),
+)
+assert any("tracking_issue" in err for err in bad_tracking_errs), (
+    f"self-test failed: malformed tracking_issue must fail, got {bad_tracking_errs!r}"
+)
+
+bypass_errs = validate_expiry_policies(
+    {"RUSTSEC-2026-0534"},
+    {"RUSTSEC-2026-0534"},
+    sample_deny_entries,
+    sample_audit,
+    sample_deny,
+    {},
+    datetime.date(2026, 11, 24),
+)
+assert len(bypass_errs) == 3, (
+    f"self-test failed: comment & reason expiry bypass without rule must produce 3 errors, got {bypass_errs!r}"
 )
 
 with open(".cargo/audit.toml", "rb") as config_file:
@@ -141,26 +266,21 @@ with open(".cargo/audit-expiry.toml", "rb") as expiry_file:
     expiry_cfg = tomllib.load(expiry_file)
 exceptions = expiry_cfg.get("exceptions", {})
 
-# Ensure any advisory entry whose reason or nearby comment declares an expiry date
-# is backed by a structured rule in .cargo/audit-expiry.toml.
-for entry in deny_entries:
-    if isinstance(entry, dict):
-        reason = entry.get("reason", "")
-        if "expire" in reason.lower() and entry["id"] not in exceptions:
-            print(
-                f"deny.toml ignore {entry['id']} mentions expiry in reason text without "
-                "a matching rule in .cargo/audit-expiry.toml",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-
 raw_today = os.environ.get("EXOCHAIN_AUDIT_POLICY_TODAY")
 if raw_today:
     today = datetime.date.fromisoformat(raw_today)
 else:
     today = datetime.datetime.now(datetime.timezone.utc).date()
 
-expiry_errors = validate_expiry_policies(configured_ids, deny_ids, exceptions, today)
+expiry_errors = validate_expiry_policies(
+    configured_ids,
+    deny_ids,
+    deny_entries,
+    audit_text,
+    deny_text,
+    exceptions,
+    today,
+)
 if expiry_errors:
     print("advisory exception expiry policy check failed:", file=sys.stderr)
     for err in expiry_errors:

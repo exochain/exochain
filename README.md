@@ -318,7 +318,7 @@ See [docs/guides/ARCHON-INTEGRATION.md](docs/guides/ARCHON-INTEGRATION.md) for s
 
 ### Prerequisites
 
-* **Rust 1.85+** is the minimum supported compiler; install the exact CI validation compiler with `rustup toolchain install 1.98.1 --profile minimal --component clippy`.
+* **Rust 1.94+** is the minimum supported compiler; install the exact CI validation compiler with `rustup toolchain install 1.98.1 --profile minimal --component clippy`.
 * Clang (for crypto extensions)
 
 ### Build & Test

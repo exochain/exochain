@@ -665,7 +665,7 @@ those, do not duplicate them here.
 
 ### Toolchain
 
-- The workspace is Rust **edition 2024** and has MSRV **rustc 1.85+**. The base
+- The workspace is Rust **edition 2024** and has MSRV **rustc 1.94+**. The base
   VM image may pin an older default toolchain (e.g. 1.83), so install CI's
   exact validation compiler with `rustup toolchain install 1.98.1 --profile minimal --component clippy`
   and use explicit `cargo +1.98.1` for build, test, lint, and documentation.
