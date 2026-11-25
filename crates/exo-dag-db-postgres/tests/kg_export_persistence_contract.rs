@@ -34,11 +34,13 @@ impl TestDb {
             .connect(&database_url)
             .await
             .expect("connect admin Postgres pool");
-        sqlx::query(&format!(r#"DROP SCHEMA IF EXISTS "{schema}" CASCADE"#))
-            .execute(&admin_pool)
-            .await
-            .expect("drop isolated schema");
-        sqlx::query(&format!(r#"CREATE SCHEMA "{schema}""#))
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            r#"DROP SCHEMA IF EXISTS "{schema}" CASCADE"#
+        )))
+        .execute(&admin_pool)
+        .await
+        .expect("drop isolated schema");
+        sqlx::query(sqlx::AssertSqlSafe(format!(r#"CREATE SCHEMA "{schema}""#)))
             .execute(&admin_pool)
             .await
             .expect("create isolated schema");
@@ -74,10 +76,10 @@ impl TestDb {
 
     async fn cleanup(self) {
         self.pool.close().await;
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             r#"DROP SCHEMA IF EXISTS "{}" CASCADE"#,
             self.schema
-        ))
+        )))
         .execute(&self.admin_pool)
         .await
         .expect("drop isolated schema after test");
@@ -685,7 +687,7 @@ fn portable_export(tenant_id: &str, namespace: &str) -> exo_dag_db_postgres::KgP
 }
 
 async fn table_count(pool: &PgPool, table: &str) -> i64 {
-    sqlx::query_scalar::<_, i64>(&format!("SELECT count(*) FROM {table}"))
+    sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(format!("SELECT count(*) FROM {table}")))
         .fetch_one(pool)
         .await
         .unwrap_or_else(|err| panic!("count {table}: {err}"))

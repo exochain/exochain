@@ -184,12 +184,12 @@ impl GoalTree {
         if self.goals.contains_key(&id) {
             return Err(CatapultError::DuplicateGoal(id));
         }
-        if let Some(parent_id) = goal.parent_id {
-            if !self.goals.contains_key(&parent_id) {
-                return Err(CatapultError::InvalidGoal {
-                    reason: format!("goal parent id {parent_id} does not exist"),
-                });
-            }
+        if let Some(parent_id) = goal.parent_id
+            && !self.goals.contains_key(&parent_id)
+        {
+            return Err(CatapultError::InvalidGoal {
+                reason: format!("goal parent id {parent_id} does not exist"),
+            });
         }
         self.goals.insert(id, goal);
         Ok(())
@@ -297,12 +297,12 @@ impl GoalTree {
                 });
             }
             goal.validate()?;
-            if let Some(parent_id) = goal.parent_id {
-                if !self.goals.contains_key(&parent_id) {
-                    return Err(CatapultError::InvalidGoal {
-                        reason: format!("goal parent id {parent_id} does not exist"),
-                    });
-                }
+            if let Some(parent_id) = goal.parent_id
+                && !self.goals.contains_key(&parent_id)
+            {
+                return Err(CatapultError::InvalidGoal {
+                    reason: format!("goal parent id {parent_id} does not exist"),
+                });
             }
         }
         Ok(())

@@ -183,7 +183,7 @@ pub fn parse_livesafe_public_output_evidence_sha256(value: &str) -> Result<Hash2
     }
 
     let mut bytes = [0u8; 32];
-    for (index, chunk) in hex.as_bytes().chunks_exact(2).enumerate() {
+    for (index, chunk) in hex.as_bytes().as_chunks::<2>().0.iter().enumerate() {
         let high = hex_nibble(chunk[0])?;
         let low = hex_nibble(chunk[1])?;
         bytes[index] = (high << 4) | low;

@@ -273,14 +273,14 @@ pub fn validate_livesafe_public_adapter_output_authorization<R: AvcRegistryRead>
 ) -> Result<AvcValidationResult, AvcError> {
     validate_fixed_public_claim(draft)?;
     let credential_id = draft.credential.id()?;
-    if let Some(expected) = draft.credential_id {
-        if expected != credential_id {
-            return Err(AvcError::InvalidInput {
-                reason: format!(
-                    "LiveSafe public adapter output credential_id {expected} does not match computed AVC id {credential_id}"
-                ),
-            });
-        }
+    if let Some(expected) = draft.credential_id
+        && expected != credential_id
+    {
+        return Err(AvcError::InvalidInput {
+            reason: format!(
+                "LiveSafe public adapter output credential_id {expected} does not match computed AVC id {credential_id}"
+            ),
+        });
     }
     validate_registered_issuer_grant(&draft.credential, registry)?;
     validate_subject_kind(&draft.credential)?;
@@ -320,12 +320,12 @@ pub fn validate_livesafe_public_adapter_output_authorization<R: AvcRegistryRead>
         });
     }
 
-    if let Some(expires_at) = draft.credential.expires_at {
-        if expires_at.is_expired(&draft.issued_at) {
-            return Err(AvcError::InvalidInput {
-                reason: "LiveSafe public adapter output authorization denied: [Expired]".into(),
-            });
-        }
+    if let Some(expires_at) = draft.credential.expires_at
+        && expires_at.is_expired(&draft.issued_at)
+    {
+        return Err(AvcError::InvalidInput {
+            reason: "LiveSafe public adapter output authorization denied: [Expired]".into(),
+        });
     }
     let validation = validate_avc(
         &AvcValidationRequest {

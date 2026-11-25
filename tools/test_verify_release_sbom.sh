@@ -89,12 +89,13 @@ canonical_one="$test_root/canonical-one"
 canonical_two="$test_root/canonical-two"
 digest_one="$(run_validator "$raw_root" "$metadata_file" "$lock_file" "$canonical_one")"
 digest_two="$(run_validator "$raw_root" "$metadata_file" "$lock_file" "$canonical_two")"
-# Regenerated with cargo-cyclonedx 0.5.9 after the advisory lock upgrades
+# Regenerated with cargo-cyclonedx 0.5.9 after stacking the sqlx 0.9.1 /
+# rusqlite 0.41.1 upgrade on the dependency-advisory lock upgrades
 # (libp2p-gossipsub 0.49.5, libp2p-quic 0.13.1, quinn-udp 0.5.16, rustix
-# 1.1.6, hyper 1.12.0; pin-utils removed) and the url 2.5.9 /
-# form_urlencoded 1.2.3 lockfile bump (RUSTSEC-2026-0592). Two independent
-# canonical validations produced identical bytes and digest.
-expected_digest=481686491fad918b840b0140ed9326e15992f4f89a884fe792d512531eeb5498
+# 1.1.6, hyper 1.12.0, url 2.5.9 / form_urlencoded 1.2.3, libsqlite3-sys
+# 0.39.1). Two independent canonical validations produced identical
+# bytes and digest.
+expected_digest=c003c3562606c1576a68ba53baec141de4de4ee0479ec5f97215d600f880a3d5
 [ "$digest_one" = "$expected_digest" ] && [ "$digest_two" = "$expected_digest" ] \
   || fail "exact cargo-cyclonedx 0.5.9 corpus did not produce the reviewed canonical digest"
 /usr/bin/diff -ru "$canonical_one" "$canonical_two" >/dev/null \

@@ -390,10 +390,10 @@ where
             errors.push("neutral_benchmark_context_packet_graph_enabled".into());
         }
     }
-    if let Some(governed) = by_role.get(&DatabaseSiloRole::GovernedBenchmark) {
-        if !governed.allow_graph_routing {
-            errors.push("governed_benchmark_graph_routing_disabled".into());
-        }
+    if let Some(governed) = by_role.get(&DatabaseSiloRole::GovernedBenchmark)
+        && !governed.allow_graph_routing
+    {
+        errors.push("governed_benchmark_graph_routing_disabled".into());
     }
 
     for config in configs
@@ -499,17 +499,16 @@ fn validate_url_separation(
     if benchmark_writes_enabled {
         match url_values.get(&DatabaseSiloRole::Main) {
             Some(_) => {
-                if let Some(main_url) = &main {
-                    if neutral
+                if let Some(main_url) = &main
+                    && (neutral
                         .as_ref()
                         .is_some_and(|neutral_url| neutral_url == main_url)
                         || governed
                             .as_ref()
-                            .is_some_and(|governed_url| governed_url == main_url)
-                    {
-                        separated = false;
-                        errors.push("main_and_benchmark_database_urls_match".into());
-                    }
+                            .is_some_and(|governed_url| governed_url == main_url))
+                {
+                    separated = false;
+                    errors.push("main_and_benchmark_database_urls_match".into());
                 }
             }
             None => warnings.push("main_benchmark_separation_unobservable".into()),

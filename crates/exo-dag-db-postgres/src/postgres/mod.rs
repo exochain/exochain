@@ -7,7 +7,7 @@
 use std::time::Duration;
 
 use sqlx::{
-    Postgres, Transaction,
+    AssertSqlSafe, Postgres, Transaction,
     migrate::Migrator,
     postgres::{PgPool, PgPoolOptions},
 };
@@ -179,8 +179,9 @@ pub enum DagDbPostgresError {
         /// Source migration error.
         #[source]
         migration: sqlx::migrate::MigrateError,
-        /// Source close error.
-        close: sqlx::Error,
+        /// Source close error. Boxed so the error enum stays under clippy's
+        /// `result_large_err` threshold (sqlx 0.9 grew `sqlx::Error`).
+        close: Box<sqlx::Error>,
     },
 }
 
@@ -277,10 +278,14 @@ fn validate_schema_identifier(schema: &str) -> Result<()> {
 pub async fn run_migrations_in_schema(pool: &PgPool, schema: &str) -> Result<()> {
     validate_schema_identifier(schema)?;
 
-    sqlx::query(&format!("CREATE SCHEMA IF NOT EXISTS {schema}"))
-        .execute(pool)
-        .await
-        .map_err(|source| DagDbPostgresError::SchemaSetup { source })?;
+    // `schema` passed validate_schema_identifier above ([a-z_][a-z0-9_]{0,62});
+    // DDL identifiers cannot be bound as parameters.
+    sqlx::query(AssertSqlSafe(format!(
+        "CREATE SCHEMA IF NOT EXISTS {schema}"
+    )))
+    .execute(pool)
+    .await
+    .map_err(|source| DagDbPostgresError::SchemaSetup { source })?;
 
     // Run the migrator on a single dedicated connection whose session-level
     // search_path points at the dedicated schema first. SQLx creates its bare
@@ -292,10 +297,13 @@ pub async fn run_migrations_in_schema(pool: &PgPool, schema: &str) -> Result<()>
         .acquire()
         .await
         .map_err(|source| DagDbPostgresError::SchemaSetup { source })?;
-    sqlx::query(&format!("SET search_path TO {schema}, public"))
-        .execute(&mut *conn)
-        .await
-        .map_err(|source| DagDbPostgresError::SchemaSetup { source })?;
+    // `schema` passed validate_schema_identifier above.
+    sqlx::query(AssertSqlSafe(format!(
+        "SET search_path TO {schema}, public"
+    )))
+    .execute(&mut *conn)
+    .await
+    .map_err(|source| DagDbPostgresError::SchemaSetup { source })?;
 
     let migration_result = migrator().run(&mut *conn).await;
 
@@ -321,7 +329,7 @@ fn finish_schema_migration(
         (Err(migration), Err(close)) => Err(DagDbPostgresError::MigrationAndConnectionClose {
             schema: schema.to_owned(),
             migration,
-            close,
+            close: Box::new(close),
         }),
     }
 }
@@ -570,8 +578,9 @@ mod tests {
             DagDbPostgresError::MigrationAndConnectionClose {
                 schema,
                 migration: sqlx::migrate::MigrateError::VersionMissing(42),
-                close: sqlx::Error::RowNotFound,
+                close,
             } if schema == DAGDB_MIGRATION_SCHEMA
+                && matches!(*close, sqlx::Error::RowNotFound)
         ));
     }
 }

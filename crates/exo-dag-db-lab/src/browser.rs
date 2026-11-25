@@ -696,10 +696,10 @@ fn recommendations_from(summary: &Value, markdown: Option<String>) -> Vec<String
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    if let Some(text) = markdown {
-        if recommendations.is_empty() {
-            recommendations.push(text);
-        }
+    if let Some(text) = markdown
+        && recommendations.is_empty()
+    {
+        recommendations.push(text);
     }
     recommendations
 }

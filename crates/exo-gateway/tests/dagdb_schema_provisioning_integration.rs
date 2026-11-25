@@ -72,11 +72,13 @@ async fn gateway_startup_provisions_dagdb_and_gateway_schemas_without_collision(
     let mut admin = PgConnection::connect(&base_url)
         .await
         .expect("connect to EXO_DAGDB_TEST_DATABASE_URL for admin");
-    sqlx::query(&format!("DROP DATABASE IF EXISTS {throwaway}"))
-        .execute(&mut admin)
-        .await
-        .expect("drop any stale throwaway database");
-    sqlx::query(&format!("CREATE DATABASE {throwaway}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP DATABASE IF EXISTS {throwaway}"
+    )))
+    .execute(&mut admin)
+    .await
+    .expect("drop any stale throwaway database");
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {throwaway}")))
         .execute(&mut admin)
         .await
         .expect("create throwaway database");
@@ -87,9 +89,11 @@ async fn gateway_startup_provisions_dagdb_and_gateway_schemas_without_collision(
         Ok(pool) => pool,
         Err(error) => {
             // Best-effort cleanup before failing.
-            let _ = sqlx::query(&format!("DROP DATABASE IF EXISTS {throwaway}"))
-                .execute(&mut admin)
-                .await;
+            let _ = sqlx::query(sqlx::AssertSqlSafe(format!(
+                "DROP DATABASE IF EXISTS {throwaway}"
+            )))
+            .execute(&mut admin)
+            .await;
             panic!("gateway init_pool must provision a fresh database, got: {error}");
         }
     };
@@ -185,9 +189,11 @@ async fn gateway_startup_provisions_dagdb_and_gateway_schemas_without_collision(
     pool.close().await;
 
     // Cleanup: drop the throwaway database.
-    sqlx::query(&format!("DROP DATABASE IF EXISTS {throwaway}"))
-        .execute(&mut admin)
-        .await
-        .expect("drop throwaway database");
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP DATABASE IF EXISTS {throwaway}"
+    )))
+    .execute(&mut admin)
+    .await
+    .expect("drop throwaway database");
     admin.close().await.ok();
 }

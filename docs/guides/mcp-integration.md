@@ -74,7 +74,7 @@ agent-facing examples, coverage gates, and the receipt-pending runbook.
 
 | Requirement | Why |
 |---|---|
-| **Rust 1.85+** | Node compilation (`cargo build`). |
+| **Rust 1.94+** | Node compilation (`cargo build`). |
 | **An MCP client** | Claude Code, Claude Desktop, or any spec-compliant client. |
 | **Port 3030 free** (optional) | Only if using SSE transport. |
 | **~1 GB disk** (optional) | Only if the node will persist data to `~/.exochain`. |

@@ -99,7 +99,7 @@ The DID is derived as `did:exo:<first 16 hex chars of BLAKE3(public_key_bytes)>`
 
 ### Required toolchain
 
-- Rust 1.85+ (edition 2024). See [`docs/guides/GETTING-STARTED.md`](./GETTING-STARTED.md) for the full toolchain setup including `cargo-deny`, `cargo-audit`, and `cargo-tarpaulin`.
+- Rust 1.94+ (edition 2024). See [`docs/guides/GETTING-STARTED.md`](./GETTING-STARTED.md) for the full toolchain setup including `cargo-deny`, `cargo-audit`, and `cargo-tarpaulin`.
 
 ---
 

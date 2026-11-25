@@ -932,10 +932,8 @@ impl SyncEngine {
         }
 
         // If there are more nodes, request the next batch.
-        if has_more {
-            if let Err(e) = self.request_dag_sync().await {
-                tracing::warn!(err = %e, "Failed to request next sync batch");
-            }
+        if has_more && let Err(e) = self.request_dag_sync().await {
+            tracing::warn!(err = %e, "Failed to request next sync batch");
         }
     }
 

@@ -134,13 +134,13 @@ async fn read_bounded_response_body(
     max: usize,
 ) -> Result<Vec<u8>, TelegramUpdateParseError> {
     let max_u64 = usize_to_u64_saturating(max);
-    if let Some(content_length) = resp.content_length() {
-        if content_length > max_u64 {
-            return Err(TelegramUpdateParseError::Oversized {
-                len: content_length,
-                max: max_u64,
-            });
-        }
+    if let Some(content_length) = resp.content_length()
+        && content_length > max_u64
+    {
+        return Err(TelegramUpdateParseError::Oversized {
+            len: content_length,
+            max: max_u64,
+        });
     }
 
     let initial_capacity = resp
@@ -726,38 +726,36 @@ pub fn build_zerodentity_alerts_message(
             };
 
             // 1. Score regression.
-            if let (Some(curr), Some(prev)) = (current_score, previous_score) {
-                if prev.composite > curr.composite
-                    && prev.composite - curr.composite > ALERT_COMPOSITE_DROP_BP
-                {
-                    let did_html = escape_telegram_alert_did(&did);
-                    total_alert_count = total_alert_count.saturating_add(1);
-                    if alerts.len() < MAX_ZERODENTITY_ALERT_MESSAGE_ITEMS {
-                        alerts.push(format!(
-                            "\u{26a0}\u{fe0f} <code>{}</code> score dropped {} bp ({}\u{2192}{})",
-                            did_html,
-                            prev.composite - curr.composite,
-                            fmt_bp(prev.composite),
-                            fmt_bp(curr.composite),
-                        ));
-                    }
+            if let (Some(curr), Some(prev)) = (current_score, previous_score)
+                && prev.composite > curr.composite
+                && prev.composite - curr.composite > ALERT_COMPOSITE_DROP_BP
+            {
+                let did_html = escape_telegram_alert_did(&did);
+                total_alert_count = total_alert_count.saturating_add(1);
+                if alerts.len() < MAX_ZERODENTITY_ALERT_MESSAGE_ITEMS {
+                    alerts.push(format!(
+                        "\u{26a0}\u{fe0f} <code>{}</code> score dropped {} bp ({}\u{2192}{})",
+                        did_html,
+                        prev.composite - curr.composite,
+                        fmt_bp(prev.composite),
+                        fmt_bp(curr.composite),
+                    ));
                 }
             }
 
             // 2. Fingerprint consistency.
-            if let Some(latest) = fingerprints.last() {
-                if let Some(consistency) = latest.consistency_score_bp {
-                    if consistency < ALERT_FINGERPRINT_LOW_BP {
-                        let did_html = escape_telegram_alert_did(&did);
-                        total_alert_count = total_alert_count.saturating_add(1);
-                        if alerts.len() < MAX_ZERODENTITY_ALERT_MESSAGE_ITEMS {
-                            alerts.push(format!(
-                                "\u{26a0}\u{fe0f} <code>{}</code> fingerprint consistency low: {}",
-                                did_html,
-                                fmt_bp(consistency),
-                            ));
-                        }
-                    }
+            if let Some(latest) = fingerprints.last()
+                && let Some(consistency) = latest.consistency_score_bp
+                && consistency < ALERT_FINGERPRINT_LOW_BP
+            {
+                let did_html = escape_telegram_alert_did(&did);
+                total_alert_count = total_alert_count.saturating_add(1);
+                if alerts.len() < MAX_ZERODENTITY_ALERT_MESSAGE_ITEMS {
+                    alerts.push(format!(
+                        "\u{26a0}\u{fe0f} <code>{}</code> fingerprint consistency low: {}",
+                        did_html,
+                        fmt_bp(consistency),
+                    ));
                 }
             }
 

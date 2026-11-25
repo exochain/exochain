@@ -1024,30 +1024,30 @@ impl RlsCheckedPool {
 
         let role_name = format!("dagdb_rls_pool_{}", process::id());
         drop_rls_role_if_exists(&db.pool, &role_name).await;
-        sqlx::raw_sql(&format!(
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "CREATE ROLE {role_name} LOGIN PASSWORD '{RLS_TEST_ROLE_PASSWORD}'"
-        ))
+        )))
         .execute(&db.pool)
         .await
         .expect("create RLS checked pool role");
-        sqlx::raw_sql(&format!(
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "GRANT USAGE ON SCHEMA {} TO {role_name}",
             db.schema
-        ))
+        )))
         .execute(&db.pool)
         .await
         .expect("grant schema usage to RLS checked pool role");
-        sqlx::raw_sql(&format!(
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {} TO {role_name}",
             db.schema
-        ))
+        )))
         .execute(&db.pool)
         .await
         .expect("grant table privileges to RLS checked pool role");
-        sqlx::raw_sql(&format!(
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "GRANT EXECUTE ON FUNCTION {}.dagdb_current_tenant_id() TO {role_name}",
             db.schema
-        ))
+        )))
         .execute(&db.pool)
         .await
         .expect("grant tenant helper execution to RLS checked pool role");
@@ -1093,11 +1093,11 @@ async fn drop_rls_role_if_exists(pool: &PgPool, role_name: &str) {
     if !exists {
         return;
     }
-    sqlx::raw_sql(&format!("DROP OWNED BY {role_name}"))
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP OWNED BY {role_name}")))
         .execute(pool)
         .await
         .expect("drop RLS checked pool role privileges");
-    sqlx::raw_sql(&format!("DROP ROLE {role_name}"))
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP ROLE {role_name}")))
         .execute(pool)
         .await
         .expect("drop RLS checked pool role");
@@ -1117,11 +1117,13 @@ impl TestDb {
         let mut admin = PgConnection::connect(database_url)
             .await
             .expect("connect to EXO_DAGDB_TEST_DATABASE_URL");
-        sqlx::raw_sql(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
-            .execute(&mut admin)
-            .await
-            .expect("drop existing outbox test schema");
-        sqlx::raw_sql(&format!("CREATE SCHEMA {schema}"))
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "DROP SCHEMA IF EXISTS {schema} CASCADE"
+        )))
+        .execute(&mut admin)
+        .await
+        .expect("drop existing outbox test schema");
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
             .execute(&mut admin)
             .await
             .expect("create outbox test schema");
@@ -1154,10 +1156,12 @@ impl Drop for TestDb {
                 let mut conn = PgConnection::connect(&database_url)
                     .await
                     .expect("connect for outbox cleanup");
-                sqlx::raw_sql(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
-                    .execute(&mut conn)
-                    .await
-                    .expect("drop outbox test schema");
+                sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+                    "DROP SCHEMA IF EXISTS {schema} CASCADE"
+                )))
+                .execute(&mut conn)
+                .await
+                .expect("drop outbox test schema");
             });
         })
         .join()

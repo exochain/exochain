@@ -243,7 +243,7 @@ impl Harness {
     }
 }
 
-fn signer_reservation_count(path: &std::path::Path) -> u64 {
+fn signer_reservation_count(path: &std::path::Path) -> i64 {
     let connection = rusqlite::Connection::open(path).expect("signer journal");
     connection
         .query_row(
@@ -904,7 +904,7 @@ fn signer_journal_commit_before_record_abort_restarts_into_one_exact_record() {
         "crosschecked_anchor_receipts",
         "crosschecked_anchor_responses",
     ] {
-        let count: u64 = records
+        let count: i64 = records
             .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
                 row.get(0)
             })
@@ -912,7 +912,7 @@ fn signer_journal_commit_before_record_abort_restarts_into_one_exact_record() {
         assert_eq!(count, 1, "table {table}");
     }
     let journal = rusqlite::Connection::open(&signer_path).expect("signer journal");
-    let signature_count: u64 = journal
+    let signature_count: i64 = journal
         .query_row(
             "SELECT COUNT(*) FROM crosschecked_anchor_signatures",
             [],

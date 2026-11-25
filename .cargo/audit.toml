@@ -33,12 +33,6 @@ ignore = [
     # Transitive proc-macro utility via async-graphql; no runtime code path.
     "RUSTSEC-2024-0436",
 
-    # rsa Marvin timing attack.
-    # Present through SQLx MySQL support pulled by the upstream SQLx macro stack.
-    # EXOCHAIN runtime DB access is PostgreSQL-only; MySQL connection support is
-    # not exposed by any owned runtime configuration.
-    "RUSTSEC-2023-0071",
-
     # derivative — no longer maintained proc-macro (Gate 6 "unmaintained" class).
     # Transitive via ark-crypto-primitives -> ark-groth16 -> risc0-groth16 ->
     # risc0-zkvm (VCG-001c risc0 verifier-only vendoring, ratified decision D1).

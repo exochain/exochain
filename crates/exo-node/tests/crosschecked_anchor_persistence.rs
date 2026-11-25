@@ -72,7 +72,7 @@ impl CountingDurableSigner {
     /// Consumes one injected failure when the budget is non-zero.
     ///
     /// Same result as `fetch_update(SeqCst, SeqCst, |remaining| remaining.checked_sub(1)).is_ok()`.
-    /// Rust 1.99 deprecates `fetch_update`; `try_update` is newer than MSRV 1.85.
+    /// Rust 1.99 deprecates `fetch_update`; `try_update` is newer than MSRV 1.94.0.
     fn consume_failure_injection(&self) -> bool {
         let mut remaining = self.fail_next.load(Ordering::SeqCst);
         loop {

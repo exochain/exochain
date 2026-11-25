@@ -95,7 +95,7 @@ fn required_hex_param<'a>(params: &'a Value, field: &str) -> Result<&'a str, Too
 }
 
 fn decode_hex_param(field: &str, value: &str) -> Result<Vec<u8>, ToolResult> {
-    if value.len() % 2 != 0 {
+    if !value.len().is_multiple_of(2) {
         return Err(hex_param_error(format!(
             "{field} must contain an even number of hex characters"
         )));

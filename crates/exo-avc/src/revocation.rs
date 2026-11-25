@@ -97,12 +97,12 @@ pub fn revoke_avc<F>(
 where
     F: FnOnce(&[u8]) -> Signature,
 {
-    if let AvcRevocationReason::Other(text) = &reason {
-        if text.trim().is_empty() {
-            return Err(AvcError::EmptyField {
-                field: "revocation.reason.Other",
-            });
-        }
+    if let AvcRevocationReason::Other(text) = &reason
+        && text.trim().is_empty()
+    {
+        return Err(AvcError::EmptyField {
+            field: "revocation.reason.Other",
+        });
     }
 
     let mut revocation = AvcRevocation {

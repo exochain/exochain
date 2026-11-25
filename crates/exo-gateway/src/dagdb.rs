@@ -1905,12 +1905,11 @@ async fn import_handler(
         ) {
             Ok(approval) => approval,
             Err(error) => {
-                if replayed_response.is_none() {
-                    if let Err(cleanup_error) =
+                if replayed_response.is_none()
+                    && let Err(cleanup_error) =
                         cleanup_gateway_idempotency_reservation(pool, &request, request_hash).await
-                    {
-                        return *cleanup_error;
-                    }
+                {
+                    return *cleanup_error;
                 }
                 return handler_operational_error_response(
                     pool,
@@ -1937,12 +1936,11 @@ async fn import_handler(
         {
             Ok(service) => service,
             Err(error) => {
-                if replayed_response.is_none() {
-                    if let Err(cleanup_error) =
+                if replayed_response.is_none()
+                    && let Err(cleanup_error) =
                         cleanup_gateway_idempotency_reservation(pool, &request, request_hash).await
-                    {
-                        return *cleanup_error;
-                    }
+                {
+                    return *cleanup_error;
                 }
                 let handler_error = DagDbHandlerError::from_gatekeeper(error);
                 warn!(
@@ -1981,12 +1979,11 @@ async fn import_handler(
         {
             Ok(authorization_payload_hash) => authorization_payload_hash,
             Err(error) => {
-                if replayed_response.is_none() {
-                    if let Err(cleanup_error) =
+                if replayed_response.is_none()
+                    && let Err(cleanup_error) =
                         cleanup_gateway_idempotency_reservation(pool, &request, request_hash).await
-                    {
-                        return *cleanup_error;
-                    }
+                {
+                    return *cleanup_error;
                 }
                 warn!(
                     route = "dagdb.import",
@@ -2016,12 +2013,11 @@ async fn import_handler(
             authorization_payload_hash,
             &finality_approval,
         ) {
-            if replayed_response.is_none() {
-                if let Err(cleanup_error) =
+            if replayed_response.is_none()
+                && let Err(cleanup_error) =
                     cleanup_gateway_idempotency_reservation(pool, &request, request_hash).await
-                {
-                    return *cleanup_error;
-                }
+            {
+                return *cleanup_error;
             }
             warn!(
                 route = "dagdb.import",
@@ -2186,12 +2182,11 @@ async fn export_handler(
         ) {
             Ok(approval) => approval,
             Err(error) => {
-                if replayed_response.is_none() {
-                    if let Err(cleanup_error) =
+                if replayed_response.is_none()
+                    && let Err(cleanup_error) =
                         cleanup_export_idempotency_reservation(pool, &request, request_hash).await
-                    {
-                        return *cleanup_error;
-                    }
+                {
+                    return *cleanup_error;
                 }
                 return handler_operational_error_response(
                     pool,
@@ -2218,12 +2213,11 @@ async fn export_handler(
         {
             Ok(service) => service,
             Err(error) => {
-                if replayed_response.is_none() {
-                    if let Err(cleanup_error) =
+                if replayed_response.is_none()
+                    && let Err(cleanup_error) =
                         cleanup_export_idempotency_reservation(pool, &request, request_hash).await
-                    {
-                        return *cleanup_error;
-                    }
+                {
+                    return *cleanup_error;
                 }
                 let handler_error = DagDbHandlerError::from_gatekeeper(error);
                 warn!(
@@ -2263,12 +2257,11 @@ async fn export_handler(
         {
             Ok(authorization_payload_hash) => authorization_payload_hash,
             Err(error) => {
-                if replayed_response.is_none() {
-                    if let Err(cleanup_error) =
+                if replayed_response.is_none()
+                    && let Err(cleanup_error) =
                         cleanup_export_idempotency_reservation(pool, &request, request_hash).await
-                    {
-                        return *cleanup_error;
-                    }
+                {
+                    return *cleanup_error;
                 }
                 warn!(
                     route = "dagdb.export",
@@ -2298,12 +2291,11 @@ async fn export_handler(
             authorization_payload_hash,
             &finality_approval,
         ) {
-            if replayed_response.is_none() {
-                if let Err(cleanup_error) =
+            if replayed_response.is_none()
+                && let Err(cleanup_error) =
                     cleanup_export_idempotency_reservation(pool, &request, request_hash).await
-                {
-                    return *cleanup_error;
-                }
+            {
+                return *cleanup_error;
             }
             warn!(
                 route = "dagdb.export",
@@ -3212,10 +3204,8 @@ async fn import_authorization_payload_hash(
     persist_usage_event: bool,
     replay_authorization_payload_hash: Option<Hash256>,
 ) -> Result<Hash256, DagDbHandlerError> {
-    if !persist_usage_event {
-        if let Some(payload_hash) = replay_authorization_payload_hash {
-            return Ok(payload_hash);
-        }
+    if !persist_usage_event && let Some(payload_hash) = replay_authorization_payload_hash {
+        return Ok(payload_hash);
     }
     let selection_request = selection_request_from_import(request);
     let selection = build_persistent_graph_context_selection(pool, &selection_request)
@@ -3234,10 +3224,8 @@ async fn export_authorization_payload_hash(
     persist_usage_event: bool,
     replay_authorization_payload_hash: Option<Hash256>,
 ) -> Result<Hash256, DagDbHandlerError> {
-    if !persist_usage_event {
-        if let Some(payload_hash) = replay_authorization_payload_hash {
-            return Ok(payload_hash);
-        }
+    if !persist_usage_event && let Some(payload_hash) = replay_authorization_payload_hash {
+        return Ok(payload_hash);
     }
     let selection_request = selection_request_from_export(request, request_hash);
     let selection = build_persistent_graph_context_selection(pool, &selection_request)

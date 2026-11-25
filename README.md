@@ -41,7 +41,7 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 | Rust source files | 518 | `git ls-files 'crates/**/*.rs'` |
 | Workspace tests (Linux) | 6,763 listed | Measured with `cargo test --workspace -- --list` on this head |
 | Workspace tests (macOS) | 6,767 listed | Linux inventory plus four `target_os = "macos"` tests in `crates/exo-node/src/private_file.rs` |
-| CI quality gates | 23 | `.github/workflows/ci.yml` numbered gates; required aggregator is separate |
+| CI quality gates | 24 | `.github/workflows/ci.yml` numbered gates; required aggregator is separate |
 | Last verified published release | `v0.2.7` (observed `2026-10-09T00:42:24Z`; packages listed in snapshot) | [Publication snapshot](governance/releases/published-release-snapshot.json) |
 | License | Apache-2.0 for EXOCHAIN core primitives; commercial terms for Decision Forum, LegalDyne, CyberMedica, LiveSafe, and CrossChecked products | `governance/commercial-product-licensing.json`; product license files where present |
 | Live node health | Not inferred from repository state; verify each target at deploy or release time | `tools/verify_live_node_claim.sh` |
@@ -56,7 +56,7 @@ The `v0.2.7` GitHub Release states that each native archive contains 29 legacy `
 - **Build succeeds** for all library crates, binaries, tests, and benchmarks
 - **Clippy clean** under `-D warnings` for all workspace targets
 - **Format clean** under `cargo +nightly-2026-09-21 fmt --all -- --check`
-- **23 numbered CI quality gates** plus the required "All Constitutional Gates" aggregator are defined; workflow runs report their status, while merge enforcement depends on current GitHub ruleset or branch-protection settings
+- **24 numbered CI quality gates** plus the required "All Constitutional Gates" aggregator are defined; workflow runs report their status, while merge enforcement depends on current GitHub ruleset or branch-protection settings
 - **Traceability matrix** maps 120 requirements — see `governance/traceability_matrix.md`
 - **Threat model** covers 17 threats tracked: 17 implemented, 0 partial, 0 planned — see `governance/threat_matrix.md`
 - **Constitutional invariants** are enforced in the tested gatekeeper and decision-forum adjudication paths
@@ -253,7 +253,7 @@ These runtime docs do not claim billing savings or thesis acceptance.
 
 * **`governance/`** — Council resolutions, sub-agent charters, traceability matrices, quality gates
 * **`docs/`** — Architecture, guides, council panel reports, proofs, reference documentation
-* **`.github/workflows/`** — CI pipeline (23 numbered quality gates plus required aggregator), release workflow, ExoForge triage
+* **`.github/workflows/`** — CI pipeline (24 numbered quality gates plus required aggregator), release workflow, ExoForge triage
 
 ## Governance & Compliance
 
@@ -263,7 +263,7 @@ This repository is managed under strict **Judicial Build Governance**. All contr
 
 * [Traceability Matrix](governance/traceability_matrix.md) — 120 requirements tracked
 * [Threat Model](governance/threat_matrix.md) — 17 tracked: 17 implemented, 0 partial, 0 planned
-* [Quality Gates](governance/quality_gates.md) — 23 numbered CI gates plus required aggregator
+* [Quality Gates](governance/quality_gates.md) — 24 numbered CI gates plus required aggregator
 * [Sub-Agent Charters](governance/sub_agents.md) — 11 agent charters documented
 * [Council Resolutions](governance/resolutions/INDEX.md) — CR-001 DRAFT
 * [Tier-One Readiness Audit](docs/audit/TIER-ONE-READINESS-AUDIT.md) — capability model, gap analysis, exit checklist
@@ -318,7 +318,7 @@ See [docs/guides/ARCHON-INTEGRATION.md](docs/guides/ARCHON-INTEGRATION.md) for s
 
 ### Prerequisites
 
-* **Rust 1.85+** is the minimum supported compiler; install the exact CI validation compiler with `rustup toolchain install 1.98.1 --profile minimal --component clippy`.
+* **Rust 1.94+** is the minimum supported compiler; install the exact CI validation compiler with `rustup toolchain install 1.98.1 --profile minimal --component clippy`.
 * Clang (for crypto extensions)
 
 ### Build & Test

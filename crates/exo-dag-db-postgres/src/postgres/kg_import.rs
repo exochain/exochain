@@ -279,14 +279,14 @@ async fn persist_kg_import_report_in_transaction(
                 ),
             });
         }
-        if let Some(parent_graph_node_id) = &layer.parent_graph_node_id {
-            if !graph_node_ids.contains(parent_graph_node_id) {
-                return Err(KgImportPersistenceError::Conflict {
-                    reason: format!(
-                        "layer references unknown parent graph node {parent_graph_node_id}"
-                    ),
-                });
-            }
+        if let Some(parent_graph_node_id) = &layer.parent_graph_node_id
+            && !graph_node_ids.contains(parent_graph_node_id)
+        {
+            return Err(KgImportPersistenceError::Conflict {
+                reason: format!(
+                    "layer references unknown parent graph node {parent_graph_node_id}"
+                ),
+            });
         }
         counts.inserted_layer_count = counts
             .inserted_layer_count
