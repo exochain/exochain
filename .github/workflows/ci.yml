@@ -1105,6 +1105,23 @@ jobs:
         run: cargo test -p exochain-node private_file::tests::windows -- --nocapture
 
   # -----------------------------------------------------------------------
+  # Gate 24: MSRV (locked cargo check on the declared rust-version)
+  # -----------------------------------------------------------------------
+  msrv:
+    name: "Gate 24 — MSRV Check (1.94.0)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0
+        with:
+          toolchain: 1.94.0
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+      - name: Report MSRV compiler
+        run: rustc +1.94.0 --version --verbose
+      - name: Locked workspace check on MSRV 1.94.0
+        run: cargo +1.94.0 check --locked --workspace
+
+  # -----------------------------------------------------------------------
   # Constitutional gate: all must pass
   # -----------------------------------------------------------------------
   all-gates:
@@ -1114,6 +1131,7 @@ jobs:
       - npm-release-runtime
       - lynk
       - build
+      - msrv
       - test
       - python-sdk
       - coverage

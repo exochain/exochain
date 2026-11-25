@@ -138,7 +138,8 @@ def ci_contract?(root, action)
       installations[name] += 1
       wanted = expected_with[name] || {
         "format" => {"toolchain" => "nightly-2026-09-21", "components" => "rustfmt"},
-        "sbom" => {"toolchain" => "1.97.1"}
+        "sbom" => {"toolchain" => "1.97.1"},
+        "msrv" => {"toolchain" => "1.94.0"}
       }[name]
       return false unless wanted
       expected_step = {"uses" => action, "with" => wanted}
@@ -146,7 +147,7 @@ def ci_contract?(root, action)
       return false unless step == expected_step
     end
   end
-  return false unless installations == (expected + %w[format sbom]).to_h { |name| [name, 1] }
+  return false unless installations == (expected + %w[format sbom msrv]).to_h { |name| [name, 1] }
   return false unless root.fetch("env")["RUSTFLAGS"] == "-D warnings" &&
     warning_env_safe?(root.fetch("env"))
   return false if %w[build private-file-windows].any? { |name|
@@ -174,7 +175,7 @@ def ci_contract?(root, action)
   gate = jobs.fetch("all-gates")
   return false if [hygiene, gate].any? { |job| job.key?("if") || job.key?("continue-on-error") }
   return false unless gate["needs"].is_a?(Array) && gate["needs"].uniq == gate["needs"] &&
-    (expected + %w[hygiene format sbom]).all? { |name| gate["needs"].include?(name) }
+    (expected + %w[hygiene format sbom msrv]).all? { |name| gate["needs"].include?(name) }
   %w[test_github_actions_pinned test_ci_supply_chain_hardening].all? do |guard|
     hygiene.fetch("steps").count { |step| step["run"] == "bash tools/#{guard}.sh" &&
       !step.key?("if") && !step.key?("continue-on-error") } == 1
@@ -227,10 +228,11 @@ warn "rejected #{mutations.length} formatter contract mutations"
 fixture_jobs = ("build test coverage lint deny doc machete integration-tests integration-tests-db " \
   "consensus-integration state-sync-integration cross-platform zerodentity-coverage " \
   "root-genesis-coverage root-genesis-portal-coverage build-wasm unaudited-feature-matrix " \
-  "private-file-windows format sbom hygiene audit all-gates").split.to_h do |name|
+  "private-file-windows format sbom msrv hygiene audit all-gates").split.to_h do |name|
   with = {"toolchain" => "1.98.1"}
   with = {"toolchain" => "nightly-2026-09-21", "components" => "rustfmt"} if name == "format"
   with = {"toolchain" => "1.97.1"} if name == "sbom"
+  with = {"toolchain" => "1.94.0"} if name == "msrv"
   with["components"] = "rustfmt, clippy" if name == "build"
   with["components"] = "clippy" if name == "lint"
   with["targets"] = '${{ matrix.target }}' if name == "cross-platform"
@@ -275,6 +277,7 @@ ci_mutations = [
   ->(x) { x["env"]["RUSTFLAGS"] = "-A warnings" },
   ->(x) { x["jobs"]["format"]["steps"][0]["with"]["toolchain"] = "nightly" },
   ->(x) { x["jobs"]["sbom"]["steps"][0]["with"]["toolchain"] = "stable" },
+  ->(x) { x["jobs"]["msrv"]["steps"][0]["with"]["toolchain"] = "stable" },
   ->(x) { x["jobs"]["hygiene"]["if"] = "false" },
   ->(x) { x["jobs"]["hygiene"]["steps"].first["if"] = "false" },
   ->(x) { x["jobs"]["hygiene"]["steps"].first["with"]["toolchain"] = "stable" },
