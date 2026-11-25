@@ -961,11 +961,9 @@ jobs:
         # protocol/package metadata for trust receipts; the fairness-evidence
         # transition adds the current FairnessProof safe-harbor bridge.
         run: |
-          # wasm-bindgen 0.2.104 emits CJS `exports.wasm_*` instead of
-          # `module.exports.wasm_*` (wasm-bindgen PR 4671). The exports.wasm_
-          # needle matches both forms. grep -c exits 1 on zero matches, so
-          # keep the step alive long enough to print the expected-count error.
-          COUNT=$(grep -c "exports.wasm_" packages/exochain-wasm/wasm/exochain_wasm.js || true)
+          # Count unique exported `wasm_*` symbols directly from the generated
+          # NodeJS wrapper rather than line-based grep -c.
+          COUNT=$(node -e 'const w = require("./packages/exochain-wasm/wasm/exochain_wasm.js"); console.log(Object.keys(w).filter((k) => k.startsWith("wasm_")).length);')
           echo "Found $COUNT WASM exports"
           [ "$COUNT" -eq 167 ] || (echo "Expected 167 exports, got $COUNT" && exit 1)
       - name: Upload WASM artifact

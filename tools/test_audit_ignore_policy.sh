@@ -62,16 +62,43 @@ import tomllib
 audit_path = sys.argv[1]
 expiry_only = sys.argv[2] == "1"
 
+import urllib.parse
+
 EXPIRY_MARKER_RE = re.compile(
-    r"(?:\bexpir(?:e|es|ed|ing|y)?\b|\bapproved\s+until\b|\btime-limited\b|\buntil\s+\d{4}-\d{2}-\d{2}\b)",
+    r"(?:"
+    r"\bexpir(?:e|es|ed|ing|y|ation)?\b"
+    r"|\bapproved\s+until\b"
+    r"|\btime[\s-]+limited\b"
+    r"|\bvalid\s+(?:until|through|thru)\b"
+    r"|\btemporary\s+(?:exception|ignore|waiver)\b"
+    r"|\buntil\s+(?:\d{4}-\d{2}-\d{2}|[A-Za-z]+\s+\d{4})\b"
+    r")",
     re.IGNORECASE,
 )
-TRACKING_URL_RE = re.compile(r"^https://[A-Za-z0-9.-]+/\S+$")
+HOST_LABEL_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
+TLD_LABEL_RE = re.compile(r"^(?:[A-Za-z]{2,63}|xn--[A-Za-z0-9-]+)$")
 ADVISORY_ID_RE = re.compile(r'["\x27](RUSTSEC-\d{4}-\d{4}|GHSA-[A-Za-z0-9-]+)["\x27]')
 
 
+def is_valid_tracking_url(url: object) -> bool:
+    if not isinstance(url, str) or not url or any(ch.isspace() for ch in url):
+        return False
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme != "https" or parsed.username or parsed.password:
+        return False
+    host = parsed.hostname
+    if not host or "." not in host:
+        return False
+    labels = host.split(".")
+    if any(not label or not HOST_LABEL_RE.fullmatch(label) for label in labels):
+        return False
+    if not TLD_LABEL_RE.fullmatch(labels[-1]):
+        return False
+    return bool(parsed.path.strip("/"))
+
+
 def collect_comment_declared_expiries(toml_text: str) -> dict[str, list[str]]:
-    """Scan contiguous # comment blocks immediately preceding advisory entries."""
+    '''Scan leading and inline # comments attached to ignore advisory entries.'''
     found: dict[str, list[str]] = {}
     block_comments: list[str] = []
     in_ignore = False
@@ -85,7 +112,6 @@ def collect_comment_declared_expiries(toml_text: str) -> dict[str, list[str]]:
         if stripped == "]":
             break
         if not stripped:
-            block_comments = []
             continue
         if stripped.startswith("#"):
             block_comments.append(stripped)
@@ -93,9 +119,27 @@ def collect_comment_declared_expiries(toml_text: str) -> dict[str, list[str]]:
         match = ADVISORY_ID_RE.search(stripped)
         if match:
             adv_id = match.group(1)
-            joined = "\n".join(block_comments)
-            if EXPIRY_MARKER_RE.search(joined):
-                found.setdefault(adv_id, []).append(joined)
+            inline_comment = ""
+            quote_char = None
+            escaped = False
+            for idx, ch in enumerate(stripped):
+                if escaped:
+                    escaped = False
+                elif quote_char is not None:
+                    if ch == "\\" and quote_char == '"':
+                        escaped = True
+                    elif ch == quote_char:
+                        quote_char = None
+                elif ch in ('"', "'"):
+                    quote_char = ch
+                elif ch == "#":
+                    inline_comment = stripped[idx:]
+                    break
+            combined = "\n".join([*block_comments, *([inline_comment] if inline_comment else [])])
+            if EXPIRY_MARKER_RE.search(combined):
+                found.setdefault(adv_id, []).append(combined)
+            block_comments = []
+        else:
             block_comments = []
     return found
 
@@ -140,7 +184,7 @@ def validate_expiry_policies(
             continue
 
         tracking = meta.get("tracking_issue")
-        if not isinstance(tracking, str) or not TRACKING_URL_RE.fullmatch(tracking):
+        if not is_valid_tracking_url(tracking):
             errors.append(
                 f"exception {advisory_id} must define a valid https:// tracking_issue URL, got {tracking!r}"
             )
@@ -232,6 +276,44 @@ bad_tracking_errs = validate_expiry_policies(
 assert any("tracking_issue" in err for err in bad_tracking_errs), (
     f"self-test failed: malformed tracking_issue must fail, got {bad_tracking_errs!r}"
 )
+
+for bad_url in (
+    "https://../not-an-issue",
+    "https://github.com/",
+    "http://github.com/exochain/exochain/issues/922",
+    "https://github..com/exochain/exochain/issues/922",
+):
+    bad_https_errs = validate_expiry_policies(
+        {"RUSTSEC-2026-0534"},
+        {"RUSTSEC-2026-0534"},
+        sample_deny_entries,
+        sample_audit,
+        sample_deny,
+        {"RUSTSEC-2026-0534": {"expires": "2027-01-31", "tracking_issue": bad_url}},
+        datetime.date(2026, 11, 24),
+    )
+    assert any("tracking_issue" in err for err in bad_https_errs), (
+        f"self-test failed: {bad_url!r} must fail tracking_issue check, got {bad_https_errs!r}"
+    )
+
+for variant_label, variant_audit in (
+    ("blank-line", '[advisories]\nignore = [\n  # expires 2027-01-31\n\n  "RUSTSEC-2026-0534",\n]\n'),
+    ("trailing-inline", '[advisories]\nignore = [\n  "RUSTSEC-2026-0534", # expires 2027-01-31\n]\n'),
+    ("expiration-word", '[advisories]\nignore = [\n  # expiration 2027-01-31\n  "RUSTSEC-2026-0534",\n]\n'),
+    ("valid-through", '[advisories]\nignore = [\n  # valid through 2027-01-31\n  "RUSTSEC-2026-0534",\n]\n'),
+):
+    variant_errs = validate_expiry_policies(
+        {"RUSTSEC-2026-0534"},
+        {"RUSTSEC-2026-0534"},
+        [{"id": "RUSTSEC-2026-0534", "reason": "temporary maintainer note"}],
+        variant_audit,
+        '[advisories]\nignore = [\n  { id = "RUSTSEC-2026-0534", reason = "temporary maintainer note" },\n]\n',
+        {},
+        datetime.date(2026, 11, 24),
+    )
+    assert len(variant_errs) == 1 and ".cargo/audit.toml ignore RUSTSEC-2026-0534" in variant_errs[0], (
+        f"self-test failed ({variant_label}): expected audit comment bypass failure, got {variant_errs!r}"
+    )
 
 bypass_errs = validate_expiry_policies(
     {"RUSTSEC-2026-0534"},

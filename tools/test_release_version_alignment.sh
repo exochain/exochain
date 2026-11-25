@@ -513,28 +513,76 @@ if documentation_failures:
 
 msrv = cargo["workspace"]["package"]["rust-version"]
 msrv_major_minor = ".".join(msrv.split(".")[:2])
-cgr_prover_msrv = tomllib.loads(read("crates/exo-cgr-prover/Cargo.toml"))["package"]["rust-version"]
-if cgr_prover_msrv != msrv:
-    fail(f"crates/exo-cgr-prover/Cargo.toml rust-version is {cgr_prover_msrv}, expected {msrv}")
+allowed_msrv_tokens = {msrv, msrv_major_minor}
+for manifest_path in ("crates/exo-cgr-prover/Cargo.toml", "crates/exo-cgr-methods/Cargo.toml"):
+    crate_msrv = tomllib.loads(read(manifest_path))["package"]["rust-version"]
+    if crate_msrv != msrv:
+        fail(f"{manifest_path} rust-version is {crate_msrv}, expected {msrv}")
+
+MSRV_CLAIM_PATTERNS = (
+    re.compile(r"\bMSRV\b[^.\n;]{0,40}?(1\.\d+(?:\.\d+)?)"),
+    re.compile(r"(1\.\d+(?:\.\d+)?)\s*(?:\+\s*)?(?:\(?MSRV\)?|M\.S\.R\.V\.)"),
+    re.compile(r"\bMSRV-(1\.\d+(?:\.\d+)?)"),
+    re.compile(r"(?:minimum supported compiler|must be >=)[^.\n;]{0,40}?(1\.\d+(?:\.\d+)?)"),
+    re.compile(r"\bRust\s+(1\.\d+(?:\.\d+)?)\+\s+to build the workspace"),
+    re.compile(r"\*\*Rust\s+(1\.\d+(?:\.\d+)?)\+"),
+    re.compile(r"\|\s*\*?\*?Rust(?:\s+toolchain)?\*?\*?\s*\|\s*(1\.\d+(?:\.\d+)?)"),
+    re.compile(r"^-\s+Rust\s+(1\.\d+(?:\.\d+)?)\+"),
+    re.compile(r"rustc\s+(1\.\d+(?:\.\d+)?)\+?"),
+)
+
+
+def validate_msrv_claims(doc_path: str, doc_txt: str) -> None:
+    matched_count = 0
+    for lineno, line in enumerate(doc_txt.splitlines(), start=1):
+        if doc_path == "docs/guides/developer-onboarding.md" and "chore: bump rust-toolchain to 1.85.0" in line:
+            continue
+        for pat in MSRV_CLAIM_PATTERNS:
+            for m in pat.finditer(line):
+                matched_count += 1
+                found_ver = m.group(1)
+                if found_ver not in allowed_msrv_tokens:
+                    fail(
+                        f"{doc_path}:{lineno} has stale/mismatched MSRV claim {found_ver!r} "
+                        f"(expected {msrv} or {msrv_major_minor}): {line.strip()}"
+                    )
+    if matched_count == 0:
+        fail(f"{doc_path} must document current MSRV {msrv}")
+
+
 msrv_docs = [
     "README.md",
     "CONTRIBUTING.md",
     "AGENTS.md",
     "docs/guides/GETTING-STARTED.md",
+    "docs/guides/developer-onboarding.md",
     "docs/guides/mcp-integration.md",
     "docs/guides/sdk-quickstart-rust.md",
+    "docs/guides/production-deployment.md",
+    "deploy/RAILWAY-HANDOFF.md",
     "site/src/app/(internet)/docs/getting-started/page.tsx",
+    "agents/platform-devops-engineer/AGENTS.md",
 ]
 for doc_path in msrv_docs:
-    doc_txt = read(doc_path)
-    if msrv_major_minor not in doc_txt and msrv not in doc_txt:
-        fail(f"{doc_path} must document current MSRV {msrv}")
-    if "1.85" in doc_txt:
-        fail(f"{doc_path} still references stale MSRV 1.85")
-if msrv_major_minor not in read("docs/guides/developer-onboarding.md"):
-    fail(f"docs/guides/developer-onboarding.md must document current MSRV {msrv}")
-if "1.85" in read("deploy/RAILWAY-HANDOFF.md"):
-    fail("deploy/RAILWAY-HANDOFF.md still references stale Rust 1.85")
+    validate_msrv_claims(doc_path, read(doc_path))
+
+import contextlib
+import io
+
+with contextlib.redirect_stderr(io.StringIO()):
+    try:
+        mutated_contrib = read("CONTRIBUTING.md").replace("* **Rust 1.94+** is the MSRV.", "* **Rust 1.93+** is the MSRV.", 1)
+        validate_msrv_claims("CONTRIBUTING.md", mutated_contrib)
+        raise AssertionError("partial CONTRIBUTING.md MSRV mutation unexpectedly passed")
+    except SystemExit:
+        pass
+
+    try:
+        mutated_railway = read("deploy/RAILWAY-HANDOFF.md").replace("1.94.0 MSRV", "1.93.0 MSRV", 1)
+        validate_msrv_claims("deploy/RAILWAY-HANDOFF.md", mutated_railway)
+        raise AssertionError("mutated RAILWAY-HANDOFF.md MSRV unexpectedly passed")
+    except SystemExit:
+        pass
 
 print("release documentation boundary checks passed")
 print(f"release version alignment test passed: {expected}")
