@@ -36,7 +36,7 @@ same directory.
 
 | Tool                | Version           | Why                                                   |
 |---------------------|-------------------|-------------------------------------------------------|
-| Rust                | 1.85+ stable      | Workspace compiles with the current stable toolchain  |
+| Rust                | 1.94+ stable      | Workspace compiles with the current stable toolchain  |
 | `rustup`            | Any recent        | Toolchain management                                  |
 | Clang               | Any recent        | Required for crypto-backend compilation (`blake3` SIMD, `ed25519-dalek`) |
 | Git                 | 2.30+             | Submodules and sparse checkouts in tooling            |
@@ -65,7 +65,7 @@ cargo install cargo-deny cargo-audit
 Verify:
 
 ```bash
-rustc --version         # → rustc 1.85.x (or later)
+rustc --version         # → rustc 1.94.x (or later)
 cargo --version
 clang --version
 ```

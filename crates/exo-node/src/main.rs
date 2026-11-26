@@ -332,10 +332,10 @@ fn resolve_validator_public_keys(
     if let Some(entries) = entries {
         for entry in entries {
             let (did, public_key) = parse_validator_public_key_entry(entry)?;
-            if let Some(previous) = keys.insert(did.clone(), public_key) {
-                if previous != public_key {
-                    anyhow::bail!("conflicting public keys supplied for validator {did}");
-                }
+            if let Some(previous) = keys.insert(did.clone(), public_key)
+                && previous != public_key
+            {
+                anyhow::bail!("conflicting public keys supplied for validator {did}");
             }
         }
     }

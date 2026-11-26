@@ -172,7 +172,7 @@ impl Default for NodeMetrics {
 /// This is the same update as
 /// `fetch_update(Relaxed, Relaxed, |value| Some(value.saturating_sub(1)))`.
 /// Rust 1.99 deprecates `fetch_update` in favor of `try_update`, which has
-/// been stable only since 1.95. The compare-exchange loop keeps MSRV 1.85 and
+/// been stable only since 1.95. The compare-exchange loop keeps MSRV 1.94.0 and
 /// stays warning-clean on both 1.98.1 and 1.99.
 pub(crate) fn saturating_decrement(counter: &AtomicU64) {
     let mut current = counter.load(Ordering::Relaxed);

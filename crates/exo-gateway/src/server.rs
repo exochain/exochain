@@ -3834,10 +3834,9 @@ async fn trusted_session_validation_time_ms(state: &AppState) -> Result<i64> {
     if matches!(
         state.session_time_source,
         SessionTimeSource::DatabaseWhenAvailable
-    ) {
-        if let Some(db) = state.pool.as_ref() {
-            return trusted_database_epoch_ms(db).await;
-        }
+    ) && let Some(db) = state.pool.as_ref()
+    {
+        return trusted_database_epoch_ms(db).await;
     }
 
     trusted_session_validation_time_ms_from_hlc(state)
@@ -4685,12 +4684,11 @@ fn gateway_rate_limit_key(
         return "unknown-client".to_owned();
     };
 
-    if trusted_rate_limit_proxy_ips.contains(&socket_ip) {
-        if let Some(client_ip) =
+    if trusted_rate_limit_proxy_ips.contains(&socket_ip)
+        && let Some(client_ip) =
             forwarded_rate_limit_client_ip(request, trusted_rate_limit_proxy_ips)
-        {
-            return client_ip.to_string();
-        }
+    {
+        return client_ip.to_string();
     }
 
     socket_ip.to_string()

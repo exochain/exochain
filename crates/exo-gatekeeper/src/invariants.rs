@@ -605,17 +605,17 @@ fn check_authority_chain_valid(ctx: &InvariantContext) -> Result<(), InvariantVi
     }
 
     // Terminal link must end at the actor.
-    if let Some(last) = links.last() {
-        if last.grantee != ctx.actor {
-            return Err(InvariantViolation {
-                invariant: ConstitutionalInvariant::AuthorityChainValid,
-                description: "Authority chain does not terminate at actor".into(),
-                evidence: vec![
-                    format!("terminal: {}", last.grantee),
-                    format!("actor: {}", ctx.actor),
-                ],
-            });
-        }
+    if let Some(last) = links.last()
+        && last.grantee != ctx.actor
+    {
+        return Err(InvariantViolation {
+            invariant: ConstitutionalInvariant::AuthorityChainValid,
+            description: "Authority chain does not terminate at actor".into(),
+            evidence: vec![
+                format!("terminal: {}", last.grantee),
+                format!("actor: {}", ctx.actor),
+            ],
+        });
     }
 
     // TNC-01: Cryptographic signature verification.

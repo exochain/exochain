@@ -315,14 +315,14 @@ fn score_device_trust(fingerprints: &[DeviceFingerprint]) -> u32 {
     }
 
     // Multi-session consistency bonus.
-    if fingerprints.len() >= 3 {
-        if let Some(avg_bp) = average_basis_points(
+    if fingerprints.len() >= 3
+        && let Some(avg_bp) = average_basis_points(
             fingerprints
                 .iter()
                 .filter_map(|fingerprint| fingerprint.consistency_score_bp),
-        ) {
-            score += avg_bp * 3 / 20; // avg_consistency * 15/100 → * 3/20
-        }
+        )
+    {
+        score += avg_bp * 3 / 20; // avg_consistency * 15/100 → * 3/20
     }
 
     score.min(10_000)

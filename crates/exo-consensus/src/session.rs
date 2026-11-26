@@ -190,13 +190,12 @@ impl DeliberationSession {
 
         // 5. Devil's Advocate (only if converging well or on final round)
         let mut devil_advocate_review = None;
-        if convergence_score_bps >= self.panel.convergence_threshold_bps
-            || self.current_round == self.panel.max_rounds
+        if (convergence_score_bps >= self.panel.convergence_threshold_bps
+            || self.current_round == self.panel.max_rounds)
+            && let Some(da_id) = &self.panel.devil_advocate_model
         {
-            if let Some(da_id) = &self.panel.devil_advocate_model {
-                let review = self.response_provider.devil_advocate_review_for(da_id)?;
-                devil_advocate_review = Some(validate_devil_advocate_review(da_id, review)?);
-            }
+            let review = self.response_provider.devil_advocate_review_for(da_id)?;
+            devil_advocate_review = Some(validate_devil_advocate_review(da_id, review)?);
         }
 
         let mut round = DeliberationRound {

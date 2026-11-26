@@ -1195,13 +1195,13 @@ fn validate_edge_layer_scopes(
         })
         .collect::<BTreeMap<_, _>>();
     for edge in edges {
-        if let Some((tenant_id, namespace)) = layer_scope.get(&edge.layer_id) {
-            if tenant_id != &edge.tenant_id || namespace != &edge.namespace {
-                return Err(LayerHygieneError::LayerScopeMismatch {
-                    layer_id: edge.layer_id.clone(),
-                    edge_id: edge.edge_id.clone(),
-                });
-            }
+        if let Some((tenant_id, namespace)) = layer_scope.get(&edge.layer_id)
+            && (tenant_id != &edge.tenant_id || namespace != &edge.namespace)
+        {
+            return Err(LayerHygieneError::LayerScopeMismatch {
+                layer_id: edge.layer_id.clone(),
+                edge_id: edge.edge_id.clone(),
+            });
         }
     }
     Ok(())

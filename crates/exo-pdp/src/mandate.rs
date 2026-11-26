@@ -172,31 +172,31 @@ impl Mandate {
                 proposed.action, self.action
             )));
         }
-        if let Some(amount) = self.amount_minor {
-            if proposed.amount_minor != Some(amount) {
-                return Err(PdpError::CaveatFailed(
-                    "proposed amount does not match signed mandate amount".into(),
-                ));
-            }
+        if let Some(amount) = self.amount_minor
+            && proposed.amount_minor != Some(amount)
+        {
+            return Err(PdpError::CaveatFailed(
+                "proposed amount does not match signed mandate amount".into(),
+            ));
         }
-        if let Some(currency) = &self.currency {
-            if proposed.currency.as_deref() != Some(currency.as_str()) {
-                return Err(PdpError::CaveatFailed(
-                    "proposed currency does not match signed mandate currency".into(),
-                ));
-            }
+        if let Some(currency) = &self.currency
+            && proposed.currency.as_deref() != Some(currency.as_str())
+        {
+            return Err(PdpError::CaveatFailed(
+                "proposed currency does not match signed mandate currency".into(),
+            ));
         }
-        if let Some(merchant) = &self.merchant {
-            if proposed.merchant.as_deref() != Some(merchant.as_str()) {
-                return Err(PdpError::CaveatFailed(
-                    "proposed merchant does not match signed mandate merchant".into(),
-                ));
-            }
+        if let Some(merchant) = &self.merchant
+            && proposed.merchant.as_deref() != Some(merchant.as_str())
+        {
+            return Err(PdpError::CaveatFailed(
+                "proposed merchant does not match signed mandate merchant".into(),
+            ));
         }
-        if let Some(exp) = &self.expires {
-            if exp.is_expired(now) {
-                return Err(PdpError::Expired);
-            }
+        if let Some(exp) = &self.expires
+            && exp.is_expired(now)
+        {
+            return Err(PdpError::Expired);
         }
         for c in &self.caveats {
             match c {

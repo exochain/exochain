@@ -307,10 +307,10 @@ fn card_ranges(input: &str) -> impl Iterator<Item = (usize, usize)> + '_ {
             last_digit_end = 0;
         }
     }
-    if let Some(range_start) = start {
-        if (13..=19).contains(&digit_count) {
-            ranges.push((range_start, last_digit_end));
-        }
+    if let Some(range_start) = start
+        && (13..=19).contains(&digit_count)
+    {
+        ranges.push((range_start, last_digit_end));
     }
     ranges.into_iter()
 }
@@ -450,11 +450,11 @@ fn sorted_non_overlapping(mut ranges: Vec<(usize, usize)>) -> Vec<(usize, usize)
     ranges.sort_unstable();
     let mut merged: Vec<(usize, usize)> = Vec::new();
     for (start, end) in ranges {
-        if let Some(last) = merged.last_mut() {
-            if start < last.1 {
-                last.1 = last.1.max(end);
-                continue;
-            }
+        if let Some(last) = merged.last_mut()
+            && start < last.1
+        {
+            last.1 = last.1.max(end);
+            continue;
         }
         merged.push((start, end));
     }

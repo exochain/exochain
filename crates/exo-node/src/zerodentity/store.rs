@@ -1039,10 +1039,10 @@ impl ZerodentityStore {
         if timestamp.physical_ms == 0 {
             anyhow::bail!("{label} timestamp must be greater than 0");
         }
-        if let Some(parent) = self.dag_nodes.last() {
-            if timestamp <= parent.timestamp {
-                anyhow::bail!("{label} timestamp must strictly exceed latest DAG parent timestamp");
-            }
+        if let Some(parent) = self.dag_nodes.last()
+            && timestamp <= parent.timestamp
+        {
+            anyhow::bail!("{label} timestamp must strictly exceed latest DAG parent timestamp");
         }
         Ok(())
     }
@@ -1129,12 +1129,12 @@ impl ZerodentityStore {
         {
             anyhow::bail!("0dentity erasure timestamp exceeds trusted erasure clock tolerance");
         }
-        if let Some(parent) = self.dag_nodes.last() {
-            if timestamp <= parent.timestamp {
-                anyhow::bail!(
-                    "0dentity erasure timestamp must strictly exceed latest DAG parent timestamp"
-                );
-            }
+        if let Some(parent) = self.dag_nodes.last()
+            && timestamp <= parent.timestamp
+        {
+            anyhow::bail!(
+                "0dentity erasure timestamp must strictly exceed latest DAG parent timestamp"
+            );
         }
         Ok(())
     }

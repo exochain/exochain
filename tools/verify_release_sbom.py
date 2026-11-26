@@ -255,8 +255,13 @@ def expected_raw_component(
         "scope": scope,
         "licenses": expected_licenses(package),
         "purl": expected_raw_purl(package, root, workspace_ids),
-        "externalReferences": expected_external_references(package),
     }
+    # cargo-cyclonedx omits externalReferences when a package declares no
+    # documentation, homepage, links or repository (e.g. rsqlite-vfs 0.1.1);
+    # an empty list is never emitted.
+    references = expected_external_references(package)
+    if references:
+        result["externalReferences"] = references
     authors = require_list(package.get("authors"), "Cargo package authors")
     if any(not isinstance(author, str) or not author for author in authors):
         fail("Cargo package authors must be nonempty text")

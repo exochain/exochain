@@ -71,14 +71,28 @@ ignore = [
     # a logging sink this workspace configures or writes to.
     { id = "RUSTSEC-2025-0055", reason = "tracing-subscriber 0.2.25 ANSI-injection advisory concerns logging untrusted input to a terminal; pulled transitively via risc0-zkvm's arkworks-internal tracing instrumentation, not used by EXOCHAIN for untrusted-input logging" },
 
-    # pin-utils 0.1.0. Unmaintained only, not a vulnerability.
-    # Transitive via hyper 1.8.1 (axum 0.7.9, axum 0.8.8, axum-server 0.8.0,
-    # hyper-rustls 0.27.7, hyper-util 0.1.20, reqwest 0.12.28). The advisory
-    # database id is RUSTSEC-0000-0000 (informational = unmaintained, patched = []).
-    # cargo-deny 0.19.2 can scope an advisory ignore by id only. Tracked for
-    # removal when hyper and its dependents no longer pull pin-utils.
-    # https://github.com/exochain/exochain/issues/894
-    { id = "RUSTSEC-0000-0000", reason = "pin-utils 0.1.0 unmaintained-only via hyper 1.8.1 -> axum/axum-server/hyper-rustls/hyper-util/reqwest; not a vulnerability; https://github.com/exochain/exochain/issues/894" },
+
+    # chrono — no longer maintained (RUSTSEC-2026-0543). Unmaintained only,
+    # not a vulnerability. All versions are affected (chrono 0.4.44 is locked)
+    # and there is no patched release; the advisory recommends migrating to
+    # `jiff` or `time`. chrono is a direct workspace dependency of
+    # exochain-core, exochain-gateway, exochain-node and exochain-verify, so
+    # removal is a dedicated migration, not a dependency bump.
+    # Accepted by the maintainer on 2026-11-17; revisit when a fixed release
+    # exists or the migration lands.
+    # https://github.com/exochain/exochain/pull/914 (refs #896)
+    { id = "RUSTSEC-2026-0543", reason = "no patched release; accepted by maintainer 2026-11-17; revisit when fixed" },
+
+    # libp2p-gossipsub 0.49.x: unbounded PRUNE backoff state for unknown topics
+    # (RUSTSEC-2026-0534, GHSA-vrx6-jcp8-vm7m). Denial of service by memory
+    # exhaustion from a connected peer. Patched only in 0.50.1, which needs the
+    # libp2p-core 0.44 family and turns on aws-lc-rs (C crypto) through
+    # libp2p-quic 0.14 and libp2p-tls 0.7, against this file's pure-Rust crypto
+    # stance. Only exochain-node depends on it.
+    # Time-limited exception approved by the maintainer on 2026-11-20.
+    # EXPIRES 2027-01-31: remove this entry and upgrade, or re-approve, by then.
+    # https://github.com/exochain/exochain/issues/922
+    { id = "RUSTSEC-2026-0534", reason = "libp2p-gossipsub DoS; fix needs libp2p 0.50 + aws-lc-rs; time-limited maintainer exception 2026-11-20, expires 2027-01-31; https://github.com/exochain/exochain/issues/922" },
 ]
 
 # ---------------------------------------------------------------------------

@@ -39,11 +39,13 @@ impl TestDb {
             .connect(&database_url)
             .await
             .expect("connect admin Postgres pool");
-        sqlx::query(&format!(r#"DROP SCHEMA IF EXISTS "{schema}" CASCADE"#))
-            .execute(&admin_pool)
-            .await
-            .expect("drop isolated schema");
-        sqlx::query(&format!(r#"CREATE SCHEMA "{schema}""#))
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            r#"DROP SCHEMA IF EXISTS "{schema}" CASCADE"#
+        )))
+        .execute(&admin_pool)
+        .await
+        .expect("drop isolated schema");
+        sqlx::query(sqlx::AssertSqlSafe(format!(r#"CREATE SCHEMA "{schema}""#)))
             .execute(&admin_pool)
             .await
             .expect("create isolated schema");
@@ -71,10 +73,10 @@ impl TestDb {
 
     async fn cleanup(self) {
         self.pool.close().await;
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             r#"DROP SCHEMA IF EXISTS "{}" CASCADE"#,
             self.schema
-        ))
+        )))
         .execute(&self.admin_pool)
         .await
         .expect("drop isolated schema after test");
@@ -787,7 +789,7 @@ async fn kg_import_duplicate_content_hash_required_edge_persists_safely() {
 }
 
 async fn row_count(pool: &PgPool, table: &str) -> i64 {
-    sqlx::query_scalar::<_, i64>(&format!("SELECT count(*) FROM {table}"))
+    sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(format!("SELECT count(*) FROM {table}")))
         .fetch_one(pool)
         .await
         .expect("count table rows")
@@ -802,10 +804,12 @@ async fn receipt_event_count(pool: &PgPool, event_type: &str) -> i64 {
 }
 
 async fn scalar_count_where(pool: &PgPool, table: &str, clause: &str) -> i64 {
-    sqlx::query_scalar::<_, i64>(&format!("SELECT count(*) FROM {table} WHERE {clause}"))
-        .fetch_one(pool)
-        .await
-        .expect("count filtered table rows")
+    sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(format!(
+        "SELECT count(*) FROM {table} WHERE {clause}"
+    )))
+    .fetch_one(pool)
+    .await
+    .expect("count filtered table rows")
 }
 
 async fn exo_dag_table_count(pool: &PgPool) -> i64 {
@@ -821,7 +825,7 @@ async fn exo_dag_table_count(pool: &PgPool) -> i64 {
 
 async fn assert_existing_row_mismatch(
     label: &str,
-    update_sql: &str,
+    update_sql: &'static str,
     id_byte: u8,
     expected_reason_prefix: &str,
 ) {

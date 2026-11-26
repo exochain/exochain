@@ -1531,10 +1531,10 @@ impl MutationRoot {
 
 fn bump_version(v: &str) -> String {
     let parts: Vec<&str> = v.splitn(3, '.').collect();
-    if parts.len() == 3 {
-        if let Ok(patch) = parts[2].parse::<u32>() {
-            return format!("{}.{}.{}", parts[0], parts[1], patch + 1);
-        }
+    if parts.len() == 3
+        && let Ok(patch) = parts[2].parse::<u32>()
+    {
+        return format!("{}.{}.{}", parts[0], parts[1], patch + 1);
     }
     format!("{v}.1")
 }

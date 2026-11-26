@@ -306,14 +306,14 @@ impl McpServer {
     /// Handle `initialize` — returns server capabilities.
     fn handle_initialize(&self, request: &JsonRpcRequest) -> JsonRpcResponse {
         // Validate params if provided.
-        if let Some(ref params) = request.params {
-            if serde_json::from_value::<InitializeParams>(params.clone()).is_err() {
-                return JsonRpcResponse::error(
-                    request.id.clone(),
-                    INVALID_PARAMS,
-                    "invalid initialize params".into(),
-                );
-            }
+        if let Some(ref params) = request.params
+            && serde_json::from_value::<InitializeParams>(params.clone()).is_err()
+        {
+            return JsonRpcResponse::error(
+                request.id.clone(),
+                INVALID_PARAMS,
+                "invalid initialize params".into(),
+            );
         }
 
         let result = InitializeResult {

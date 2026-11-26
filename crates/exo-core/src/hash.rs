@@ -126,11 +126,15 @@ pub fn merkle_proof(leaves: &[Hash256], index: usize) -> Result<Vec<Hash256>> {
 
     while current.len() > 1 {
         // If odd number, duplicate the last element
-        if current.len() % 2 != 0 {
+        if !current.len().is_multiple_of(2) {
             let last = current[current.len() - 1];
             current.push(last);
         }
-        let sibling_idx = if idx % 2 == 0 { idx + 1 } else { idx - 1 };
+        let sibling_idx = if idx.is_multiple_of(2) {
+            idx + 1
+        } else {
+            idx - 1
+        };
         proof.push(current[sibling_idx]);
 
         // Build next level
@@ -171,7 +175,7 @@ pub fn merkle_root_from_proof(leaf: &Hash256, proof: &[Hash256], index: usize) -
     let mut idx = index;
 
     for sibling in proof {
-        if idx % 2 == 0 {
+        if idx.is_multiple_of(2) {
             current = hash_pair(&current, sibling);
         } else {
             current = hash_pair(sibling, &current);
@@ -250,11 +254,11 @@ fn fold_merkle_proof_with_leaf_count(
             return Err(ExoError::InvalidMerkleProof);
         }
 
-        let is_duplicated_odd_leaf = level_count % 2 != 0 && idx == level_count - 1;
+        let is_duplicated_odd_leaf = !level_count.is_multiple_of(2) && idx == level_count - 1;
         if is_duplicated_odd_leaf {
             duplicate_siblings_match &= hash256_eq_constant_time(&current, sibling);
             current = hash_pair(&current, &current);
-        } else if idx % 2 == 0 {
+        } else if idx.is_multiple_of(2) {
             current = hash_pair(&current, sibling);
         } else {
             current = hash_pair(sibling, &current);

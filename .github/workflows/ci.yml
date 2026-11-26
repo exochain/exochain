@@ -132,7 +132,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548
         with:
-          python-version: "3.11.14"
+          python-version: "3.11.18"
           cache: ""
       - name: Install Python SDK test and static-analysis dependencies
         run: "python -m pip --isolated install --disable-pip-version-check --require-hashes --only-binary=:all: --index-url=https://pypi.org/simple -r tools/python-release-requirements.lock"
@@ -670,7 +670,7 @@ jobs:
           done
           pg_isready -h localhost -U exochain -d exochain_test
       - name: Install sqlx-cli (postgres only, no default TLS)
-        run: bash tools/ci_cargo_retry.sh cargo install sqlx-cli --version 0.8.6 --locked --no-default-features --features postgres,rustls
+        run: bash tools/ci_cargo_retry.sh cargo install sqlx-cli --version 0.9.1 --locked --no-default-features --features postgres,rustls
       - name: Run migrations
         run: sqlx migrate run --source crates/exo-gateway/migrations
       - name: Run DAG DB migration upgrade regression
@@ -961,7 +961,9 @@ jobs:
         # protocol/package metadata for trust receipts; the fairness-evidence
         # transition adds the current FairnessProof safe-harbor bridge.
         run: |
-          COUNT=$(grep -c "module.exports.wasm_" packages/exochain-wasm/wasm/exochain_wasm.js)
+          # Count unique exported `wasm_*` symbols directly from the generated
+          # NodeJS wrapper rather than line-based grep -c.
+          COUNT=$(node -e 'const w = require("./packages/exochain-wasm/wasm/exochain_wasm.js"); console.log(Object.keys(w).filter((k) => k.startsWith("wasm_")).length);')
           echo "Found $COUNT WASM exports"
           [ "$COUNT" -eq 167 ] || (echo "Expected 167 exports, got $COUNT" && exit 1)
       - name: Upload WASM artifact
@@ -1103,6 +1105,23 @@ jobs:
         run: cargo test -p exochain-node private_file::tests::windows -- --nocapture
 
   # -----------------------------------------------------------------------
+  # Gate 24: MSRV (locked cargo check on the declared rust-version)
+  # -----------------------------------------------------------------------
+  msrv:
+    name: "Gate 24 — MSRV Check (1.94.0)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0
+        with:
+          toolchain: 1.94.0
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+      - name: Report MSRV compiler
+        run: rustc +1.94.0 --version --verbose
+      - name: Locked workspace check on MSRV 1.94.0
+        run: cargo +1.94.0 check --locked --workspace
+
+  # -----------------------------------------------------------------------
   # Constitutional gate: all must pass
   # -----------------------------------------------------------------------
   all-gates:
@@ -1112,6 +1131,7 @@ jobs:
       - npm-release-runtime
       - lynk
       - build
+      - msrv
       - test
       - python-sdk
       - coverage

@@ -991,10 +991,11 @@ fn catalog_path(path: &str) -> Vec<String> {
 }
 
 fn document_type_for(path: &str, frontmatter: &BTreeMap<String, String>) -> String {
-    if let Some(explicit) = frontmatter.get("type").map(|value| value.trim()) {
-        if !explicit.is_empty() && explicit != "unknown" {
-            return explicit.to_owned();
-        }
+    if let Some(explicit) = frontmatter.get("type").map(|value| value.trim())
+        && !explicit.is_empty()
+        && explicit != "unknown"
+    {
+        return explicit.to_owned();
     }
 
     let stem = Path::new(path)

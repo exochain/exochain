@@ -220,10 +220,10 @@ impl RateLimiter {
 
 /// Send a message, verifying the recipient exists in the registry (if addressed).
 pub fn send(registry: &PeerRegistry, msg: &Message) -> Result<()> {
-    if let Some(ref to) = msg.to {
-        if !registry.peers.contains_key(to) {
-            return Err(ApiError::PeerNotFound(to.to_string()));
-        }
+    if let Some(ref to) = msg.to
+        && !registry.peers.contains_key(to)
+    {
+        return Err(ApiError::PeerNotFound(to.to_string()));
     }
     Ok(())
 }

@@ -29,7 +29,7 @@ SPDX-License-Identifier: Apache-2.0
 PR [#92](https://github.com/exochain/exochain/pull/92) merged to `main` — fixes:
 
 1. Dockerfile builds the right binary (`exochain` + `exo-gateway`, not the missing `decision-forum-server`)
-2. Rust version pinned to 1.85 (matches workspace)
+2. Rust version pinned to match workspace (currently 1.98.1 builder, 1.94.0 MSRV)
 3. Binary respects Railway's auto-injected `$PORT` env var
 4. Dockerfile invokes `entrypoint.sh` (env-var driven, idiomatic)
 5. `railway.json` no longer overrides start command (entrypoint runs)
@@ -208,7 +208,7 @@ The `b30f...` token in our transcript is now compromised. Rotate it:
 
 ## What's already in the code
 
-- `Dockerfile` — multi-stage build (Rust 1.85 + Node 20), bundles entrypoint.sh
+- `Dockerfile` — multi-stage build (Rust 1.98.1 + Node 20), bundles entrypoint.sh
 - `deploy/entrypoint.sh` — reads `IS_VALIDATOR`, `SEED_ADDR`, `EXOCHAIN_DATA_DIR`, `PORT`, `P2P_PORT`, `VALIDATORS`
 - `railway.json` — Dockerfile builder, healthcheck `/health`, restart on failure
 - `crates/exo-node/src/main.rs` — `Command::Start` and `Command::Join` honor `$PORT` env

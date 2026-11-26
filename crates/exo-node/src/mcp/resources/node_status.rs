@@ -51,37 +51,37 @@ pub fn definition() -> ResourceDefinition {
 
 /// Build the live or template status payload.
 fn build_payload(context: &NodeContext) -> Value {
-    if let Some(reactor) = context.reactor_state.as_ref() {
-        if let Ok(state) = reactor.lock() {
-            let consensus_round = state.consensus.current_round;
-            let committed_height = count_as_u64(state.consensus.committed.len());
-            let validators: Vec<String> = state
-                .consensus
-                .config
-                .validators
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect();
-            let validator_count = validators.len();
-            let is_validator = context
-                .node_did
-                .as_ref()
-                .and_then(|did| exo_core::Did::new(did).ok())
-                .is_some_and(|did| state.consensus.config.validators.contains(&did));
+    if let Some(reactor) = context.reactor_state.as_ref()
+        && let Ok(state) = reactor.lock()
+    {
+        let consensus_round = state.consensus.current_round;
+        let committed_height = count_as_u64(state.consensus.committed.len());
+        let validators: Vec<String> = state
+            .consensus
+            .config
+            .validators
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect();
+        let validator_count = validators.len();
+        let is_validator = context
+            .node_did
+            .as_ref()
+            .and_then(|did| exo_core::Did::new(did).ok())
+            .is_some_and(|did| state.consensus.config.validators.contains(&did));
 
-            return serde_json::json!({
-                "node": "exochain",
-                "version": env!("CARGO_PKG_VERSION"),
-                "node_did": context.node_did,
-                "consensus_round": consensus_round,
-                "committed_height": committed_height,
-                "validator_count": validator_count,
-                "is_validator": is_validator,
-                "validators": validators,
-                "has_store": context.has_store(),
-                "status": "live",
-            });
-        }
+        return serde_json::json!({
+            "node": "exochain",
+            "version": env!("CARGO_PKG_VERSION"),
+            "node_did": context.node_did,
+            "consensus_round": consensus_round,
+            "committed_height": committed_height,
+            "validator_count": validator_count,
+            "is_validator": is_validator,
+            "validators": validators,
+            "has_store": context.has_store(),
+            "status": "live",
+        });
     }
 
     serde_json::json!({

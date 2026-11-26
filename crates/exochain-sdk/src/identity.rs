@@ -396,7 +396,7 @@ mod tests {
     fn decode_public_key_hex(hex: &str) -> [u8; 32] {
         assert_eq!(hex.len(), 64, "fixture public key must be 32 bytes");
         let mut bytes = [0u8; 32];
-        for (index, chunk) in hex.as_bytes().chunks_exact(2).enumerate() {
+        for (index, chunk) in hex.as_bytes().as_chunks::<2>().0.iter().enumerate() {
             let hex_byte = core::str::from_utf8(chunk).expect("fixture hex is UTF-8");
             bytes[index] = u8::from_str_radix(hex_byte, 16).expect("fixture hex is valid");
         }
