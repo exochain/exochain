@@ -1,0 +1,1393 @@
+source	source_class	source_kind	line	token	match	target_classes
+.cargo/audit.toml	EXOCHAIN core	cargo-config	22	Cargo.lock	file	third-party/vendor
+.cargo/audit.toml	EXOCHAIN core	cargo-config	25	tools/test_audit_ignore_policy.sh	file	EXOCHAIN core
+.cargo/config.toml	EXOCHAIN core	cargo-config	24	Cargo.toml	file	EXOCHAIN core
+.cargo/config.toml	EXOCHAIN core	cargo-config	27	Cargo.toml	file	EXOCHAIN core
+.dockerignore	core runtime adapter	docker	21	.claude	bare	adjacent surface
+.github/workflows/ci.yml	core runtime adapter	workflow	65	tools/ci_cargo_retry.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	101	packages/exochain-llm-proxy	dir	core runtime adapter;third-party/vendor
+.github/workflows/ci.yml	core runtime adapter	workflow	111	packages/exochain-llm-proxy/package-lock.json	file	third-party/vendor
+.github/workflows/ci.yml	core runtime adapter	workflow	112	scripts	bare	adjacent surface
+.github/workflows/ci.yml	core runtime adapter	workflow	138	tools/python-release-requirements.lock	file	third-party/vendor
+.github/workflows/ci.yml	core runtime adapter	workflow	140	tools/test_verify_python_release_package.sh	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	142	tools/test_recover_release_python_027.sh	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	144	packages/exochain-py/tests	dir	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	146	packages/exochain-py	dir	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	148	packages/exochain-py/pyproject.toml	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	148	packages/exochain-py/exochain	dir	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	180	tools/test_release_npm_runtime_contract.sh	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	191	tools/test_coverage_policy.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	206	tools/ci_cargo_retry.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	226	tools/test_coverage_policy.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	292	tools/ci_cargo_retry.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	301	tools/test_audit_ignore_policy.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	318	tools/ci_cargo_retry.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	327	Cargo.toml	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	329	tools/test_security_critical_dependencies_pinned.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	350	tools/test_repo_truth.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	394	Cargo.toml	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	396	Cargo.toml	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	399	LICENSE	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	400	LICENSE	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	405	tools/test_proprietary_license_boundaries.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	407	tools/test_demo_adjacent_boundaries.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	408	demo	bare	adjacent surface;third-party/vendor
+.github/workflows/ci.yml	core runtime adapter	workflow	409	tools/test_livesafe_demo_security.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	411	tools/test_commandbase_release_hardening.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	415	GAP-REGISTRY.md	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	416	tools/test_gap_stub_ci_guard.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	418	tools/test_github_actions_pinned.sh	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	420	tools/test_python_sdk_ci_boundary.sh	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	422	tools/test_github_issue_workflow_boundaries.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	424	tools/test_ci_supply_chain_hardening.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	426	tools/test_beta_codeowners.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	428	tools/test_cross_platform_target_cache_boundary.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	430	tools/test_npm_core_package_hygiene.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	432	tools/test_release_workflow_ref_binding.sh	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	434	tools/test_release_version_input_boundary.sh	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	439	tools/test_import_release_recovery_027.py	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	444	tools/test_release_recovery_027.py	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	445	tools/test_release_recovery_workflow.py	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	446	tools/test_release_recovery_python_stage.py	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	447	tools/test_recover_github_release_027.py	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	448	tools/test_import_release_recovery_027.py	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	449	tools/test_release_recovery_npm.sh	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	451	tools/test_release_signed_tag_trust_boundary.sh	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	453	tools/test_release_reusable_ci_boundary.sh	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	455	tools/test_continuous_release.py	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	457	tools/test_release_sbom_boundary.sh	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	460	tools/test_retire_crates_023.py	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	461	tools/test_retirement_workflow.py	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	463	tools/test_release_version_alignment.sh	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	465	tools/test_release_dry_run_boundaries.sh	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	467	tools/test_release_publish_boundaries.sh	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	469	tools/test_cratesio_release_packaging.sh	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	471	tools/test_wasm_npm_package_boundary.sh	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	473	tools/test_capture_release_helper.sh	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	475	tools/test_publish_release_crates_registry_validation.sh	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	477	tools/test_publish_sealed_crate.py	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	479	tools/test_publish_release_npm_registry_validation.sh	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	481	tools/test_verify_npm_registry_attestation.sh	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	483	tools/test_verify_sdk_npm_release_package.sh	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	485	tools/test_release_sdk_python_lifecycle_boundary.sh	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	487	tools/test_stage_llm_release_package.sh	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	489	tools/test_release_llm_lifecycle_boundary.sh	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	491	tools/test_transport_release_build_output.sh	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	493	tools/test_transport_wasm_release_output.sh	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	495	tools/test_transport_release_file_set.sh	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	497	tools/test_verify_npm_release_tarball.sh	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	499	tools/test_release_npm_config_boundary.sh	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	501	tools/test_npm_registry_visibility.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	503	tools/test_repo_truth.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	505	tools/test_sybil_cli_secret_boundaries.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	507	tools/test_audit_policy_docs.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	509	tools/test_consensus_liveness_docs.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	511	tools/test_cr001_status.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	513	tools/test_cr001_completeness.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	515	tools/test_gap_registry_truth.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	517	tools/check_systemic_integrity_claims.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	519	tools/test_tenant_dependency_direction.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	521	tools/test_gap_syntaxis_yaml_parse.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	523	tools/test_no_orphan_rust_modules.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	525	tools/test_railway_entrypoint_args.sh	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	527	tools/test_livesafe_railway_deploy_ref_guard.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	529	tools/test_deployment_readiness_probes.sh	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	531	tools/test_public_route_verifier_portability.sh	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	533	tools/test_docker_production_db_feature.sh	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	535	tools/test_gateway_db_ci.sh	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	537	tools/test_agent_prompt_boundaries.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	539	tools/test_agent_workflow_bounds.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	541	tools/test_archon_avc_quality_matrix.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	543	tools/test_syntaxis_workflow_input_boundary.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	545	tools/test_core_fuzz_targets.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	568	tools/test_publish_sealed_crate.py	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	569	tools/test_verify_crate_release_archive.py	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	573	tools/test_publish_sealed_crate_cargo_parity.py	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	575	tools/ci_cargo_retry.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	577	Cargo.toml	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	590	tools/test_verify_release_sbom.sh	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	614	tools/ci_cargo_retry.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	621	crates/exo-gateway	dir	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	635	crates/exo-gateway	dir	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	661	tools/test_gateway_db_ci.sh	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	663	docker-compose.ci.yml	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	673	tools/ci_cargo_retry.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	675	crates/exo-gateway/migrations	dir	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	695	docker-compose.ci.yml	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	713	crates/exo-node	dir	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	714	crates/exo-dag	dir	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	744	crates/exo-node	dir	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	797	tools/ci_cargo_retry.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	809	tools/test_repo_truth.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	820	crates/exo-node/src/zerodentity	dir	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	834	tools/ci_cargo_retry.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	837	tools/test_coverage_policy.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	841	crates/exo-node/src/zerodentity	dir	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	868	tools/ci_cargo_retry.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	871	tools/test_coverage_policy.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	874	crates/exo-root/src	dir	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	902	tools/ci_cargo_retry.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	905	tools/test_coverage_policy.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	909	crates/exo-node/src/root_genesis.rs	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	940	tools/ci_cargo_retry.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	942	tools/ci_cargo_retry.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	942	crates/exochain-wasm	dir	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	945	LICENSE	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	945	packages/exochain-wasm/wasm/LICENSE	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	946	tools/prepare_wasm_npm_package.mjs	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	946	packages/exochain-wasm/wasm	dir	core runtime adapter;third-party/vendor
+.github/workflows/ci.yml	core runtime adapter	workflow	949	packages/exochain-wasm/wasm	dir	core runtime adapter;third-party/vendor
+.github/workflows/ci.yml	core runtime adapter	workflow	971	packages/exochain-wasm/wasm	dir	core runtime adapter;third-party/vendor
+.github/workflows/ci.yml	core runtime adapter	workflow	988	packages/exochain-wasm/wasm	dir	core runtime adapter;third-party/vendor
+.github/workflows/ci.yml	core runtime adapter	workflow	990	packages/exochain-wasm/test/bridge_verification.mjs	file	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	991	demo	bare	adjacent surface;third-party/vendor
+.github/workflows/ci.yml	core runtime adapter	workflow	992	tools/test_demo_wasm_adapter_boundary.sh	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	993	demo	bare	adjacent surface;third-party/vendor
+.github/workflows/ci.yml	core runtime adapter	workflow	996	packages/exochain-wasm/wasm	dir	core runtime adapter;third-party/vendor
+.github/workflows/ci.yml	core runtime adapter	workflow	997	demo/packages/exochain-wasm/test.mjs	file	adjacent surface
+.github/workflows/ci.yml	core runtime adapter	workflow	1022	crates/exochain-wasm/src	dir	core runtime adapter
+.github/workflows/ci.yml	core runtime adapter	workflow	1031	GAP-REGISTRY.md	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	1066	Cargo.toml	file	EXOCHAIN core
+.github/workflows/ci.yml	core runtime adapter	workflow	1067	Cargo.lock	file	third-party/vendor
+.github/workflows/ci.yml	core runtime adapter	workflow	1160	tools/write_ci_candidate.py	file	EXOCHAIN core
+.github/workflows/presidential-daily-attention.yml	EXOCHAIN core	workflow	43	tools/test_mission_c2_graph.sh	file	EXOCHAIN core
+.github/workflows/presidential-daily-attention.yml	EXOCHAIN core	workflow	54	docs/c2/README.md	file	EXOCHAIN core
+.github/workflows/presidential-daily-attention.yml	EXOCHAIN core	workflow	55	docs/c2/DAILY-ATTENTION-PROTOCOL.md	file	EXOCHAIN core
+.github/workflows/presidential-daily-attention.yml	EXOCHAIN core	workflow	56	docs/c2/CHAIRMAN-ESCALATION.md	file	EXOCHAIN core
+.github/workflows/presidential-daily-attention.yml	EXOCHAIN core	workflow	57	docs/c2/TWO-PERSON-GATE.md	file	EXOCHAIN core
+.github/workflows/presidential-daily-attention.yml	EXOCHAIN core	workflow	58	docs/c2/CCIR.md	file	EXOCHAIN core
+.github/workflows/presidential-daily-attention.yml	EXOCHAIN core	workflow	59	docs/c2/DOGFOOD.md	file	EXOCHAIN core
+.github/workflows/presidential-daily-attention.yml	EXOCHAIN core	workflow	60	docs/c2/CHAOS-DRILL.md	file	EXOCHAIN core
+.github/workflows/presidential-daily-attention.yml	EXOCHAIN core	workflow	61	docs/c2/CROSSCHECK-RECEIPTS.md	file	EXOCHAIN core
+.github/workflows/presidential-daily-attention.yml	EXOCHAIN core	workflow	62	docs/c2/AI-IRB-COHORT.md	file	EXOCHAIN core
+.github/workflows/presidential-daily-attention.yml	EXOCHAIN core	workflow	63	docs/c2/RUNTIME-TOPOLOGY.md	file	EXOCHAIN core
+.github/workflows/presidential-daily-attention.yml	EXOCHAIN core	workflow	64	docs/c2/schemas/daily-brief.schema.json	file	EXOCHAIN core
+.github/workflows/presidential-daily-attention.yml	EXOCHAIN core	workflow	65	docs/c2/schemas/attention-item.schema.json	file	EXOCHAIN core
+.github/workflows/presidential-daily-attention.yml	EXOCHAIN core	workflow	80	docs/c2/DOGFOOD.md	file	EXOCHAIN core
+.github/workflows/presidential-daily-attention.yml	EXOCHAIN core	workflow	83	docs/c2/CHAOS-DRILL.md	file	EXOCHAIN core
+.github/workflows/release.yml	core runtime adapter	workflow	64	.github/workflows/ci.yml	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	122	tools/verify_release_source.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	124	tools/test_release_version_alignment.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	220	tools/verify_release_source.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	277	tools/verify_release_tag_signer.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	335	tools/verify_release_source.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	353	tools/verify_release_tag.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	383	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+.github/workflows/release.yml	core runtime adapter	workflow	418	tools/resolve_release_tool_path.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	452	tools/verify_release_side_effect.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	490	tools/capture_release_helper.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	492	tools/resolve_release_tool_path.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	493	tools/ci_cargo_retry.sh	file	EXOCHAIN core
+.github/workflows/release.yml	core runtime adapter	workflow	494	tools/verify_release_cargo_config.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	495	tools/transport_release_build_output.py	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	623	tools/verify_release_source.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	641	tools/verify_release_tag.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	696	tools/verify_release_side_effect.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	738	tools/transport_release_build_output.py	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	1024	tools/verify_release_source.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	1042	tools/verify_release_tag.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	1095	tools/verify_release_side_effect.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	1142	tools/capture_release_helper.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	1144	tools/resolve_release_tool_path.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	1145	tools/verify_release_cargo_config.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	1146	tools/transport_release_file_set.py	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	1332	tools/verify_release_source.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	1350	tools/verify_release_tag.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	1403	tools/verify_release_side_effect.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	1439	tools/capture_release_helper.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	1441	tools/resolve_release_tool_path.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	1442	tools/verify_release_cargo_config.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	1443	tools/transport_release_file_set.py	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	1444	tools/verify_release_sbom.py	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	1557	tools/verify_release_source.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	1575	tools/verify_release_tag.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	1617	tools/verify_release_side_effect.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	1676	tools/verify_release_source.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	1694	tools/verify_release_tag.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	1758	tools/resolve_release_tool_path.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	1793	tools/resolve_release_tool_path.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	1803	tools/verify_release_cargo_config.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	1806	tools/check_cratesio_namespace_ownership.mjs	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	1855	tools/resolve_release_tool_path.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	1865	tools/preflight_release_crates.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	1956	tools/verify_release_source.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	1974	tools/verify_release_tag.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	2038	tools/resolve_release_tool_path.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	2082	tools/resolve_release_tool_path.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	2090	tools/preflight_release_crates.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	2195	tools/verify_release_source.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	2213	tools/verify_release_tag.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	2305	tools/capture_release_helper.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	2307	tools/resolve_release_tool_path.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	2308	tools/publish_release_crates.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	2309	tools/publish_sealed_crate.py	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	2310	tools/check_cratesio_namespace_ownership.mjs	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	2311	tools/verify_release_source.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	2312	tools/verify_release_tag.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	2578	tools/verify_release_source.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	2596	tools/verify_release_tag.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	2665	tools/verify_release_side_effect.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	2714	tools/capture_release_helper.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	2716	tools/resolve_release_tool_path.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	2717	tools/ci_cargo_retry.sh	file	EXOCHAIN core
+.github/workflows/release.yml	core runtime adapter	workflow	2718	tools/verify_release_cargo_config.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	2719	tools/transport_release_file_set.py	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	2720	tools/transport_wasm_release_output.py	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	2882	tools/verify_release_source.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	2900	tools/verify_release_tag.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	2969	tools/verify_release_side_effect.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	3025	tools/transport_wasm_release_output.py	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	3036	packages/exochain-wasm/wasm/package.json	file	third-party/vendor
+.github/workflows/release.yml	core runtime adapter	workflow	3039	packages/exochain-wasm/wasm/LICENSE	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	3045	tools/resolve_release_tool_path.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	3046	tools/verify_npm_release_package.mjs	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	3047	tools/verify_npm_release_tarball.py	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	3161	tools/verify_release_source.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	3179	tools/verify_release_tag.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	3233	tools/verify_release_side_effect.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	3273	scripts	bare	adjacent surface
+.github/workflows/release.yml	core runtime adapter	workflow	3274	tools/capture_release_helper.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	3276	tools/resolve_release_tool_path.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	3277	tools/verify_npm_release_package.mjs	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	3278	tools/transport_release_file_set.py	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	3289	packages/exochain-llm-proxy	dir	core runtime adapter;third-party/vendor
+.github/workflows/release.yml	core runtime adapter	workflow	3290	crates/exo-node/fixtures/lynk	dir	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	3356	scripts	bare	adjacent surface
+.github/workflows/release.yml	core runtime adapter	workflow	3449	tools/verify_release_source.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	3467	tools/verify_release_tag.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	3536	tools/verify_release_side_effect.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	3593	tools/resolve_release_tool_path.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	3594	tools/verify_npm_release_package.mjs	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	3595	tools/verify_npm_release_tarball.py	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	3596	tools/stage_llm_release_package.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	3597	tools/transport_release_file_set.py	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	3732	tools/verify_release_source.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	3750	tools/verify_release_tag.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	3801	tools/verify_release_side_effect.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	3840	packages/exochain-sdk	dir	core runtime adapter;third-party/vendor
+.github/workflows/release.yml	core runtime adapter	workflow	3840	tests/fixtures/did-derivation.json	file	EXOCHAIN core
+.github/workflows/release.yml	core runtime adapter	workflow	3845	tools/resolve_release_tool_path.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	3846	tools/verify_npm_release_package.mjs	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	3847	tools/verify_npm_release_tarball.py	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	3989	tools/verify_release_source.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	4007	tools/verify_release_tag.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	4046	tools/verify_release_side_effect.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	4086	packages/exochain-py	dir	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	4086	tests/fixtures/did-derivation.json	file	EXOCHAIN core
+.github/workflows/release.yml	core runtime adapter	workflow	4089	tools/python-release-requirements.lock	file	third-party/vendor
+.github/workflows/release.yml	core runtime adapter	workflow	4097	tools/verify_python_release_package.py	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	4201	tools/verify_release_source.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	4219	tools/verify_release_tag.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	4284	tools/resolve_release_tool_path.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	4345	tools/resolve_release_tool_path.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	4355	tools/publish_release_npm_package.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	4438	tools/verify_release_source.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	4456	tools/verify_release_tag.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	4521	tools/resolve_release_tool_path.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	4582	tools/resolve_release_tool_path.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	4592	tools/publish_release_npm_package.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	4673	tools/verify_release_source.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	4691	tools/verify_release_tag.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	4779	tools/resolve_release_tool_path.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	4793	tools/publish_release_npm_package.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	4862	tools/verify_release_source.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	4880	tools/verify_release_tag.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	4936	tools/verify_python_release_package.py	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	4987	tools/verify_release_side_effect.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	5052	tools/verify_python_release_package.py	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	5055	tools/python-release-requirements.lock	file	third-party/vendor
+.github/workflows/release.yml	core runtime adapter	workflow	5151	tools/verify_release_side_effect.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	5192	tools/verify_release_source.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	5210	tools/verify_release_tag.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	5373	tools/verify_release_side_effect.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	5545	tools/run_release_recovery_027.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	5689	tools/run_release_recovery_027.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	5832	tools/run_release_recovery_027.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	6008	tools/run_release_recovery_027.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	6164	tools/run_release_recovery_027.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	6320	tools/run_release_recovery_027.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	6455	tools/run_release_recovery_027.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	6513	tools/run_release_recovery_027.sh	file	core runtime adapter
+.github/workflows/release.yml	core runtime adapter	workflow	6647	tools/run_release_recovery_027.sh	file	core runtime adapter
+.github/workflows/retire-0.2.3.yml	core runtime adapter	workflow	29	.github/workflows/ci.yml	file	core runtime adapter
+.github/workflows/retire-0.2.3.yml	core runtime adapter	workflow	96	tools/run_retirement_023.sh	file	core runtime adapter
+.github/workflows/retire-0.2.3.yml	core runtime adapter	workflow	106	tools/run_retirement_023.sh	file	core runtime adapter
+Cargo.toml	EXOCHAIN core	cargo-config	20	crates/exo-core	dir	EXOCHAIN core
+Cargo.toml	EXOCHAIN core	cargo-config	21	crates/exo-identity	dir	EXOCHAIN core
+Cargo.toml	EXOCHAIN core	cargo-config	22	crates/exo-consent	dir	EXOCHAIN core
+Cargo.toml	EXOCHAIN core	cargo-config	23	crates/exo-authority	dir	EXOCHAIN core
+Cargo.toml	EXOCHAIN core	cargo-config	24	crates/exo-gatekeeper	dir	EXOCHAIN core
+Cargo.toml	EXOCHAIN core	cargo-config	25	crates/exo-governance	dir	EXOCHAIN core
+Cargo.toml	EXOCHAIN core	cargo-config	26	crates/exo-escalation	dir	EXOCHAIN core
+Cargo.toml	EXOCHAIN core	cargo-config	27	crates/exo-legal	dir	EXOCHAIN core
+Cargo.toml	EXOCHAIN core	cargo-config	28	crates/exo-dag	dir	EXOCHAIN core
+Cargo.toml	EXOCHAIN core	cargo-config	29	crates/exo-proofs	dir	EXOCHAIN core
+Cargo.toml	EXOCHAIN core	cargo-config	30	crates/exo-api	dir	core runtime adapter
+Cargo.toml	EXOCHAIN core	cargo-config	31	crates/exo-dag-db-api	dir	core runtime adapter
+Cargo.toml	EXOCHAIN core	cargo-config	32	crates/exo-dag-db-core	dir	core runtime adapter
+Cargo.toml	EXOCHAIN core	cargo-config	33	crates/exo-dag-db-graph	dir	core runtime adapter
+Cargo.toml	EXOCHAIN core	cargo-config	34	crates/exo-dag-db-domain	dir	core runtime adapter
+Cargo.toml	EXOCHAIN core	cargo-config	35	crates/exo-dag-db-retrieval	dir	core runtime adapter
+Cargo.toml	EXOCHAIN core	cargo-config	36	crates/exo-dag-db-exchange	dir	core runtime adapter
+Cargo.toml	EXOCHAIN core	cargo-config	37	crates/exo-dag-db-postgres	dir	core runtime adapter
+Cargo.toml	EXOCHAIN core	cargo-config	38	crates/exo-dag-db-lab	dir	core runtime adapter
+Cargo.toml	EXOCHAIN core	cargo-config	39	crates/exo-gateway	dir	core runtime adapter
+Cargo.toml	EXOCHAIN core	cargo-config	40	crates/exo-tenant	dir	EXOCHAIN core
+Cargo.toml	EXOCHAIN core	cargo-config	41	crates/decision-forum	dir	EXOCHAIN core
+Cargo.toml	EXOCHAIN core	cargo-config	42	crates/exochain-wasm	dir	core runtime adapter
+Cargo.toml	EXOCHAIN core	cargo-config	43	crates/exo-node	dir	core runtime adapter
+Cargo.toml	EXOCHAIN core	cargo-config	44	crates/exo-catapult	dir	EXOCHAIN core
+Cargo.toml	EXOCHAIN core	cargo-config	45	crates/exo-messaging	dir	EXOCHAIN core
+Cargo.toml	EXOCHAIN core	cargo-config	45	crates/exo-consensus	dir	EXOCHAIN core
+Cargo.toml	EXOCHAIN core	cargo-config	46	crates/exochain-sdk	dir	core runtime adapter
+Cargo.toml	EXOCHAIN core	cargo-config	47	crates/exo-avc	dir	EXOCHAIN core
+Cargo.toml	EXOCHAIN core	cargo-config	48	crates/exo-verify	dir	EXOCHAIN core
+Cargo.toml	EXOCHAIN core	cargo-config	49	crates/exo-economy	dir	EXOCHAIN core
+Cargo.toml	EXOCHAIN core	cargo-config	50	crates/exo-root	dir	EXOCHAIN core
+Cargo.toml	EXOCHAIN core	cargo-config	51	crates/exo-pdp	dir	EXOCHAIN core;core runtime adapter
+Cargo.toml	EXOCHAIN core	cargo-config	53	livesafe	bare	adjacent surface;third-party/vendor
+Cargo.toml	EXOCHAIN core	cargo-config	53	cybermedica	bare	adjacent surface;third-party/vendor
+Cargo.toml	EXOCHAIN core	cargo-config	54	LICENSE	file	EXOCHAIN core
+Cargo.toml	EXOCHAIN core	cargo-config	59	livesafe	bare	adjacent surface;third-party/vendor
+Cargo.toml	EXOCHAIN core	cargo-config	60	crates/exo-cgr-methods	dir	EXOCHAIN core;third-party/vendor
+Cargo.toml	EXOCHAIN core	cargo-config	61	crates/exo-cgr-methods/guest	dir	EXOCHAIN core;third-party/vendor
+Cargo.toml	EXOCHAIN core	cargo-config	62	crates/exo-cgr-prover	dir	EXOCHAIN core
+Dockerfile	core runtime adapter	docker	19	web	bare	adjacent surface;third-party/vendor
+Dockerfile	core runtime adapter	docker	33	Cargo.toml	file	EXOCHAIN core
+Dockerfile	core runtime adapter	docker	33	Cargo.lock	file	third-party/vendor
+Dockerfile	core runtime adapter	docker	57	crates/exo-gateway/migrations	dir	core runtime adapter
+Dockerfile	core runtime adapter	docker	58	artifacts/trust/avc-exo-ceremony-2026	dir	core runtime adapter
+Dockerfile	core runtime adapter	docker	61	deploy/entrypoint.sh	file	core runtime adapter
+Dockerfile	core runtime adapter	docker	77	deploy/entrypoint.sh	file	core runtime adapter
+deny.toml	EXOCHAIN core	cargo-config	116	LICENSE	file	EXOCHAIN core
+deploy/Dockerfile.node	core runtime adapter	docker	33	Cargo.toml	file	EXOCHAIN core
+deploy/Dockerfile.node	core runtime adapter	docker	33	Cargo.lock	file	third-party/vendor
+deploy/Dockerfile.node	core runtime adapter	docker	45	deploy/entrypoint.sh	file	core runtime adapter
+deploy/NODE-ZERO.md	core runtime adapter	deploy	87	Dockerfile	file	core runtime adapter
+deploy/NODE-ZERO.md	core runtime adapter	deploy	112	Dockerfile	file	core runtime adapter
+deploy/NODE-ZERO.md	core runtime adapter	deploy	150	Dockerfile	file	core runtime adapter
+deploy/NODE-ZERO.md	core runtime adapter	deploy	171	crates/exo-node/src/cli.rs	file	core runtime adapter
+deploy/RAILWAY-HANDOFF.md	core runtime adapter	deploy	31	Dockerfile	file	core runtime adapter
+deploy/RAILWAY-HANDOFF.md	core runtime adapter	deploy	34	Dockerfile	file	core runtime adapter
+deploy/RAILWAY-HANDOFF.md	core runtime adapter	deploy	35	railway.json	file	core runtime adapter
+deploy/RAILWAY-HANDOFF.md	core runtime adapter	deploy	90	Dockerfile	file	core runtime adapter
+deploy/RAILWAY-HANDOFF.md	core runtime adapter	deploy	160	docs/guides/mcp-integration.md	file	core runtime adapter
+deploy/RAILWAY-HANDOFF.md	core runtime adapter	deploy	211	Dockerfile	file	core runtime adapter
+deploy/RAILWAY-HANDOFF.md	core runtime adapter	deploy	212	deploy/entrypoint.sh	file	core runtime adapter
+deploy/RAILWAY-HANDOFF.md	core runtime adapter	deploy	213	railway.json	file	core runtime adapter
+deploy/RAILWAY-HANDOFF.md	core runtime adapter	deploy	213	Dockerfile	file	core runtime adapter
+deploy/RAILWAY-HANDOFF.md	core runtime adapter	deploy	214	crates/exo-node/src/main.rs	file	core runtime adapter
+deploy/RAILWAY-HANDOFF.md	core runtime adapter	deploy	220	deploy/NODE-ZERO.md	file	core runtime adapter
+deploy/RAILWAY-HANDOFF.md	core runtime adapter	deploy	221	docs/guides/mcp-integration.md	file	core runtime adapter
+deploy/RAILWAY-HANDOFF.md	core runtime adapter	deploy	222	docs/guides/sdk-quickstart-rust.md	file	core runtime adapter
+deploy/RAILWAY-HANDOFF.md	core runtime adapter	deploy	223	docs/guides/architecture-overview.md	file	core runtime adapter
+docker-compose.ci.yml	core runtime adapter	compose	19	docker-compose.yml	file	core runtime adapter
+docker-compose.multinode.yml	core runtime adapter	compose	38	deploy/Dockerfile.node	file	core runtime adapter
+docker-compose.multinode.yml	core runtime adapter	compose	65	deploy/Dockerfile.node	file	core runtime adapter
+docker-compose.multinode.yml	core runtime adapter	compose	90	deploy/Dockerfile.node	file	core runtime adapter
+docker-compose.yml	core runtime adapter	compose	20	.env.example	file	core runtime adapter
+docker-compose.yml	core runtime adapter	compose	30	.env.example	file	core runtime adapter
+docker-compose.yml	core runtime adapter	compose	35	init-db.sh	file	core runtime adapter
+docker-compose.yml	core runtime adapter	compose	45	Dockerfile	file	core runtime adapter
+docker-compose.yml	core runtime adapter	compose	49	.env.example	file	core runtime adapter
+docker-compose.yml	core runtime adapter	compose	60	Dockerfile	file	core runtime adapter
+docker-compose.yml	core runtime adapter	compose	65	.env.example	file	core runtime adapter
+railway.json	core runtime adapter	railway	5	Dockerfile	file	core runtime adapter
+railway.json	core runtime adapter	railway	8	Dockerfile	file	core runtime adapter
+tarpaulin.toml	EXOCHAIN core	cargo-config	57	crates/exo-dag-db-postgres/src/idempotency.rs	file	core runtime adapter
+tarpaulin.toml	EXOCHAIN core	cargo-config	58	crates/exo-dag-db-postgres/src/outbox.rs	file	core runtime adapter
+tarpaulin.toml	EXOCHAIN core	cargo-config	59	crates/exo-dag-db-postgres/src/persistent_context.rs	file	core runtime adapter
+tarpaulin.toml	EXOCHAIN core	cargo-config	60	crates/exo-dag-db-postgres/src/postgres/context_packet_persistence.rs	file	core runtime adapter
+tarpaulin.toml	EXOCHAIN core	cargo-config	61	crates/exo-dag-db-postgres/src/postgres/continuation_persistence.rs	file	core runtime adapter
+tarpaulin.toml	EXOCHAIN core	cargo-config	62	crates/exo-dag-db-postgres/src/postgres/default_route.rs	file	core runtime adapter
+tarpaulin.toml	EXOCHAIN core	cargo-config	63	crates/exo-dag-db-postgres/src/postgres/kg_catalog_router.rs	file	core runtime adapter
+tarpaulin.toml	EXOCHAIN core	cargo-config	64	crates/exo-dag-db-postgres/src/postgres/kg_context_selection.rs	file	core runtime adapter
+tarpaulin.toml	EXOCHAIN core	cargo-config	65	crates/exo-dag-db-postgres/src/postgres/kg_context_selection_write.rs	file	core runtime adapter
+tarpaulin.toml	EXOCHAIN core	cargo-config	66	crates/exo-dag-db-postgres/src/postgres/kg_export.rs	file	core runtime adapter
+tarpaulin.toml	EXOCHAIN core	cargo-config	67	crates/exo-dag-db-postgres/src/postgres/kg_import.rs	file	core runtime adapter
+tarpaulin.toml	EXOCHAIN core	cargo-config	68	crates/exo-dag-db-postgres/src/postgres/kg_retrieval.rs	file	core runtime adapter
+tarpaulin.toml	EXOCHAIN core	cargo-config	69	crates/exo-dag-db-postgres/src/postgres/kg_writeback.rs	file	core runtime adapter
+tarpaulin.toml	EXOCHAIN core	cargo-config	70	crates/exo-dag-db-postgres/src/postgres/lifecycle_action.rs	file	core runtime adapter
+tarpaulin.toml	EXOCHAIN core	cargo-config	71	crates/exo-dag-db-postgres/src/postgres/mod.rs	file	core runtime adapter
+tarpaulin.toml	EXOCHAIN core	cargo-config	72	crates/exo-dag-db-postgres/src/postgres/route_invalidation.rs	file	core runtime adapter
+tarpaulin.toml	EXOCHAIN core	cargo-config	73	crates/exo-dag-db-postgres/src/receipt.rs	file	core runtime adapter
+tarpaulin.toml	EXOCHAIN core	cargo-config	74	crates/exo-node/src/main.rs	file	core runtime adapter
+tarpaulin.toml	EXOCHAIN core	cargo-config	75	crates/exo-node/src/telegram.rs	file	core runtime adapter
+tarpaulin.toml	EXOCHAIN core	cargo-config	76	crates/exo-node/src/config.rs	file	core runtime adapter
+tarpaulin.toml	EXOCHAIN core	cargo-config	77	crates/exo-node/src/reactor.rs	file	core runtime adapter
+tarpaulin.toml	EXOCHAIN core	cargo-config	78	crates/exo-node/src/identity.rs	file	core runtime adapter
+tarpaulin.toml	EXOCHAIN core	cargo-config	79	crates/exo-node/src/network.rs	file	core runtime adapter
+tarpaulin.toml	EXOCHAIN core	cargo-config	80	crates/exo-node/src/sync.rs	file	core runtime adapter
+tarpaulin.toml	EXOCHAIN core	cargo-config	81	crates/exo-node/src/sentinels.rs	file	core runtime adapter
+tarpaulin.toml	EXOCHAIN core	cargo-config	82	crates/exo-node/src/holons.rs	file	core runtime adapter
+tarpaulin.toml	EXOCHAIN core	cargo-config	84	crates/exo-node/src/store/store_postgres.rs	file	core runtime adapter
+tarpaulin.toml	EXOCHAIN core	cargo-config	85	crates/exo-dag-db-lab/src/bin/dagdb_kg_export_manifest.rs	file	core runtime adapter
+tarpaulin.toml	EXOCHAIN core	cargo-config	86	crates/exo-dag-db-lab/src/bin/dagdb_kg_import_candidates.rs	file	core runtime adapter
+tarpaulin.toml	EXOCHAIN core	cargo-config	87	crates/exo-gateway/src/main.rs	file	core runtime adapter
+tarpaulin.toml	EXOCHAIN core	cargo-config	88	crates/exo-gateway/src/dagdb.rs	file	core runtime adapter
+tarpaulin.toml	EXOCHAIN core	cargo-config	89	crates/exo-gateway/src/db.rs	file	core runtime adapter
+tarpaulin.toml	EXOCHAIN core	cargo-config	90	crates/exo-gateway/src/server.rs	file	core runtime adapter
+tarpaulin.toml	EXOCHAIN core	cargo-config	91	crates/exo-gateway/src/handlers.rs	file	core runtime adapter
+tarpaulin.toml	EXOCHAIN core	cargo-config	92	crates/exo-gateway/src/graphql.rs	file	core runtime adapter
+tarpaulin.toml	EXOCHAIN core	cargo-config	93	crates/exo-proofs/src	dir	EXOCHAIN core
+tarpaulin.toml	EXOCHAIN core	cargo-config	94	crates/exochain-wasm/src	dir	core runtime adapter
+tools/check_cratesio_namespace_ownership.mjs	core runtime adapter	ci-invoked-tool	346	Cargo.toml	file	EXOCHAIN core
+tools/check_systemic_integrity_claims.sh	EXOCHAIN core	ci-invoked-tool	18	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/check_systemic_integrity_claims.sh	EXOCHAIN core	ci-invoked-tool	21	crates/exo-proofs	dir	EXOCHAIN core
+tools/check_systemic_integrity_claims.sh	EXOCHAIN core	ci-invoked-tool	24	docs/audit	dir	EXOCHAIN core
+tools/check_systemic_integrity_claims.sh	EXOCHAIN core	ci-invoked-tool	24	docs/proof	dir	EXOCHAIN core
+tools/check_systemic_integrity_claims.sh	EXOCHAIN core	ci-invoked-tool	45	README.md	file	EXOCHAIN core
+tools/check_systemic_integrity_claims.sh	EXOCHAIN core	ci-invoked-tool	46	governance/sub_agents.md	file	EXOCHAIN core
+tools/check_systemic_integrity_claims.sh	EXOCHAIN core	ci-invoked-tool	47	governance/traceability_matrix.md	file	EXOCHAIN core
+tools/check_systemic_integrity_claims.sh	EXOCHAIN core	ci-invoked-tool	48	governance/COUNCIL-ASSESSMENT-EXO-VS-EXOCHAIN.md	file	EXOCHAIN core
+tools/check_systemic_integrity_claims.sh	EXOCHAIN core	ci-invoked-tool	49	docs/reference/CRATE-REFERENCE.md	file	core runtime adapter
+tools/check_systemic_integrity_claims.sh	EXOCHAIN core	ci-invoked-tool	50	docs/ASI-REPORT-FEATURE.md	file	EXOCHAIN core
+tools/check_systemic_integrity_claims.sh	EXOCHAIN core	ci-invoked-tool	51	docs/architecture/THREAT-MODEL.md	file	EXOCHAIN core
+tools/check_systemic_integrity_claims.sh	EXOCHAIN core	ci-invoked-tool	52	docs/architecture/ARCHITECTURE.md	file	EXOCHAIN core
+tools/check_systemic_integrity_claims.sh	EXOCHAIN core	ci-invoked-tool	53	docs/decision-forum/SYSTEM-DOCUMENTATION.md	file	adjacent surface
+tools/check_systemic_integrity_claims.sh	EXOCHAIN core	ci-invoked-tool	54	docs/decision-forum/USER-MANUAL.md	file	adjacent surface
+tools/check_systemic_integrity_claims.sh	EXOCHAIN core	ci-invoked-tool	55	docs/guides/developer-onboarding.md	file	core runtime adapter
+tools/check_systemic_integrity_claims.sh	EXOCHAIN core	ci-invoked-tool	65	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/check_systemic_integrity_claims.sh	EXOCHAIN core	ci-invoked-tool	72	docs/proofs/CONSTITUTIONAL-PROOFS.md	file	EXOCHAIN core
+tools/check_systemic_integrity_claims.sh	EXOCHAIN core	ci-invoked-tool	80	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/check_systemic_integrity_claims.sh	EXOCHAIN core	ci-invoked-tool	86	governance/sub_agents.md	file	EXOCHAIN core
+tools/check_systemic_integrity_claims.sh	EXOCHAIN core	ci-invoked-tool	86	governance/traceability_matrix.md	file	EXOCHAIN core
+tools/check_systemic_integrity_claims.sh	EXOCHAIN core	ci-invoked-tool	92	docs/proofs/CONSTITUTIONAL-PROOFS.md	file	EXOCHAIN core
+tools/check_systemic_integrity_claims.sh	EXOCHAIN core	ci-invoked-tool	95	docs/ASI-REPORT-FEATURE.md	file	EXOCHAIN core
+tools/check_systemic_integrity_claims.sh	EXOCHAIN core	ci-invoked-tool	95	README.md	file	EXOCHAIN core
+tools/check_systemic_integrity_claims.sh	EXOCHAIN core	ci-invoked-tool	103	README.md	file	EXOCHAIN core
+tools/check_systemic_integrity_claims.sh	EXOCHAIN core	ci-invoked-tool	104	docs/guides	dir	core runtime adapter
+tools/check_systemic_integrity_claims.sh	EXOCHAIN core	ci-invoked-tool	105	docs/reference	dir	core runtime adapter
+tools/check_systemic_integrity_claims.sh	EXOCHAIN core	ci-invoked-tool	106	docs/benchmarks	dir	EXOCHAIN core
+tools/check_systemic_integrity_claims.sh	EXOCHAIN core	ci-invoked-tool	107	governance/traceability_matrix.md	file	EXOCHAIN core
+tools/check_systemic_integrity_claims.sh	EXOCHAIN core	ci-invoked-tool	108	governance/threat_matrix.md	file	EXOCHAIN core
+tools/check_systemic_integrity_claims.sh	EXOCHAIN core	ci-invoked-tool	109	governance/quality_gates.md	file	EXOCHAIN core
+tools/check_systemic_integrity_claims.sh	EXOCHAIN core	ci-invoked-tool	112	docs	bare	EXOCHAIN core;adjacent surface;core runtime adapter
+tools/check_systemic_integrity_claims.sh	EXOCHAIN core	ci-invoked-tool	112	docs/audit	dir	EXOCHAIN core
+tools/check_systemic_integrity_claims.sh	EXOCHAIN core	ci-invoked-tool	112	docs/proof	dir	EXOCHAIN core
+tools/preflight_release_crates.sh	core runtime adapter	ci-invoked-tool	64	tools/verify_release_side_effect.sh	file	core runtime adapter
+tools/preflight_release_crates.sh	core runtime adapter	ci-invoked-tool	85	tools/verify_release_cargo_config.sh	file	core runtime adapter
+tools/preflight_release_crates.sh	core runtime adapter	ci-invoked-tool	200	tools/verify_crate_release_archive.py	file	core runtime adapter
+tools/prepare_wasm_npm_package.mjs	core runtime adapter	ci-invoked-tool	28	LICENSE	file	EXOCHAIN core
+tools/prepare_wasm_npm_package.mjs	core runtime adapter	ci-invoked-tool	53	LICENSE	file	EXOCHAIN core
+tools/prepare_wasm_npm_package.mjs	core runtime adapter	ci-invoked-tool	61	LICENSE	file	EXOCHAIN core
+tools/publish_release_npm_package.sh	core runtime adapter	ci-invoked-tool	287	tools/verify_release_recovery_027.py	file	core runtime adapter
+tools/publish_release_npm_package.sh	core runtime adapter	ci-invoked-tool	287	tools/verify_release_recovery_027.sh	file	core runtime adapter
+tools/publish_release_npm_package.sh	core runtime adapter	ci-invoked-tool	288	governance/releases/v0.2.7/RECOVERY-MANIFEST.json	file	EXOCHAIN core
+tools/publish_release_npm_package.sh	core runtime adapter	ci-invoked-tool	289	governance/releases/v0.2.7/PUBLICATION-IDENTITIES.json	file	EXOCHAIN core
+tools/publish_release_npm_package.sh	core runtime adapter	ci-invoked-tool	789	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/publish_release_npm_package.sh	core runtime adapter	ci-invoked-tool	857	tools/verify_release_side_effect.sh	file	core runtime adapter
+tools/publish_sealed_crate.py	core runtime adapter	ci-invoked-tool	252	Cargo.toml	file	EXOCHAIN core
+tools/publish_sealed_crate.py	core runtime adapter	ci-invoked-tool	254	Cargo.lock	file	third-party/vendor
+tools/publish_sealed_crate.py	core runtime adapter	ci-invoked-tool	255	README.md	file	EXOCHAIN core
+tools/publish_sealed_crate.py	core runtime adapter	ci-invoked-tool	271	Cargo.toml	file	EXOCHAIN core
+tools/publish_sealed_crate.py	core runtime adapter	ci-invoked-tool	271	Cargo.lock	file	third-party/vendor
+tools/publish_sealed_crate.py	core runtime adapter	ci-invoked-tool	383	Cargo.toml	file	EXOCHAIN core
+tools/publish_sealed_crate.py	core runtime adapter	ci-invoked-tool	386	Cargo.toml	file	EXOCHAIN core
+tools/publish_sealed_crate.py	core runtime adapter	ci-invoked-tool	388	Cargo.toml	file	EXOCHAIN core
+tools/publish_sealed_crate.py	core runtime adapter	ci-invoked-tool	390	Cargo.toml	file	EXOCHAIN core
+tools/publish_sealed_crate.py	core runtime adapter	ci-invoked-tool	492	Cargo.toml	file	EXOCHAIN core
+tools/python-release-requirements.lock	third-party/vendor	ci-invoked-tool	5	tools/python-release-requirements.in	file	core runtime adapter
+tools/python-release-requirements.lock	third-party/vendor	ci-invoked-tool	121	tools/python-release-requirements.in	file	core runtime adapter
+tools/python-release-requirements.lock	third-party/vendor	ci-invoked-tool	125	tools/python-release-requirements.in	file	core runtime adapter
+tools/python-release-requirements.lock	third-party/vendor	ci-invoked-tool	457	tools/python-release-requirements.in	file	core runtime adapter
+tools/python-release-requirements.lock	third-party/vendor	ci-invoked-tool	477	tools/python-release-requirements.in	file	core runtime adapter
+tools/python-release-requirements.lock	third-party/vendor	ci-invoked-tool	485	tools/python-release-requirements.in	file	core runtime adapter
+tools/python-release-requirements.lock	third-party/vendor	ci-invoked-tool	694	tools/python-release-requirements.in	file	core runtime adapter
+tools/python-release-requirements.lock	third-party/vendor	ci-invoked-tool	737	tools/python-release-requirements.in	file	core runtime adapter
+tools/python-release-requirements.lock	third-party/vendor	ci-invoked-tool	881	tools/python-release-requirements.in	file	core runtime adapter
+tools/python-release-requirements.lock	third-party/vendor	ci-invoked-tool	890	tools/python-release-requirements.in	file	core runtime adapter
+tools/python-release-requirements.lock	third-party/vendor	ci-invoked-tool	895	tools/python-release-requirements.in	file	core runtime adapter
+tools/python-release-requirements.lock	third-party/vendor	ci-invoked-tool	948	tools/python-release-requirements.in	file	core runtime adapter
+tools/resolve_release_tool_path.sh	core runtime adapter	ci-invoked-tool	260	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/run_release_recovery_027.sh	core runtime adapter	ci-invoked-tool	73	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/run_release_recovery_027.sh	core runtime adapter	ci-invoked-tool	81	governance/releases/v0.2.7/RETAINED-METADATA-POLICY.json	file	EXOCHAIN core
+tools/run_release_recovery_027.sh	core runtime adapter	ci-invoked-tool	87	governance/releases/v0.2.7/PRESERVED-PAYLOAD-TRANSPORT.json	file	EXOCHAIN core
+tools/run_release_recovery_027.sh	core runtime adapter	ci-invoked-tool	135	governance/releases/v0.2.7/RETAINED-METADATA-POLICY.json	file	EXOCHAIN core
+tools/run_release_recovery_027.sh	core runtime adapter	ci-invoked-tool	141	governance/releases/v0.2.7/PRESERVED-PAYLOAD-TRANSPORT.json	file	EXOCHAIN core
+tools/run_retirement_023.sh	core runtime adapter	ci-invoked-tool	50	tools/verify_release_source.sh	file	core runtime adapter
+tools/run_retirement_023.sh	core runtime adapter	ci-invoked-tool	56	tools/verify_release_tag_signer.sh	file	core runtime adapter
+tools/run_retirement_023.sh	core runtime adapter	ci-invoked-tool	57	tools/verify_release_tag.sh	file	core runtime adapter
+tools/run_retirement_023.sh	core runtime adapter	ci-invoked-tool	58	tools/check_cratesio_namespace_ownership.mjs	file	core runtime adapter
+tools/run_retirement_023.sh	core runtime adapter	ci-invoked-tool	59	tools/retire_crates_023.py	file	core runtime adapter
+tools/stage_llm_release_package.sh	core runtime adapter	ci-invoked-tool	100	packages/exochain-llm-proxy	dir	core runtime adapter;third-party/vendor
+tools/test_agent_prompt_boundaries.sh	EXOCHAIN core	ci-invoked-tool	45	AGENTS.md	file	EXOCHAIN core
+tools/test_agent_prompt_boundaries.sh	EXOCHAIN core	ci-invoked-tool	46	AGENTS.md	file	EXOCHAIN core
+tools/test_agent_prompt_boundaries.sh	EXOCHAIN core	ci-invoked-tool	47	AGENTS.md	file	EXOCHAIN core
+tools/test_agent_prompt_boundaries.sh	EXOCHAIN core	ci-invoked-tool	48	AGENTS.md	file	EXOCHAIN core
+tools/test_agent_prompt_boundaries.sh	EXOCHAIN core	ci-invoked-tool	53	.archon	bare	adjacent surface
+tools/test_agent_prompt_boundaries.sh	EXOCHAIN core	ci-invoked-tool	55	.archon	bare	adjacent surface
+tools/test_agent_prompt_boundaries.sh	EXOCHAIN core	ci-invoked-tool	117	.archon/workflows	dir	adjacent surface
+tools/test_agent_prompt_boundaries.sh	EXOCHAIN core	ci-invoked-tool	123	.archon/commands/exochain-validate-constitution.md	file	adjacent surface
+tools/test_agent_prompt_boundaries.sh	EXOCHAIN core	ci-invoked-tool	137	INTEGRATION.md	file	core runtime adapter
+tools/test_agent_prompt_boundaries.sh	EXOCHAIN core	ci-invoked-tool	137	docs	bare	EXOCHAIN core;adjacent surface;core runtime adapter
+tools/test_agent_prompt_boundaries.sh	EXOCHAIN core	ci-invoked-tool	137	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/test_agent_prompt_boundaries.sh	EXOCHAIN core	ci-invoked-tool	138	docs/superpowers/plans/2026-07-08-llm-usage-receipt-extensions.md	file	EXOCHAIN core
+tools/test_agent_prompt_boundaries.sh	EXOCHAIN core	ci-invoked-tool	142	docs	bare	EXOCHAIN core;adjacent surface;core runtime adapter
+tools/test_agent_workflow_bounds.sh	EXOCHAIN core	ci-invoked-tool	55	AGENTS.md	file	EXOCHAIN core
+tools/test_agent_workflow_bounds.sh	EXOCHAIN core	ci-invoked-tool	56	AGENTS.md	file	EXOCHAIN core
+tools/test_agent_workflow_bounds.sh	EXOCHAIN core	ci-invoked-tool	57	AGENTS.md	file	EXOCHAIN core
+tools/test_agent_workflow_bounds.sh	EXOCHAIN core	ci-invoked-tool	58	AGENTS.md	file	EXOCHAIN core
+tools/test_agent_workflow_bounds.sh	EXOCHAIN core	ci-invoked-tool	59	AGENTS.md	file	EXOCHAIN core
+tools/test_agent_workflow_bounds.sh	EXOCHAIN core	ci-invoked-tool	61	.archon/workflows	dir	adjacent surface
+tools/test_agent_workflow_bounds.sh	EXOCHAIN core	ci-invoked-tool	76	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_agent_workflow_bounds.sh	EXOCHAIN core	ci-invoked-tool	77	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_agent_workflow_bounds.sh	EXOCHAIN core	ci-invoked-tool	78	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_agent_workflow_bounds.sh	EXOCHAIN core	ci-invoked-tool	80	.archon/workflows/exochain-fix-issue-dag.yaml	file	adjacent surface
+tools/test_agent_workflow_bounds.sh	EXOCHAIN core	ci-invoked-tool	88	.archon/workflows/exochain-self-improvement-cycle.yaml	file	adjacent surface
+tools/test_agent_workflow_bounds.sh	EXOCHAIN core	ci-invoked-tool	93	.archon/workflows/exochain-client-onboarding.yaml	file	adjacent surface
+tools/test_archon_avc_quality_matrix.sh	EXOCHAIN core	ci-invoked-tool	4	docs/quality/archon-avc-quality-matrix.md	file	EXOCHAIN core
+tools/test_archon_avc_quality_matrix.sh	EXOCHAIN core	ci-invoked-tool	5	docs/proof/avc-cornerstone-production-proof.md	file	EXOCHAIN core
+tools/test_archon_avc_quality_matrix.sh	EXOCHAIN core	ci-invoked-tool	6	docs/proof/avc-issue-713-production-closure-proof.md	file	EXOCHAIN core
+tools/test_archon_avc_quality_matrix.sh	EXOCHAIN core	ci-invoked-tool	7	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_archon_avc_quality_matrix.sh	EXOCHAIN core	ci-invoked-tool	8	.archon/workflows/exochain-self-improvement-cycle.yaml	file	adjacent surface
+tools/test_archon_avc_quality_matrix.sh	EXOCHAIN core	ci-invoked-tool	9	.archon/commands/exoforge-avc-proof-evidence.md	file	adjacent surface
+tools/test_audit_ignore_policy.sh	EXOCHAIN core	ci-invoked-tool	65	.cargo/audit.toml	file	EXOCHAIN core
+tools/test_audit_policy_docs.sh	EXOCHAIN core	ci-invoked-tool	23	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_audit_policy_docs.sh	EXOCHAIN core	ci-invoked-tool	24	.github/workflows/release.yml	file	core runtime adapter
+tools/test_audit_policy_docs.sh	EXOCHAIN core	ci-invoked-tool	25	deny.toml	file	EXOCHAIN core
+tools/test_audit_policy_docs.sh	EXOCHAIN core	ci-invoked-tool	26	.cargo/audit.toml	file	EXOCHAIN core
+tools/test_audit_policy_docs.sh	EXOCHAIN core	ci-invoked-tool	27	README.md	file	EXOCHAIN core
+tools/test_audit_policy_docs.sh	EXOCHAIN core	ci-invoked-tool	28	SECURITY.md	file	EXOCHAIN core
+tools/test_audit_policy_docs.sh	EXOCHAIN core	ci-invoked-tool	29	VERSIONING.md	file	EXOCHAIN core
+tools/test_audit_policy_docs.sh	EXOCHAIN core	ci-invoked-tool	30	INTEGRATION.md	file	core runtime adapter
+tools/test_audit_policy_docs.sh	EXOCHAIN core	ci-invoked-tool	31	docs/architecture/THREAT-MODEL.md	file	EXOCHAIN core
+tools/test_audit_policy_docs.sh	EXOCHAIN core	ci-invoked-tool	32	docs/audit/REVIEW-2026-04-19.md	file	EXOCHAIN core
+tools/test_audit_policy_docs.sh	EXOCHAIN core	ci-invoked-tool	33	docs/grant/CODEX-CYBERSECURITY-GRANT-CLAIMS.md	file	EXOCHAIN core
+tools/test_audit_policy_docs.sh	EXOCHAIN core	ci-invoked-tool	72	.github/workflows/release.yml	file	core runtime adapter
+tools/test_audit_policy_docs.sh	EXOCHAIN core	ci-invoked-tool	83	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_audit_policy_docs.sh	EXOCHAIN core	ci-invoked-tool	88	deny.toml	file	EXOCHAIN core
+tools/test_audit_policy_docs.sh	EXOCHAIN core	ci-invoked-tool	89	deny.toml	file	EXOCHAIN core
+tools/test_audit_policy_docs.sh	EXOCHAIN core	ci-invoked-tool	93	.cargo/audit.toml	file	EXOCHAIN core
+tools/test_audit_policy_docs.sh	EXOCHAIN core	ci-invoked-tool	94	.cargo/audit.toml	file	EXOCHAIN core
+tools/test_audit_policy_docs.sh	EXOCHAIN core	ci-invoked-tool	98	docs/architecture/THREAT-MODEL.md	file	EXOCHAIN core
+tools/test_beta_codeowners.sh	EXOCHAIN core	ci-invoked-tool	67	.github/CODEOWNERS	file	EXOCHAIN core
+tools/test_capture_release_helper.sh	core runtime adapter	ci-invoked-tool	35	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/test_capture_release_helper.sh	core runtime adapter	ci-invoked-tool	67	tools/capture_release_helper.sh	file	core runtime adapter
+tools/test_ci_supply_chain_hardening.sh	EXOCHAIN core	ci-invoked-tool	25	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_ci_supply_chain_hardening.sh	EXOCHAIN core	ci-invoked-tool	26	.github/workflows/release.yml	file	core runtime adapter
+tools/test_ci_supply_chain_hardening.sh	EXOCHAIN core	ci-invoked-tool	27	tools/ci_cargo_retry.sh	file	EXOCHAIN core
+tools/test_ci_supply_chain_hardening.sh	EXOCHAIN core	ci-invoked-tool	33	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/test_ci_supply_chain_hardening.sh	EXOCHAIN core	ci-invoked-tool	33	scripts	bare	adjacent surface
+tools/test_ci_supply_chain_hardening.sh	EXOCHAIN core	ci-invoked-tool	123	tools/ci_cargo_retry.sh	file	EXOCHAIN core
+tools/test_ci_supply_chain_hardening.sh	EXOCHAIN core	ci-invoked-tool	125	Cargo.toml	file	EXOCHAIN core
+tools/test_ci_supply_chain_hardening.sh	EXOCHAIN core	ci-invoked-tool	132	tools/test_security_critical_dependencies_pinned.sh	file	EXOCHAIN core
+tools/test_ci_supply_chain_hardening.sh	EXOCHAIN core	ci-invoked-tool	158	Cargo.toml	file	EXOCHAIN core
+tools/test_ci_supply_chain_hardening.sh	EXOCHAIN core	ci-invoked-tool	209	Cargo.toml	file	EXOCHAIN core
+tools/test_ci_supply_chain_hardening.sh	EXOCHAIN core	ci-invoked-tool	212	Cargo.toml	file	EXOCHAIN core
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	27	command-base/app/package.json	file	adjacent surface
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	28	command-base/app/package-lock.json	file	third-party/vendor
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	32	command-base/app/lib/upload-policy.js	file	adjacent surface
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	33	command-base/app/lib/webhook-auth.js	file	adjacent surface
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	34	command-base/LICENSE	file	adjacent surface
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	35	command-base/LICENSE	file	adjacent surface
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	36	command-base/LICENSE	file	adjacent surface
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	37	command-base/LICENSE	file	adjacent surface
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	38	command-base/LICENSE	file	adjacent surface
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	48	command-base/app/package.json	file	adjacent surface
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	49	command-base/worker/package.json	file	adjacent surface
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	50	command-base/app/package-lock.json	file	third-party/vendor
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	51	scripts	bare	adjacent surface
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	55	command-base/app/package.json	file	adjacent surface
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	58	command-base/worker/package.json	file	adjacent surface
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	61	command-base/app/package-lock.json	file	third-party/vendor
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	67	scripts	bare	adjacent surface
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	68	scripts	bare	adjacent surface
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	86	command-base	bare	adjacent surface;third-party/vendor
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	90	command-base	bare	adjacent surface;third-party/vendor
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	90	tools/license_headers.py	file	EXOCHAIN core
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	91	command-base	bare	adjacent surface;third-party/vendor
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	92	command-base/EXOCHAIN_SURFACE_INTAKE.md	file	adjacent surface
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	94	command-base/LICENSE	file	adjacent surface
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	94	README.md	file	EXOCHAIN core
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	97	command-base/app/lib/auth.js	file	adjacent surface
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	102	command-base/app/lib/webhook-auth.js	file	adjacent surface
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	107	command-base/app/server.js	file	adjacent surface
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	111	command-base/app/routes/settings.js	file	adjacent surface
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	116	command-base/app/routes/refinement.test.js	file	adjacent surface
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	117	command-base/app/services/cqi-orchestrator.test.js	file	adjacent surface
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	118	command-base/app/server-assignment-determinism.test.js	file	adjacent surface
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	119	command-base/app/server-autofill-determinism.test.js	file	adjacent surface
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	120	command-base/app/provider-key-boundary.test.js	file	adjacent surface
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	121	command-base/app/lib/upload-policy.test.js	file	adjacent surface
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	122	command-base/app/lib/auth.test.js	file	adjacent surface
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	123	command-base/app/lib/webhook-auth.test.js	file	adjacent surface
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	124	command-base/app/server-webhook-secret-boundary.test.js	file	adjacent surface
+tools/test_commandbase_release_hardening.sh	EXOCHAIN core	ci-invoked-tool	125	command-base/app/lib/task-force-engine.test.js	file	adjacent surface
+tools/test_consensus_liveness_docs.sh	EXOCHAIN core	ci-invoked-tool	22	docs/guides/architecture-overview.md	file	core runtime adapter
+tools/test_consensus_liveness_docs.sh	EXOCHAIN core	ci-invoked-tool	23	crates/exo-dag/src/consensus.rs	file	EXOCHAIN core
+tools/test_consensus_liveness_docs.sh	EXOCHAIN core	ci-invoked-tool	41	docs	bare	EXOCHAIN core;adjacent surface;core runtime adapter
+tools/test_consensus_liveness_docs.sh	EXOCHAIN core	ci-invoked-tool	46	docs	bare	EXOCHAIN core;adjacent surface;core runtime adapter
+tools/test_continuous_release.py	core runtime adapter	ci-invoked-tool	65	packages/exochain-llm-proxy/package-lock.json	file	third-party/vendor
+tools/test_continuous_release.py	core runtime adapter	ci-invoked-tool	66	packages/exochain-llm-proxy	dir	core runtime adapter;third-party/vendor
+tools/test_continuous_release.py	core runtime adapter	ci-invoked-tool	78	tools/write_ci_candidate.py	file	EXOCHAIN core
+tools/test_continuous_release.py	core runtime adapter	ci-invoked-tool	88	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_continuous_release.py	core runtime adapter	ci-invoked-tool	91	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_continuous_release.py	core runtime adapter	ci-invoked-tool	102	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_continuous_release.py	core runtime adapter	ci-invoked-tool	126	tools/write_ci_candidate.py	file	EXOCHAIN core
+tools/test_continuous_release.py	core runtime adapter	ci-invoked-tool	170	Cargo.toml	file	EXOCHAIN core
+tools/test_continuous_release.py	core runtime adapter	ci-invoked-tool	179	tools/write_ci_candidate.py	file	EXOCHAIN core
+tools/test_continuous_release.py	core runtime adapter	ci-invoked-tool	192	Cargo.toml	file	EXOCHAIN core
+tools/test_core_fuzz_targets.sh	EXOCHAIN core	ci-invoked-tool	29	fuzz/Cargo.toml	file	EXOCHAIN core
+tools/test_core_fuzz_targets.sh	EXOCHAIN core	ci-invoked-tool	30	fuzz/Cargo.lock	file	third-party/vendor
+tools/test_core_fuzz_targets.sh	EXOCHAIN core	ci-invoked-tool	33	fuzz/fuzz_targets	dir	EXOCHAIN core
+tools/test_core_fuzz_targets.sh	EXOCHAIN core	ci-invoked-tool	34	fuzz/fuzz_targets	dir	EXOCHAIN core
+tools/test_core_fuzz_targets.sh	EXOCHAIN core	ci-invoked-tool	38	fuzz/Cargo.toml	file	EXOCHAIN core
+tools/test_coverage_policy.sh	EXOCHAIN core	ci-invoked-tool	27	tarpaulin.toml	file	EXOCHAIN core
+tools/test_coverage_policy.sh	EXOCHAIN core	ci-invoked-tool	28	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_coverage_policy.sh	EXOCHAIN core	ci-invoked-tool	40	crates/exo-gateway/src/dagdb.rs	file	core runtime adapter
+tools/test_coverage_policy.sh	EXOCHAIN core	ci-invoked-tool	41	crates/exo-gateway/src/db.rs	file	core runtime adapter
+tools/test_coverage_policy.sh	EXOCHAIN core	ci-invoked-tool	42	crates/exo-gateway/src/server.rs	file	core runtime adapter
+tools/test_coverage_policy.sh	EXOCHAIN core	ci-invoked-tool	43	crates/exo-gateway/src/handlers.rs	file	core runtime adapter
+tools/test_coverage_policy.sh	EXOCHAIN core	ci-invoked-tool	44	crates/exo-gateway/src/graphql.rs	file	core runtime adapter
+tools/test_coverage_policy.sh	EXOCHAIN core	ci-invoked-tool	47	crates/exo-dag-db-postgres/src/idempotency.rs	file	core runtime adapter
+tools/test_coverage_policy.sh	EXOCHAIN core	ci-invoked-tool	48	crates/exo-dag-db-postgres/src/outbox.rs	file	core runtime adapter
+tools/test_coverage_policy.sh	EXOCHAIN core	ci-invoked-tool	49	crates/exo-dag-db-postgres/src/persistent_context.rs	file	core runtime adapter
+tools/test_coverage_policy.sh	EXOCHAIN core	ci-invoked-tool	50	crates/exo-dag-db-postgres/src/postgres/context_packet_persistence.rs	file	core runtime adapter
+tools/test_coverage_policy.sh	EXOCHAIN core	ci-invoked-tool	51	crates/exo-dag-db-postgres/src/postgres/continuation_persistence.rs	file	core runtime adapter
+tools/test_coverage_policy.sh	EXOCHAIN core	ci-invoked-tool	52	crates/exo-dag-db-postgres/src/postgres/default_route.rs	file	core runtime adapter
+tools/test_coverage_policy.sh	EXOCHAIN core	ci-invoked-tool	53	crates/exo-dag-db-postgres/src/postgres/kg_catalog_router.rs	file	core runtime adapter
+tools/test_coverage_policy.sh	EXOCHAIN core	ci-invoked-tool	54	crates/exo-dag-db-postgres/src/postgres/kg_context_selection.rs	file	core runtime adapter
+tools/test_coverage_policy.sh	EXOCHAIN core	ci-invoked-tool	55	crates/exo-dag-db-postgres/src/postgres/kg_context_selection_write.rs	file	core runtime adapter
+tools/test_coverage_policy.sh	EXOCHAIN core	ci-invoked-tool	56	crates/exo-dag-db-postgres/src/postgres/kg_export.rs	file	core runtime adapter
+tools/test_coverage_policy.sh	EXOCHAIN core	ci-invoked-tool	57	crates/exo-dag-db-postgres/src/postgres/kg_import.rs	file	core runtime adapter
+tools/test_coverage_policy.sh	EXOCHAIN core	ci-invoked-tool	58	crates/exo-dag-db-postgres/src/postgres/kg_retrieval.rs	file	core runtime adapter
+tools/test_coverage_policy.sh	EXOCHAIN core	ci-invoked-tool	59	crates/exo-dag-db-postgres/src/postgres/kg_writeback.rs	file	core runtime adapter
+tools/test_coverage_policy.sh	EXOCHAIN core	ci-invoked-tool	60	crates/exo-dag-db-postgres/src/postgres/lifecycle_action.rs	file	core runtime adapter
+tools/test_coverage_policy.sh	EXOCHAIN core	ci-invoked-tool	61	crates/exo-dag-db-postgres/src/postgres/mod.rs	file	core runtime adapter
+tools/test_coverage_policy.sh	EXOCHAIN core	ci-invoked-tool	62	crates/exo-dag-db-postgres/src/postgres/route_invalidation.rs	file	core runtime adapter
+tools/test_coverage_policy.sh	EXOCHAIN core	ci-invoked-tool	63	crates/exo-dag-db-postgres/src/receipt.rs	file	core runtime adapter
+tools/test_coverage_policy.sh	EXOCHAIN core	ci-invoked-tool	66	crates/exo-dag-db-lab/src/bin/dagdb_kg_export_manifest.rs	file	core runtime adapter
+tools/test_coverage_policy.sh	EXOCHAIN core	ci-invoked-tool	67	crates/exo-dag-db-lab/src/bin/dagdb_kg_import_candidates.rs	file	core runtime adapter
+tools/test_coverage_policy.sh	EXOCHAIN core	ci-invoked-tool	71	tarpaulin.toml	file	EXOCHAIN core
+tools/test_coverage_policy.sh	EXOCHAIN core	ci-invoked-tool	108	tarpaulin.toml	file	EXOCHAIN core
+tools/test_coverage_policy.sh	EXOCHAIN core	ci-invoked-tool	142	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_coverage_policy.sh	EXOCHAIN core	ci-invoked-tool	150	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_coverage_policy.sh	EXOCHAIN core	ci-invoked-tool	198	README.md	file	EXOCHAIN core
+tools/test_coverage_policy.sh	EXOCHAIN core	ci-invoked-tool	198	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_coverage_policy.sh	EXOCHAIN core	ci-invoked-tool	198	docs/guides/GETTING-STARTED.md	file	core runtime adapter
+tools/test_coverage_policy.sh	EXOCHAIN core	ci-invoked-tool	199	tarpaulin.toml	file	EXOCHAIN core
+tools/test_coverage_policy.sh	EXOCHAIN core	ci-invoked-tool	200	tarpaulin.toml	file	EXOCHAIN core
+tools/test_coverage_policy.sh	EXOCHAIN core	ci-invoked-tool	200	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_cr001_completeness.sh	EXOCHAIN core	ci-invoked-tool	19	tools/test_cr001_status.sh	file	EXOCHAIN core
+tools/test_cr001_completeness.sh	EXOCHAIN core	ci-invoked-tool	42	governance/resolutions/CR-001-AEGIS-SYBIL-AUTHENTIC-PLURALITY.md	file	EXOCHAIN core
+tools/test_cr001_status.sh	EXOCHAIN core	ci-invoked-tool	18	docs	bare	EXOCHAIN core;adjacent surface;core runtime adapter
+tools/test_cr001_status.sh	EXOCHAIN core	ci-invoked-tool	45	governance/resolutions/CR-001-AEGIS-SYBIL-AUTHENTIC-PLURALITY.md	file	EXOCHAIN core
+tools/test_cr001_status.sh	EXOCHAIN core	ci-invoked-tool	46	governance/resolutions/INDEX.md	file	EXOCHAIN core
+tools/test_cr001_status.sh	EXOCHAIN core	ci-invoked-tool	47	governance/EXOCHAIN-REFACTOR-PLAN.md	file	EXOCHAIN core
+tools/test_cr001_status.sh	EXOCHAIN core	ci-invoked-tool	48	governance/quality_gates.md	file	EXOCHAIN core
+tools/test_cr001_status.sh	EXOCHAIN core	ci-invoked-tool	49	docs/adr/ADR-001-authority-of-text.md	file	EXOCHAIN core
+tools/test_cr001_status.sh	EXOCHAIN core	ci-invoked-tool	50	docs/guides/developer-onboarding.md	file	core runtime adapter
+tools/test_cr001_status.sh	EXOCHAIN core	ci-invoked-tool	58	README.md	file	EXOCHAIN core
+tools/test_cr001_status.sh	EXOCHAIN core	ci-invoked-tool	59	README.md	file	EXOCHAIN core
+tools/test_cr001_status.sh	EXOCHAIN core	ci-invoked-tool	60	README.md	file	EXOCHAIN core
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	25	.github/workflows/release.yml	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	26	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	30	tools/check_cratesio_namespace_ownership.mjs	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	31	tools/check_cratesio_namespace_ownership.mjs	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	32	tools/verify_cratesio_release_packaging.mjs	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	33	tools/verify_cratesio_release_packaging.mjs	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	34	tools/publish_sealed_crate.py	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	35	tools/publish_sealed_crate.py	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	36	tools/test_publish_sealed_crate.py	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	37	tools/test_publish_sealed_crate.py	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	38	tools/test_publish_sealed_crate_cargo_parity.py	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	39	tools/test_publish_sealed_crate_cargo_parity.py	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	40	tools/test_verify_crate_release_archive.py	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	41	tools/test_verify_crate_release_archive.py	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	66	tools/check_cratesio_namespace_ownership.mjs	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	72	tools/check_cratesio_namespace_ownership.mjs	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	80	tools/check_cratesio_namespace_ownership.mjs	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	89	tools/check_cratesio_namespace_ownership.mjs	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	97	tools/check_cratesio_namespace_ownership.mjs	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	105	tools/check_cratesio_namespace_ownership.mjs	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	113	tools/check_cratesio_namespace_ownership.mjs	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	119	tools/check_cratesio_namespace_ownership.mjs	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	129	tools/check_cratesio_namespace_ownership.mjs	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	139	tools/check_cratesio_namespace_ownership.mjs	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	149	tools/check_cratesio_namespace_ownership.mjs	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	160	tools/check_cratesio_namespace_ownership.mjs	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	170	tools/check_cratesio_namespace_ownership.mjs	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	185	tools/check_cratesio_namespace_ownership.mjs	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	223	tools/check_cratesio_namespace_ownership.mjs	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	240	tools/check_cratesio_namespace_ownership.mjs	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	248	tools/check_cratesio_namespace_ownership.mjs	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	254	tools/check_cratesio_namespace_ownership.mjs	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	263	tools/check_cratesio_namespace_ownership.mjs	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	271	tools/check_cratesio_namespace_ownership.mjs	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	273	tools/check_cratesio_namespace_ownership.mjs	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	274	tools/check_cratesio_namespace_ownership.mjs	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	275	tools/check_cratesio_namespace_ownership.mjs	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	278	tools/verify_cratesio_release_packaging.mjs	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	280	tools/check_cratesio_namespace_ownership.mjs	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	282	tools/check_cratesio_namespace_ownership.mjs	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	286	tools/preflight_release_crates.sh	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	287	tools/preflight_release_crates.sh	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	288	tools/preflight_release_crates.sh	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	289	tools/preflight_release_crates.sh	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	290	scripts	bare	adjacent surface
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	292	tools/publish_release_crates.sh	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	293	tools/publish_release_crates.sh	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	294	tools/publish_release_crates.sh	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	296	tools/publish_release_crates.sh	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	299	tools/preflight_release_crates.sh	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	299	tools/publish_release_crates.sh	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	304	tools/test_publish_sealed_crate.py	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	306	tools/test_publish_sealed_crate_cargo_parity.py	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	307	tools/test_verify_crate_release_archive.py	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	313	tools/publish_sealed_crate.py	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	326	.github	bare	EXOCHAIN core;adjacent surface;core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	326	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	326	Dockerfile	file	core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	332	.github	bare	EXOCHAIN core;adjacent surface;core runtime adapter
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	332	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/test_cratesio_release_packaging.sh	core runtime adapter	ci-invoked-tool	332	Dockerfile	file	core runtime adapter
+tools/test_cross_platform_target_cache_boundary.sh	EXOCHAIN core	ci-invoked-tool	25	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_demo_adjacent_boundaries.sh	EXOCHAIN core	ci-invoked-tool	7	demo	bare	adjacent surface;third-party/vendor
+tools/test_demo_adjacent_boundaries.sh	EXOCHAIN core	ci-invoked-tool	11	demo/LICENSE	file	adjacent surface
+tools/test_demo_adjacent_boundaries.sh	EXOCHAIN core	ci-invoked-tool	12	demo/ADJACENT-SURFACE-INTAKE.md	file	adjacent surface
+tools/test_demo_adjacent_boundaries.sh	EXOCHAIN core	ci-invoked-tool	12	demo	bare	adjacent surface;third-party/vendor
+tools/test_demo_adjacent_boundaries.sh	EXOCHAIN core	ci-invoked-tool	19	demo	bare	adjacent surface;third-party/vendor
+tools/test_demo_adjacent_boundaries.sh	EXOCHAIN core	ci-invoked-tool	32	demo	bare	adjacent surface;third-party/vendor
+tools/test_demo_adjacent_boundaries.sh	EXOCHAIN core	ci-invoked-tool	34	demo	bare	adjacent surface;third-party/vendor
+tools/test_demo_adjacent_boundaries.sh	EXOCHAIN core	ci-invoked-tool	42	demo/LICENSE	file	adjacent surface
+tools/test_demo_adjacent_boundaries.sh	EXOCHAIN core	ci-invoked-tool	50	demo/LICENSE	file	adjacent surface
+tools/test_demo_adjacent_boundaries.sh	EXOCHAIN core	ci-invoked-tool	53	livesafe	bare	adjacent surface;third-party/vendor
+tools/test_demo_adjacent_boundaries.sh	EXOCHAIN core	ci-invoked-tool	54	demo/apps	dir	adjacent surface;third-party/vendor
+tools/test_demo_adjacent_boundaries.sh	EXOCHAIN core	ci-invoked-tool	59	demo	bare	adjacent surface;third-party/vendor
+tools/test_demo_adjacent_boundaries.sh	EXOCHAIN core	ci-invoked-tool	61	demo/packages/exochain-wasm	dir	adjacent surface
+tools/test_demo_adjacent_boundaries.sh	EXOCHAIN core	ci-invoked-tool	64	demo	bare	adjacent surface;third-party/vendor
+tools/test_demo_adjacent_boundaries.sh	EXOCHAIN core	ci-invoked-tool	71	demo	bare	adjacent surface;third-party/vendor
+tools/test_demo_adjacent_boundaries.sh	EXOCHAIN core	ci-invoked-tool	72	demo/coverage	dir	third-party/vendor
+tools/test_demo_adjacent_boundaries.sh	EXOCHAIN core	ci-invoked-tool	73	demo/apps	dir	adjacent surface;third-party/vendor
+tools/test_demo_adjacent_boundaries.sh	EXOCHAIN core	ci-invoked-tool	78	demo	bare	adjacent surface;third-party/vendor
+tools/test_demo_adjacent_boundaries.sh	EXOCHAIN core	ci-invoked-tool	83	demo	bare	adjacent surface;third-party/vendor
+tools/test_demo_adjacent_boundaries.sh	EXOCHAIN core	ci-invoked-tool	83	demo/coverage	dir	third-party/vendor
+tools/test_demo_adjacent_boundaries.sh	EXOCHAIN core	ci-invoked-tool	88	demo	bare	adjacent surface;third-party/vendor
+tools/test_demo_adjacent_boundaries.sh	EXOCHAIN core	ci-invoked-tool	91	demo/infra/docker-compose.yml	file	adjacent surface
+tools/test_demo_adjacent_boundaries.sh	EXOCHAIN core	ci-invoked-tool	93	demo/packages/shared/src/dagdb-adapter.js	file	adjacent surface
+tools/test_demo_adjacent_boundaries.sh	EXOCHAIN core	ci-invoked-tool	95	demo/scripts/dev.sh	file	adjacent surface
+tools/test_demo_adjacent_boundaries.sh	EXOCHAIN core	ci-invoked-tool	96	demo	bare	adjacent surface;third-party/vendor
+tools/test_demo_adjacent_boundaries.sh	EXOCHAIN core	ci-invoked-tool	98	demo	bare	adjacent surface;third-party/vendor
+tools/test_demo_wasm_adapter_boundary.sh	EXOCHAIN core	ci-invoked-tool	23	demo	bare	adjacent surface;third-party/vendor
+tools/test_demo_wasm_adapter_boundary.sh	EXOCHAIN core	ci-invoked-tool	31	demo	bare	adjacent surface;third-party/vendor
+tools/test_demo_wasm_adapter_boundary.sh	EXOCHAIN core	ci-invoked-tool	35	demo/package.json	file	adjacent surface
+tools/test_demo_wasm_adapter_boundary.sh	EXOCHAIN core	ci-invoked-tool	36	demo/packages/exochain-wasm/package.json	file	adjacent surface
+tools/test_demo_wasm_adapter_boundary.sh	EXOCHAIN core	ci-invoked-tool	37	demo/packages/exochain-wasm/test.mjs	file	adjacent surface
+tools/test_demo_wasm_adapter_boundary.sh	EXOCHAIN core	ci-invoked-tool	40	demo	bare	adjacent surface;third-party/vendor
+tools/test_demo_wasm_adapter_boundary.sh	EXOCHAIN core	ci-invoked-tool	63	demo	bare	adjacent surface;third-party/vendor
+tools/test_deployment_readiness_probes.sh	core runtime adapter	ci-invoked-tool	53	Dockerfile	file	core runtime adapter
+tools/test_deployment_readiness_probes.sh	core runtime adapter	ci-invoked-tool	54	deploy/Dockerfile.node	file	core runtime adapter
+tools/test_deployment_readiness_probes.sh	core runtime adapter	ci-invoked-tool	55	railway.json	file	core runtime adapter
+tools/test_docker_production_db_feature.sh	core runtime adapter	ci-invoked-tool	64	Dockerfile	file	core runtime adapter
+tools/test_docker_production_db_feature.sh	core runtime adapter	ci-invoked-tool	65	deploy/Dockerfile.node	file	core runtime adapter
+tools/test_docker_production_db_feature.sh	core runtime adapter	ci-invoked-tool	66	Dockerfile	file	core runtime adapter
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	18	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	56	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	59	docs/superpowers/plans	dir	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	60	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	61	docs/superpowers/plans	dir	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	65	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	68	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	69	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	70	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	71	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	72	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	73	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	74	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	80	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	84	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	87	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	88	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	89	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	90	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	91	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	92	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	93	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	94	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	95	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	96	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	97	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	98	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	99	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	100	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	101	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	101	gap	bare	adjacent surface
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	102	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	104	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	108	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	109	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	110	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	111	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	112	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	113	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	117	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	118	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	119	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	120	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	124	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	132	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	133	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_registry_truth.sh	EXOCHAIN core	ci-invoked-tool	134	GAP-REGISTRY.md	file	EXOCHAIN core
+tools/test_gap_stub_ci_guard.sh	EXOCHAIN core	ci-invoked-tool	9	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_gap_stub_ci_guard.sh	EXOCHAIN core	ci-invoked-tool	46	web/src	dir	adjacent surface
+tools/test_gap_syntaxis_yaml_parse.sh	EXOCHAIN core	ci-invoked-tool	27	gap/syntaxis/protocols	dir	adjacent surface
+tools/test_gateway_db_ci.sh	core runtime adapter	ci-invoked-tool	27	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_gateway_db_ci.sh	core runtime adapter	ci-invoked-tool	30	crates/exo-node/src/store/store_postgres.rs	file	core runtime adapter
+tools/test_github_actions_pinned.sh	core runtime adapter	ci-invoked-tool	34	.github/workflows	dir	EXOCHAIN core;adjacent surface;core runtime adapter
+tools/test_github_actions_pinned.sh	core runtime adapter	ci-invoked-tool	58	.github/workflows	dir	EXOCHAIN core;adjacent surface;core runtime adapter
+tools/test_github_actions_pinned.sh	core runtime adapter	ci-invoked-tool	155	tools/ci_cargo_retry.sh	file	EXOCHAIN core
+tools/test_github_actions_pinned.sh	core runtime adapter	ci-invoked-tool	179	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/test_github_actions_pinned.sh	core runtime adapter	ci-invoked-tool	250	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/test_github_actions_pinned.sh	core runtime adapter	ci-invoked-tool	252	tools/ci_cargo_retry.sh	file	EXOCHAIN core
+tools/test_github_actions_pinned.sh	core runtime adapter	ci-invoked-tool	329	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_github_actions_pinned.sh	core runtime adapter	ci-invoked-tool	331	tools/repo_truth.sh	file	EXOCHAIN core
+tools/test_github_issue_workflow_boundaries.sh	EXOCHAIN core	ci-invoked-tool	25	.github/workflows/exoforge-triage.yml	file	adjacent surface
+tools/test_github_issue_workflow_boundaries.sh	EXOCHAIN core	ci-invoked-tool	26	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_github_issue_workflow_boundaries.sh	EXOCHAIN core	ci-invoked-tool	32	exoforge	bare	adjacent surface
+tools/test_github_issue_workflow_boundaries.sh	EXOCHAIN core	ci-invoked-tool	36	exoforge	bare	adjacent surface
+tools/test_github_issue_workflow_boundaries.sh	EXOCHAIN core	ci-invoked-tool	37	exoforge	bare	adjacent surface
+tools/test_github_issue_workflow_boundaries.sh	EXOCHAIN core	ci-invoked-tool	38	exoforge	bare	adjacent surface
+tools/test_github_issue_workflow_boundaries.sh	EXOCHAIN core	ci-invoked-tool	38	.github/ISSUE_TEMPLATE	dir	adjacent surface
+tools/test_github_issue_workflow_boundaries.sh	EXOCHAIN core	ci-invoked-tool	39	exoforge	bare	adjacent surface
+tools/test_github_issue_workflow_boundaries.sh	EXOCHAIN core	ci-invoked-tool	41	.github/ISSUE_TEMPLATE	dir	adjacent surface
+tools/test_github_issue_workflow_boundaries.sh	EXOCHAIN core	ci-invoked-tool	114	exoforge	bare	adjacent surface
+tools/test_github_issue_workflow_boundaries.sh	EXOCHAIN core	ci-invoked-tool	173	exoforge	bare	adjacent surface
+tools/test_github_issue_workflow_boundaries.sh	EXOCHAIN core	ci-invoked-tool	182	exoforge	bare	adjacent surface
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	32	tools/import_release_recovery_027.sh	file	core runtime adapter
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	33	governance/releases/v0.2.7/RECOVERY-MANIFEST.json	file	EXOCHAIN core
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	34	governance/releases/v0.2.7/RETAINED-METADATA-POLICY.json	file	EXOCHAIN core
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	35	governance/releases/v0.2.7/PRESERVED-PAYLOAD-TRANSPORT.json	file	EXOCHAIN core
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	55	tools/recover_github_release_027.py	file	core runtime adapter
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	98	tools/recover_github_release_027.py	file	core runtime adapter
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	144	tools/verify_release_recovery_027.py	file	core runtime adapter
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	145	tools/test_release_recovery_027.py	file	core runtime adapter
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	319	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	325	tools/verify_release_recovery_027.sh	file	core runtime adapter
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	462	governance/releases/v0.2.7/PRESERVED-PAYLOAD-TRANSPORT.json	file	EXOCHAIN core
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	477	tools/verify_release_recovery_027.py	file	core runtime adapter
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	537	tools/verify_release_recovery_027.sh	file	core runtime adapter
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	580	tools/run_release_recovery_027.sh	file	core runtime adapter
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	587	tools/run_release_recovery_027.sh	file	core runtime adapter
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	616	tools/run_release_recovery_027.sh	file	core runtime adapter
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	689	governance/releases/v0.2.7/RETAINED-CUSTODY.json	file	EXOCHAIN core
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	696	governance/releases/v0.2.7/RETAINED-CUSTODY.json	file	EXOCHAIN core
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	739	governance/releases/v0.2.7/RETAINED-CUSTODY.json	file	EXOCHAIN core
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	981	tools/recover_release_python_027.sh	file	core runtime adapter
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	995	tools/test_release_recovery_027.py	file	core runtime adapter
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	998	governance/releases/v0.2.7/RETAINED-CUSTODY.json	file	EXOCHAIN core
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	1003	governance/releases/v0.2.7/RETAINED-CUSTODY.json	file	EXOCHAIN core
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	1021	tools/recover_github_release_027.py	file	core runtime adapter
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	1022	governance/releases/v0.2.7/RETAINED-CUSTODY.json	file	EXOCHAIN core
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	1023	governance/releases/v0.2.7/PUBLICATION-IDENTITIES.json	file	EXOCHAIN core
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	1061	tools/recover_github_release_027.py	file	core runtime adapter
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	1062	governance/releases/v0.2.7/RETAINED-CUSTODY.json	file	EXOCHAIN core
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	1063	governance/releases/v0.2.7/PUBLICATION-IDENTITIES.json	file	EXOCHAIN core
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	1224	governance/releases/v0.2.7/PUBLICATION-IDENTITIES.json	file	EXOCHAIN core
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	1352	tools/verify_release_recovery_027.py	file	core runtime adapter
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	1726	tools/verify_release_recovery_027.py	file	core runtime adapter
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	1780	governance/releases/v0.2.7/PUBLICATION-IDENTITIES.json	file	EXOCHAIN core
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	1786	governance/releases/v0.2.7/RETAINED-CUSTODY.json	file	EXOCHAIN core
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	1787	governance/releases/v0.2.7/PUBLICATION-IDENTITIES.json	file	EXOCHAIN core
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	1788	tools/verify_release_recovery_027.py	file	core runtime adapter
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	1980	tools/transport_release_build_output.py	file	core runtime adapter
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	1999	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	2001	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	2004	tools/verify_release_sbom.py	file	core runtime adapter
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	2007	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	2014	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	2020	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	2044	tools/verify_release_recovery_027.py	file	core runtime adapter
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	2057	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/test_import_release_recovery_027.py	core runtime adapter	ci-invoked-tool	2074	tools/verify_release_recovery_027.py	file	core runtime adapter
+tools/test_livesafe_demo_security.sh	EXOCHAIN core	ci-invoked-tool	29	demo	bare	adjacent surface;third-party/vendor
+tools/test_livesafe_demo_security.sh	EXOCHAIN core	ci-invoked-tool	29	LICENSE	file	EXOCHAIN core
+tools/test_livesafe_demo_security.sh	EXOCHAIN core	ci-invoked-tool	36	demo	bare	adjacent surface;third-party/vendor
+tools/test_livesafe_demo_security.sh	EXOCHAIN core	ci-invoked-tool	49	demo	bare	adjacent surface;third-party/vendor
+tools/test_livesafe_demo_security.sh	EXOCHAIN core	ci-invoked-tool	55	demo	bare	adjacent surface;third-party/vendor
+tools/test_livesafe_demo_security.sh	EXOCHAIN core	ci-invoked-tool	59	demo/apps/livesafe	dir	adjacent surface;third-party/vendor
+tools/test_livesafe_demo_security.sh	EXOCHAIN core	ci-invoked-tool	60	demo	bare	adjacent surface;third-party/vendor
+tools/test_livesafe_demo_security.sh	EXOCHAIN core	ci-invoked-tool	66	demo	bare	adjacent surface;third-party/vendor
+tools/test_livesafe_demo_security.sh	EXOCHAIN core	ci-invoked-tool	71	demo	bare	adjacent surface;third-party/vendor
+tools/test_livesafe_demo_security.sh	EXOCHAIN core	ci-invoked-tool	81	demo	bare	adjacent surface;third-party/vendor
+tools/test_livesafe_demo_security.sh	EXOCHAIN core	ci-invoked-tool	88	demo	bare	adjacent surface;third-party/vendor
+tools/test_livesafe_demo_security.sh	EXOCHAIN core	ci-invoked-tool	92	demo	bare	adjacent surface;third-party/vendor
+tools/test_livesafe_demo_security.sh	EXOCHAIN core	ci-invoked-tool	96	demo	bare	adjacent surface;third-party/vendor
+tools/test_livesafe_demo_security.sh	EXOCHAIN core	ci-invoked-tool	117	demo/apps/livesafe	dir	adjacent surface;third-party/vendor
+tools/test_livesafe_demo_security.sh	EXOCHAIN core	ci-invoked-tool	118	demo	bare	adjacent surface;third-party/vendor
+tools/test_livesafe_demo_security.sh	EXOCHAIN core	ci-invoked-tool	122	demo/apps/livesafe	dir	adjacent surface;third-party/vendor
+tools/test_livesafe_demo_security.sh	EXOCHAIN core	ci-invoked-tool	123	demo	bare	adjacent surface;third-party/vendor
+tools/test_livesafe_demo_security.sh	EXOCHAIN core	ci-invoked-tool	127	demo	bare	adjacent surface;third-party/vendor
+tools/test_livesafe_railway_deploy_ref_guard.sh	EXOCHAIN core	ci-invoked-tool	25	.github/workflows/livesafe-railway-deploy.yml	file	adjacent surface
+tools/test_livesafe_railway_deploy_ref_guard.sh	EXOCHAIN core	ci-invoked-tool	26	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_mission_c2_graph.sh	EXOCHAIN core	ci-invoked-tool	4	docs/c2/nodes	dir	EXOCHAIN core
+tools/test_mission_c2_graph.sh	EXOCHAIN core	ci-invoked-tool	30	docs/c2/nodes	dir	EXOCHAIN core
+tools/test_no_orphan_rust_modules.sh	EXOCHAIN core	ci-invoked-tool	86	README.md	file	EXOCHAIN core
+tools/test_no_orphan_rust_modules.sh	EXOCHAIN core	ci-invoked-tool	86	docs	bare	EXOCHAIN core;adjacent surface;core runtime adapter
+tools/test_no_orphan_rust_modules.sh	EXOCHAIN core	ci-invoked-tool	86	gap	bare	adjacent surface
+tools/test_no_orphan_rust_modules.sh	EXOCHAIN core	ci-invoked-tool	92	docs	bare	EXOCHAIN core;adjacent surface;core runtime adapter
+tools/test_npm_core_package_hygiene.sh	EXOCHAIN core	ci-invoked-tool	28	packages/exochain-sdk	dir	core runtime adapter;third-party/vendor
+tools/test_npm_core_package_hygiene.sh	EXOCHAIN core	ci-invoked-tool	29	tools/cross-impl-test	dir	EXOCHAIN core;third-party/vendor
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	27	livesafe	bare	adjacent surface;third-party/vendor
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	27	cybermedica	bare	adjacent surface;third-party/vendor
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	36	livesafe	bare	adjacent surface;third-party/vendor
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	36	livesafe/client	dir	adjacent surface;third-party/vendor
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	36	livesafe/server	dir	adjacent surface;third-party/vendor
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	36	livesafe/responder	dir	adjacent surface;third-party/vendor
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	36	cybermedica	bare	adjacent surface;third-party/vendor
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	45	livesafe/Cargo.toml	file	adjacent surface
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	46	livesafe/Cargo.toml	file	adjacent surface
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	47	livesafe/Cargo.toml	file	adjacent surface
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	48	livesafe/Cargo.toml	file	adjacent surface
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	52	livesafe	bare	adjacent surface;third-party/vendor
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	52	cybermedica	bare	adjacent surface;third-party/vendor
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	56	livesafe	bare	adjacent surface;third-party/vendor
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	56	tools/license_headers.py	file	EXOCHAIN core
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	57	livesafe	bare	adjacent surface;third-party/vendor
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	58	cybermedica	bare	adjacent surface;third-party/vendor
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	58	tools/license_headers.py	file	EXOCHAIN core
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	59	cybermedica	bare	adjacent surface;third-party/vendor
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	61	README.md	file	EXOCHAIN core
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	63	livesafe/LICENSE	file	adjacent surface
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	63	README.md	file	EXOCHAIN core
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	65	cybermedica/LICENSE	file	adjacent surface
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	65	README.md	file	EXOCHAIN core
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	68	governance/commercial-product-licensing.json	file	EXOCHAIN core
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	96	crates/decision-forum	dir	EXOCHAIN core
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	100	crates/exo-consent/src/bailment.rs	file	EXOCHAIN core
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	102	crates/exo-consent/src/contract.rs	file	EXOCHAIN core
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	104	crates/exo-consent/src/contract.rs	file	EXOCHAIN core
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	106	crates/exo-economy/src/adoption.rs	file	EXOCHAIN core
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	110	docs/legal/LICENSING-POSITION.md	file	EXOCHAIN core
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	113	README.md	file	EXOCHAIN core
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	115	crates/decision-forum	dir	EXOCHAIN core
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	115	README.md	file	EXOCHAIN core
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	123	README.md	file	EXOCHAIN core
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	125	livesafe	bare	adjacent surface;third-party/vendor
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	126	livesafe	bare	adjacent surface;third-party/vendor
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	127	cybermedica	bare	adjacent surface;third-party/vendor
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	128	cybermedica	bare	adjacent surface;third-party/vendor
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	129	livesafe/LICENSE	file	adjacent surface
+tools/test_proprietary_license_boundaries.sh	EXOCHAIN core	ci-invoked-tool	131	cybermedica/LICENSE	file	adjacent surface
+tools/test_public_route_verifier_portability.sh	core runtime adapter	ci-invoked-tool	27	tools/verify_public_exochain_route.sh	file	core runtime adapter
+tools/test_public_route_verifier_portability.sh	core runtime adapter	ci-invoked-tool	87	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/test_public_route_verifier_portability.sh	core runtime adapter	ci-invoked-tool	109	tools/verify_public_exochain_route.sh	file	core runtime adapter
+tools/test_publish_sealed_crate.py	core runtime adapter	ci-invoked-tool	25	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/test_publish_sealed_crate.py	core runtime adapter	ci-invoked-tool	67	README.md	file	EXOCHAIN core
+tools/test_publish_sealed_crate.py	core runtime adapter	ci-invoked-tool	201	README.md	file	EXOCHAIN core
+tools/test_publish_sealed_crate_cargo_parity.py	core runtime adapter	ci-invoked-tool	37	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/test_publish_sealed_crate_cargo_parity.py	core runtime adapter	ci-invoked-tool	71	Cargo.toml	file	EXOCHAIN core
+tools/test_publish_sealed_crate_cargo_parity.py	core runtime adapter	ci-invoked-tool	80	README.md	file	EXOCHAIN core
+tools/test_publish_sealed_crate_cargo_parity.py	core runtime adapter	ci-invoked-tool	109	README.md	file	EXOCHAIN core
+tools/test_publish_sealed_crate_cargo_parity.py	core runtime adapter	ci-invoked-tool	165	Cargo.toml	file	EXOCHAIN core
+tools/test_publish_sealed_crate_cargo_parity.py	core runtime adapter	ci-invoked-tool	165	README.md	file	EXOCHAIN core
+tools/test_publish_sealed_crate_cargo_parity.py	core runtime adapter	ci-invoked-tool	171	Cargo.toml	file	EXOCHAIN core
+tools/test_publish_sealed_crate_cargo_parity.py	core runtime adapter	ci-invoked-tool	172	README.md	file	EXOCHAIN core
+tools/test_publish_sealed_crate_cargo_parity.py	core runtime adapter	ci-invoked-tool	289	Cargo.toml	file	EXOCHAIN core
+tools/test_python_sdk_ci_boundary.sh	core runtime adapter	ci-invoked-tool	36	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_python_sdk_ci_boundary.sh	core runtime adapter	ci-invoked-tool	37	packages/exochain-py/pyproject.toml	file	core runtime adapter
+tools/test_python_sdk_ci_boundary.sh	core runtime adapter	ci-invoked-tool	38	tools/python-release-requirements.lock	file	third-party/vendor
+tools/test_python_sdk_ci_boundary.sh	core runtime adapter	ci-invoked-tool	94	packages/exochain-py/tests	dir	core runtime adapter
+tools/test_python_sdk_ci_boundary.sh	core runtime adapter	ci-invoked-tool	97	packages/exochain-py	dir	core runtime adapter
+tools/test_python_sdk_ci_boundary.sh	core runtime adapter	ci-invoked-tool	101	packages/exochain-py/exochain	dir	core runtime adapter
+tools/test_python_sdk_ci_boundary.sh	core runtime adapter	ci-invoked-tool	126	tools/python-release-requirements.lock	file	third-party/vendor
+tools/test_python_sdk_ci_boundary.sh	core runtime adapter	ci-invoked-tool	131	packages/exochain-py/tests	dir	core runtime adapter
+tools/test_python_sdk_ci_boundary.sh	core runtime adapter	ci-invoked-tool	132	packages/exochain-py	dir	core runtime adapter
+tools/test_python_sdk_ci_boundary.sh	core runtime adapter	ci-invoked-tool	134	packages/exochain-py/pyproject.toml	file	core runtime adapter
+tools/test_python_sdk_ci_boundary.sh	core runtime adapter	ci-invoked-tool	135	packages/exochain-py/exochain	dir	core runtime adapter
+tools/test_railway_entrypoint_args.sh	core runtime adapter	ci-invoked-tool	69	deploy/entrypoint.sh	file	core runtime adapter
+tools/test_railway_entrypoint_args.sh	core runtime adapter	ci-invoked-tool	85	deploy/entrypoint.sh	file	core runtime adapter
+tools/test_railway_entrypoint_args.sh	core runtime adapter	ci-invoked-tool	140	deploy/entrypoint.sh	file	core runtime adapter
+tools/test_recover_github_release_027.py	core runtime adapter	ci-invoked-tool	490	governance/releases/v0.2.7	dir	EXOCHAIN core
+tools/test_recover_github_release_027.py	core runtime adapter	ci-invoked-tool	497	governance/releases/v0.2.7	dir	EXOCHAIN core
+tools/test_recover_github_release_027.py	core runtime adapter	ci-invoked-tool	659	tools/recover_github_release_027.py	file	core runtime adapter
+tools/test_recover_github_release_027.py	core runtime adapter	ci-invoked-tool	933	governance/releases/v0.2.7/PRESERVED-PAYLOAD-TRANSPORT.json	file	EXOCHAIN core
+tools/test_recover_github_release_027.py	core runtime adapter	ci-invoked-tool	935	governance/releases/v0.2.7/RETAINED-METADATA-POLICY.json	file	EXOCHAIN core
+tools/test_recover_github_release_027.py	core runtime adapter	ci-invoked-tool	937	governance/releases/v0.2.7/PRESERVED-PAYLOAD-TRANSPORT.json	file	EXOCHAIN core
+tools/test_recover_github_release_027.py	core runtime adapter	ci-invoked-tool	1460	governance/releases/v0.2.7	dir	EXOCHAIN core
+tools/test_recover_github_release_027.py	core runtime adapter	ci-invoked-tool	1930	governance/releases/v0.2.7	dir	EXOCHAIN core
+tools/test_recover_github_release_027.py	core runtime adapter	ci-invoked-tool	1969	governance/releases/v0.2.7	dir	EXOCHAIN core
+tools/test_recover_github_release_027.py	core runtime adapter	ci-invoked-tool	1984	governance/releases/v0.2.7	dir	EXOCHAIN core
+tools/test_recover_github_release_027.py	core runtime adapter	ci-invoked-tool	2018	governance/releases/v0.2.7	dir	EXOCHAIN core
+tools/test_recover_release_python_027.sh	core runtime adapter	ci-invoked-tool	23	site	bare	adjacent surface;third-party/vendor
+tools/test_recover_release_python_027.sh	core runtime adapter	ci-invoked-tool	24	site	bare	adjacent surface;third-party/vendor
+tools/test_release_dry_run_boundaries.sh	core runtime adapter	ci-invoked-tool	25	.github/workflows/release.yml	file	core runtime adapter
+tools/test_release_dry_run_boundaries.sh	core runtime adapter	ci-invoked-tool	26	VERSIONING.md	file	EXOCHAIN core
+tools/test_release_dry_run_boundaries.sh	core runtime adapter	ci-invoked-tool	94	VERSIONING.md	file	EXOCHAIN core
+tools/test_release_dry_run_boundaries.sh	core runtime adapter	ci-invoked-tool	96	VERSIONING.md	file	EXOCHAIN core
+tools/test_release_dry_run_boundaries.sh	core runtime adapter	ci-invoked-tool	98	VERSIONING.md	file	EXOCHAIN core
+tools/test_release_dry_run_boundaries.sh	core runtime adapter	ci-invoked-tool	100	VERSIONING.md	file	EXOCHAIN core
+tools/test_release_llm_lifecycle_boundary.sh	core runtime adapter	ci-invoked-tool	19	.github/workflows/release.yml	file	core runtime adapter
+tools/test_release_llm_lifecycle_boundary.sh	core runtime adapter	ci-invoked-tool	20	tools/transport_release_file_set.py	file	core runtime adapter
+tools/test_release_llm_lifecycle_boundary.sh	core runtime adapter	ci-invoked-tool	80	crates/exo-node/fixtures/lynk/rust_action_receipt_v1.json	file	core runtime adapter
+tools/test_release_llm_lifecycle_boundary.sh	core runtime adapter	ci-invoked-tool	81	crates/exo-node/fixtures/lynk/rust_receipt_emit_response_v1.json	file	core runtime adapter
+tools/test_release_llm_lifecycle_boundary.sh	core runtime adapter	ci-invoked-tool	82	crates/exo-node/fixtures/lynk/typescript_receipt_emit_request_v1.json	file	core runtime adapter
+tools/test_release_llm_lifecycle_boundary.sh	core runtime adapter	ci-invoked-tool	122	packages/exochain-llm-proxy/src	dir	core runtime adapter
+tools/test_release_npm_config_boundary.sh	core runtime adapter	ci-invoked-tool	12	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_release_publish_boundaries.sh	core runtime adapter	ci-invoked-tool	12	.github/workflows/release.yml	file	core runtime adapter
+tools/test_release_publish_boundaries.sh	core runtime adapter	ci-invoked-tool	13	tools/publish_release_crates.sh	file	core runtime adapter
+tools/test_release_publish_boundaries.sh	core runtime adapter	ci-invoked-tool	14	tools/publish_sealed_crate.py	file	core runtime adapter
+tools/test_release_publish_boundaries.sh	core runtime adapter	ci-invoked-tool	15	tools/publish_release_npm_package.sh	file	core runtime adapter
+tools/test_release_publish_boundaries.sh	core runtime adapter	ci-invoked-tool	274	tools/preflight_release_crates.sh	file	core runtime adapter
+tools/test_release_publish_boundaries.sh	core runtime adapter	ci-invoked-tool	289	tools/publish_release_crates.sh	file	core runtime adapter
+tools/test_release_publish_boundaries.sh	core runtime adapter	ci-invoked-tool	290	tools/publish_sealed_crate.py	file	core runtime adapter
+tools/test_release_publish_boundaries.sh	core runtime adapter	ci-invoked-tool	291	tools/check_cratesio_namespace_ownership.mjs	file	core runtime adapter
+tools/test_release_publish_boundaries.sh	core runtime adapter	ci-invoked-tool	292	tools/verify_release_source.sh	file	core runtime adapter
+tools/test_release_publish_boundaries.sh	core runtime adapter	ci-invoked-tool	293	tools/verify_release_tag.sh	file	core runtime adapter
+tools/test_release_publish_boundaries.sh	core runtime adapter	ci-invoked-tool	336	tools/preflight_release_crates.sh	file	core runtime adapter
+tools/test_release_publish_boundaries.sh	core runtime adapter	ci-invoked-tool	337	tools/preflight_release_crates.sh	file	core runtime adapter
+tools/test_release_publish_boundaries.sh	core runtime adapter	ci-invoked-tool	338	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/test_release_publish_boundaries.sh	core runtime adapter	ci-invoked-tool	367	tools/publish_release_npm_package.sh	file	core runtime adapter
+tools/test_release_publish_boundaries.sh	core runtime adapter	ci-invoked-tool	382	scripts	bare	adjacent surface
+tools/test_release_recovery_027.py	core runtime adapter	ci-invoked-tool	26	tools/verify_release_recovery_027.py	file	core runtime adapter
+tools/test_release_recovery_027.py	core runtime adapter	ci-invoked-tool	27	governance/releases/v0.2.7/RECOVERY-MANIFEST.json	file	EXOCHAIN core
+tools/test_release_recovery_027.py	core runtime adapter	ci-invoked-tool	28	governance/releases/v0.2.7/PUBLICATION-IDENTITIES.json	file	EXOCHAIN core
+tools/test_release_recovery_027.py	core runtime adapter	ci-invoked-tool	143	.github/workflows/release.yml	file	core runtime adapter
+tools/test_release_recovery_027.py	core runtime adapter	ci-invoked-tool	283	tools/verify_release_recovery_027.sh	file	core runtime adapter
+tools/test_release_recovery_027.py	core runtime adapter	ci-invoked-tool	290	tools/verify_release_recovery_027.sh	file	core runtime adapter
+tools/test_release_recovery_027.py	core runtime adapter	ci-invoked-tool	311	governance/releases/v0.2.7/RETAINED-CUSTODY.json	file	EXOCHAIN core
+tools/test_release_recovery_027.py	core runtime adapter	ci-invoked-tool	336	governance/releases/v0.2.7/PRESERVED-PAYLOAD-TRANSPORT.json	file	EXOCHAIN core
+tools/test_release_recovery_027.py	core runtime adapter	ci-invoked-tool	410	governance/releases/v0.2.7/PRESERVED-PAYLOAD-TRANSPORT.json	file	EXOCHAIN core
+tools/test_release_recovery_027.py	core runtime adapter	ci-invoked-tool	623	governance/releases/v0.2.7/RETAINED-METADATA-POLICY.json	file	EXOCHAIN core
+tools/test_release_recovery_npm.sh	core runtime adapter	ci-invoked-tool	21	tools/publish_release_npm_package.sh	file	core runtime adapter
+tools/test_release_recovery_npm.sh	core runtime adapter	ci-invoked-tool	238	tools/verify_release_recovery_027.py	file	core runtime adapter
+tools/test_release_recovery_npm.sh	core runtime adapter	ci-invoked-tool	239	governance/releases/v0.2.7/RECOVERY-MANIFEST.json	file	EXOCHAIN core
+tools/test_release_recovery_npm.sh	core runtime adapter	ci-invoked-tool	240	governance/releases/v0.2.7/PUBLICATION-IDENTITIES.json	file	EXOCHAIN core
+tools/test_release_recovery_npm.sh	core runtime adapter	ci-invoked-tool	587	governance/releases/v0.2.7/RECOVERY-MANIFEST.json	file	EXOCHAIN core
+tools/test_release_recovery_npm.sh	core runtime adapter	ci-invoked-tool	595	tools/verify_release_recovery_027.py	file	core runtime adapter
+tools/test_release_recovery_npm.sh	core runtime adapter	ci-invoked-tool	627	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/test_release_recovery_npm.sh	core runtime adapter	ci-invoked-tool	628	governance/releases/v0.2.7	dir	EXOCHAIN core
+tools/test_release_recovery_npm.sh	core runtime adapter	ci-invoked-tool	629	tools/verify_release_recovery_027.py	file	core runtime adapter
+tools/test_release_recovery_npm.sh	core runtime adapter	ci-invoked-tool	629	tools/verify_release_recovery_027.sh	file	core runtime adapter
+tools/test_release_recovery_npm.sh	core runtime adapter	ci-invoked-tool	630	governance/releases/v0.2.7/RECOVERY-MANIFEST.json	file	EXOCHAIN core
+tools/test_release_recovery_npm.sh	core runtime adapter	ci-invoked-tool	631	governance/releases/v0.2.7/PUBLICATION-IDENTITIES.json	file	EXOCHAIN core
+tools/test_release_recovery_python_stage.py	core runtime adapter	ci-invoked-tool	12	tools/verify_release_recovery_python_stage.py	file	core runtime adapter
+tools/test_release_recovery_workflow.py	core runtime adapter	ci-invoked-tool	77	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_release_recovery_workflow.py	core runtime adapter	ci-invoked-tool	82	tools/import_release_recovery_027.sh	file	core runtime adapter
+tools/test_release_recovery_workflow.py	core runtime adapter	ci-invoked-tool	141	.github/workflows/release.yml	file	core runtime adapter
+tools/test_release_recovery_workflow.py	core runtime adapter	ci-invoked-tool	195	tools/run_release_recovery_027.sh	file	core runtime adapter
+tools/test_release_recovery_workflow.py	core runtime adapter	ci-invoked-tool	204	tools/test_release_workflow_ref_binding.sh	file	core runtime adapter
+tools/test_release_recovery_workflow.py	core runtime adapter	ci-invoked-tool	214	tools/test_publish_sealed_crate_cargo_parity.py	file	core runtime adapter
+tools/test_release_recovery_workflow.py	core runtime adapter	ci-invoked-tool	323	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_release_recovery_workflow.py	core runtime adapter	ci-invoked-tool	325	tools/test_recover_release_python_027.sh	file	core runtime adapter
+tools/test_release_recovery_workflow.py	core runtime adapter	ci-invoked-tool	330	tools/python-release-requirements.lock	file	third-party/vendor
+tools/test_release_recovery_workflow.py	core runtime adapter	ci-invoked-tool	333	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_release_recovery_workflow.py	core runtime adapter	ci-invoked-tool	335	tools/test_import_release_recovery_027.py	file	core runtime adapter
+tools/test_release_recovery_workflow.py	core runtime adapter	ci-invoked-tool	370	scripts	bare	adjacent surface
+tools/test_release_recovery_workflow.py	core runtime adapter	ci-invoked-tool	371	scripts	bare	adjacent surface
+tools/test_release_recovery_workflow.py	core runtime adapter	ci-invoked-tool	372	scripts	bare	adjacent surface
+tools/test_release_recovery_workflow.py	core runtime adapter	ci-invoked-tool	386	tools/run_release_recovery_027.sh	file	core runtime adapter
+tools/test_release_reusable_ci_boundary.sh	core runtime adapter	ci-invoked-tool	25	.github/workflows/release.yml	file	core runtime adapter
+tools/test_release_reusable_ci_boundary.sh	core runtime adapter	ci-invoked-tool	26	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_release_reusable_ci_boundary.sh	core runtime adapter	ci-invoked-tool	31	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_release_sbom_boundary.sh	core runtime adapter	ci-invoked-tool	12	.github/workflows/release.yml	file	core runtime adapter
+tools/test_release_sbom_boundary.sh	core runtime adapter	ci-invoked-tool	13	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_release_sbom_boundary.sh	core runtime adapter	ci-invoked-tool	102	tools/test_release_sbom_fixture.py	file	core runtime adapter
+tools/test_release_sdk_python_lifecycle_boundary.sh	core runtime adapter	ci-invoked-tool	12	.github/workflows/release.yml	file	core runtime adapter
+tools/test_release_sdk_python_lifecycle_boundary.sh	core runtime adapter	ci-invoked-tool	13	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_release_sdk_python_lifecycle_boundary.sh	core runtime adapter	ci-invoked-tool	14	tools/publish_release_npm_package.sh	file	core runtime adapter
+tools/test_release_sdk_python_lifecycle_boundary.sh	core runtime adapter	ci-invoked-tool	15	tools/verify_python_release_package.py	file	core runtime adapter
+tools/test_release_sdk_python_lifecycle_boundary.sh	core runtime adapter	ci-invoked-tool	39	tools/verify_release_side_effect.sh	file	core runtime adapter
+tools/test_release_sdk_python_lifecycle_boundary.sh	core runtime adapter	ci-invoked-tool	146	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/test_release_signed_tag_trust_boundary.sh	core runtime adapter	ci-invoked-tool	25	.github/workflows/release.yml	file	core runtime adapter
+tools/test_release_signed_tag_trust_boundary.sh	core runtime adapter	ci-invoked-tool	26	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_release_signed_tag_trust_boundary.sh	core runtime adapter	ci-invoked-tool	27	tools/verify_release_tag_signer.sh	file	core runtime adapter
+tools/test_release_signed_tag_trust_boundary.sh	core runtime adapter	ci-invoked-tool	66	tools/verify_release_source.sh	file	core runtime adapter
+tools/test_release_signed_tag_trust_boundary.sh	core runtime adapter	ci-invoked-tool	74	tools/verify_release_tag_signer.sh	file	core runtime adapter
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	98	Cargo.toml	file	EXOCHAIN core
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	117	Cargo.toml	file	EXOCHAIN core
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	120	crates/exo-cgr-methods/Cargo.toml	file	EXOCHAIN core
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	121	crates/exo-cgr-methods/guest/Cargo.toml	file	EXOCHAIN core
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	122	crates/exo-cgr-prover/Cargo.toml	file	EXOCHAIN core
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	135	crates/exo-core/Cargo.toml	file	EXOCHAIN core
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	136	crates/exo-dag-db-api/Cargo.toml	file	core runtime adapter
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	142	fuzz/Cargo.toml	file	EXOCHAIN core
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	145	fuzz/Cargo.toml	file	EXOCHAIN core
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	161	Cargo.toml	file	EXOCHAIN core
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	176	crates/exo-cgr-prover/Cargo.toml	file	EXOCHAIN core
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	205	Cargo.lock	file	third-party/vendor
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	206	crates/exo-cgr-methods/guest/Cargo.lock	file	third-party/vendor
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	207	fuzz/Cargo.lock	file	third-party/vendor
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	221	packages/exochain-wasm/wasm/package.json	file	third-party/vendor
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	222	packages/exochain-wasm/wasm/package.json	file	third-party/vendor
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	224	packages/exochain-sdk/package.json	file	core runtime adapter
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	225	packages/exochain-sdk/package-lock.json	file	third-party/vendor
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	226	packages/exochain-sdk/package-lock.json	file	third-party/vendor
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	228	packages/exochain-sdk/package-lock.json	file	third-party/vendor
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	229	packages/exochain-sdk/package-lock.json	file	third-party/vendor
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	231	packages/exochain-llm-proxy/package.json	file	core runtime adapter
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	232	packages/exochain-llm-proxy/package.json	file	core runtime adapter
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	234	packages/exochain-llm-proxy/package-lock.json	file	third-party/vendor
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	235	packages/exochain-llm-proxy/package-lock.json	file	third-party/vendor
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	237	packages/exochain-llm-proxy/package-lock.json	file	third-party/vendor
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	238	packages/exochain-llm-proxy/package-lock.json	file	third-party/vendor
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	240	crates/exochain-sdk/src/lib.rs	file	core runtime adapter
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	241	crates/exochain-sdk/src/lib.rs	file	core runtime adapter
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	245	packages/exochain-sdk/src/index.ts	file	core runtime adapter
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	246	packages/exochain-sdk/src/index.ts	file	core runtime adapter
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	250	packages/exochain-py/exochain/__init__.py	file	core runtime adapter
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	251	packages/exochain-py/exochain/__init__.py	file	core runtime adapter
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	255	packages/exochain-sdk/dist/index.js	file	third-party/vendor
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	256	packages/exochain-sdk/dist/index.js	file	third-party/vendor
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	260	packages/exochain-sdk/dist/index.d.ts	file	third-party/vendor
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	261	packages/exochain-sdk/dist/index.d.ts	file	third-party/vendor
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	265	crates/exochain-sdk/src/lib.rs	file	core runtime adapter
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	266	crates/exochain-sdk/src/lib.rs	file	core runtime adapter
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	270	packages/exochain-sdk/test/index.test.ts	file	core runtime adapter
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	271	packages/exochain-sdk/test/index.test.ts	file	core runtime adapter
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	275	packages/exochain-sdk/dist-test/src/index.js	file	third-party/vendor
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	276	packages/exochain-sdk/dist-test/src/index.js	file	third-party/vendor
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	280	packages/exochain-sdk/dist-test/test/index.test.js	file	third-party/vendor
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	281	packages/exochain-sdk/dist-test/test/index.test.js	file	third-party/vendor
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	285	packages/exochain-py/tests/test_crypto.py	file	core runtime adapter
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	286	packages/exochain-py/tests/test_crypto.py	file	core runtime adapter
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	297	packages/exochain-py/pyproject.toml	file	core runtime adapter
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	298	packages/exochain-py/pyproject.toml	file	core runtime adapter
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	300	packages/exochain-py/exochain/__init__.py	file	core runtime adapter
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	301	packages/exochain-py/exochain/__init__.py	file	core runtime adapter
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	305	packages/exochain-py/exochain/transport/http.py	file	core runtime adapter
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	306	packages/exochain-py/exochain/transport/http.py	file	core runtime adapter
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	317	CHANGELOG.md	file	EXOCHAIN core
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	318	governance/releases/v0.2.6/RC.md	file	EXOCHAIN core
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	319	packages/README.md	file	core runtime adapter
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	320	packages/exochain-sdk/README.md	file	core runtime adapter
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	321	docs/guides/sdk-quickstart-python.md	file	core runtime adapter
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	322	docs/guides/sdk-quickstart-typescript.md	file	core runtime adapter
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	398	EXOCHAIN-FABRIC-PLATFORM.md	file	EXOCHAIN core
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	431	docs/superpowers/plans/2026-08-28-release-0.2.6-security-remediation.md	file	EXOCHAIN core
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	445	docker-compose.ci.yml	file	core runtime adapter
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	449	governance/releases/v0.2.6/TEST-PLAN.md	file	EXOCHAIN core
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	455	governance/releases/v0.2.6/RC.md	file	EXOCHAIN core
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	519	CHANGELOG.md	file	EXOCHAIN core
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	520	docs/guides/sdk-quickstart-python.md	file	core runtime adapter
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	521	docs/guides/sdk-quickstart-typescript.md	file	core runtime adapter
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	522	governance/releases/v0.2.6/RC.md	file	EXOCHAIN core
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	523	packages/README.md	file	core runtime adapter
+tools/test_release_version_alignment.sh	core runtime adapter	ci-invoked-tool	524	packages/exochain-sdk/README.md	file	core runtime adapter
+tools/test_release_version_input_boundary.sh	core runtime adapter	ci-invoked-tool	25	.github/workflows/release.yml	file	core runtime adapter
+tools/test_release_version_input_boundary.sh	core runtime adapter	ci-invoked-tool	26	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_release_version_input_boundary.sh	core runtime adapter	ci-invoked-tool	75	tools/verify_release_source.sh	file	core runtime adapter
+tools/test_release_version_input_boundary.sh	core runtime adapter	ci-invoked-tool	77	tools/test_release_version_alignment.sh	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	25	.github/workflows/release.yml	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	26	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	27	tools/verify_release_source.sh	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	28	tools/verify_release_tag.sh	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	29	tools/verify_release_side_effect.sh	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	30	tools/resolve_release_tool_path.sh	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	31	tools/verify_npm_release_package.mjs	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	32	tools/verify_npm_registry_attestation.mjs	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	33	tools/verify_python_release_package.py	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	34	tools/python-release-requirements.lock	file	third-party/vendor
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	35	tools/verify_release_cargo_config.sh	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	36	tools/preflight_release_crates.sh	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	37	tools/publish_release_crates.sh	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	38	tools/publish_sealed_crate.py	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	39	tools/verify_npm_release_tarball.py	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	40	tools/capture_release_helper.sh	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	79	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	80	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	82	tools/verify_release_source.sh	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	84	tools/verify_release_tag.sh	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	89	tools/verify_release_tag_signer.sh	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	126	tools/publish_release_npm_package.sh	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	127	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	127	tools/publish_release_npm_package.sh	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	129	tools/verify_python_release_package.py	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	131	tools/python-release-requirements.lock	file	third-party/vendor
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	144	.gitignore	file	EXOCHAIN core
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	422	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	518	.gitignore	file	EXOCHAIN core
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	522	.gitignore	file	EXOCHAIN core
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	614	tools/verify_release_side_effect.sh	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	642	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	648	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	760	.cargo/config.toml	file	EXOCHAIN core
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	874	LICENSE	file	EXOCHAIN core
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	876	LICENSE	file	EXOCHAIN core
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	894	LICENSE	file	EXOCHAIN core
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	900	LICENSE	file	EXOCHAIN core
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	900	scripts	bare	adjacent surface
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	903	scripts	bare	adjacent surface
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	906	LICENSE	file	EXOCHAIN core
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	912	LICENSE	file	EXOCHAIN core
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	912	scripts	bare	adjacent surface
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	915	scripts	bare	adjacent surface
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	918	LICENSE	file	EXOCHAIN core
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	960	tools/verify_release_side_effect.sh	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	1000	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	1039	tools/verify_release_tag.sh	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	1057	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	1198	tools/verify_release_source.sh	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	1213	tools/verify_release_tag.sh	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	1217	tools/verify_release_source.sh	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	1221	tools/verify_release_tag.sh	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	1262	tools/verify_release_side_effect.sh	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	1321	tools/import_release_recovery_027.sh	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	1576	tools/resolve_release_tool_path.sh	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	1578	tools/resolve_release_tool_path.sh	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	1582	tools/resolve_release_tool_path.sh	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	1624	tools/run_release_recovery_027.sh	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	1646	tools/transport_release_build_output.py	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	1652	tools/transport_release_build_output.py	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	1658	tools/transport_wasm_release_output.py	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	1664	tools/transport_wasm_release_output.py	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	1667	packages/exochain-wasm/wasm/package.json	file	third-party/vendor
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	1669	packages/exochain-wasm/wasm/LICENSE	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	1675	tools/transport_release_file_set.py	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	1681	tools/stage_llm_release_package.sh	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	1696	tools/publish_release_crates.sh	file	core runtime adapter
+tools/test_release_workflow_ref_binding.sh	core runtime adapter	ci-invoked-tool	1698	tools/publish_release_npm_package.sh	file	core runtime adapter
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	56	tools/test_published_release_claim.py	file	core runtime adapter
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	57	tools/check_published_release_claim.py	file	core runtime adapter
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	59	tools/repo_truth.sh	file	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	61	tools/repo_truth.sh	file	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	64	docs/superpowers	dir	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	107	tools/repo_truth.sh	file	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	109	tools/repo_truth.sh	file	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	114	tools/repo_truth.sh	file	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	131	tools/repo_truth.sh	file	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	133	tools/repo_truth.sh	file	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	159	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	163	Cargo.toml	file	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	180	LICENSE	file	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	181	LICENSE	file	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	182	LICENSE	file	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	183	LICENSE	file	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	186	packages/exochain-sdk/package.json	file	core runtime adapter
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	187	packages/exochain-llm-proxy/package.json	file	core runtime adapter
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	188	packages/exochain-wasm/wasm/package.json	file	third-party/vendor
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	189	demo/packages/exochain-wasm/package.json	file	adjacent surface
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	190	packages/exochain-sdk	dir	core runtime adapter;third-party/vendor
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	191	packages/exochain-llm-proxy	dir	core runtime adapter;third-party/vendor
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	193	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	195	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	199	Cargo.toml	file	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	201	Cargo.toml	file	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	217	README.md	file	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	218	README.md	file	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	224	README.md	file	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	226	README.md	file	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	228	README.md	file	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	230	README.md	file	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	232	README.md	file	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	234	README.md	file	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	236	README.md	file	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	238	README.md	file	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	241	governance/quality_gates.md	file	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	241	README.md	file	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	245	crates/exo-gateway/src/rest.rs	file	core runtime adapter
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	249	README.md	file	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	251	README.md	file	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	259	README.md	file	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	261	README.md	file	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	275	README.md	file	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	278	README.md	file	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	282	README.md	file	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	286	README.md	file	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	289	README.md	file	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	292	README.md	file	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	295	README.md	file	EXOCHAIN core
+tools/test_repo_truth.sh	EXOCHAIN core	ci-invoked-tool	299	README.md	file	EXOCHAIN core
+tools/test_retire_crates_023.py	core runtime adapter	ci-invoked-tool	22	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/test_retirement_workflow.py	core runtime adapter	ci-invoked-tool	27	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_retirement_workflow.py	core runtime adapter	ci-invoked-tool	52	tools/run_retirement_023.sh	file	core runtime adapter
+tools/test_retirement_workflow.py	core runtime adapter	ci-invoked-tool	73	.github/workflows/retire-0.2.3.yml	file	core runtime adapter
+tools/test_retirement_workflow.py	core runtime adapter	ci-invoked-tool	158	tools/run_retirement_023.sh	file	core runtime adapter
+tools/test_retirement_workflow.py	core runtime adapter	ci-invoked-tool	190	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/test_retirement_workflow.py	core runtime adapter	ci-invoked-tool	191	tools/verify_release_source.sh	file	core runtime adapter
+tools/test_retirement_workflow.py	core runtime adapter	ci-invoked-tool	218	tools/verify_release_source.sh	file	core runtime adapter
+tools/test_security_critical_dependencies_pinned.sh	EXOCHAIN core	ci-invoked-tool	22	Cargo.toml	file	EXOCHAIN core
+tools/test_security_critical_dependencies_pinned.sh	EXOCHAIN core	ci-invoked-tool	31	Cargo.toml	file	EXOCHAIN core
+tools/test_security_critical_dependencies_pinned.sh	EXOCHAIN core	ci-invoked-tool	34	deny.toml	file	EXOCHAIN core
+tools/test_security_critical_dependencies_pinned.sh	EXOCHAIN core	ci-invoked-tool	74	Cargo.toml	file	EXOCHAIN core
+tools/test_security_critical_dependencies_pinned.sh	EXOCHAIN core	ci-invoked-tool	75	fuzz/Cargo.toml	file	EXOCHAIN core
+tools/test_security_critical_dependencies_pinned.sh	EXOCHAIN core	ci-invoked-tool	237	Cargo.lock	file	third-party/vendor
+tools/test_security_critical_dependencies_pinned.sh	EXOCHAIN core	ci-invoked-tool	238	fuzz/Cargo.lock	file	third-party/vendor
+tools/test_security_critical_dependencies_pinned.sh	EXOCHAIN core	ci-invoked-tool	239	livesafe/Cargo.lock	file	third-party/vendor
+tools/test_security_critical_dependencies_pinned.sh	EXOCHAIN core	ci-invoked-tool	240	crates/exo-cgr-methods/guest/Cargo.lock	file	third-party/vendor
+tools/test_security_critical_dependencies_pinned.sh	EXOCHAIN core	ci-invoked-tool	287	Cargo.lock	file	third-party/vendor
+tools/test_stage_llm_release_package.sh	core runtime adapter	ci-invoked-tool	94	packages/exochain-llm-proxy/README.md	file	core runtime adapter
+tools/test_sybil_cli_secret_boundaries.sh	EXOCHAIN core	ci-invoked-tool	25	tools/sybil-cli/graph_schema.py	file	adjacent surface
+tools/test_sybil_cli_secret_boundaries.sh	EXOCHAIN core	ci-invoked-tool	60	tools/sybil-cli/graph_schema.py	file	adjacent surface
+tools/test_sybil_cli_secret_boundaries.sh	EXOCHAIN core	ci-invoked-tool	87	tools/sybil-cli/graph_schema.py	file	adjacent surface
+tools/test_syntaxis_workflow_input_boundary.sh	EXOCHAIN core	ci-invoked-tool	20	tools/syntaxis/test_generate_workflow_input_boundary.py	file	EXOCHAIN core
+tools/test_tenant_dependency_direction.sh	EXOCHAIN core	ci-invoked-tool	46	crates/exo-tenant/Cargo.toml	file	EXOCHAIN core
+tools/test_transport_release_build_output.sh	core runtime adapter	ci-invoked-tool	104	README.md	file	EXOCHAIN core
+tools/test_transport_wasm_release_output.sh	core runtime adapter	ci-invoked-tool	93	.gitignore	file	EXOCHAIN core
+tools/test_transport_wasm_release_output.sh	core runtime adapter	ci-invoked-tool	136	.gitignore	file	EXOCHAIN core
+tools/test_transport_wasm_release_output.sh	core runtime adapter	ci-invoked-tool	261	.gitignore	file	EXOCHAIN core
+tools/test_transport_wasm_release_output.sh	core runtime adapter	ci-invoked-tool	343	.gitignore	file	EXOCHAIN core
+tools/test_transport_wasm_release_output.sh	core runtime adapter	ci-invoked-tool	344	.gitignore	file	EXOCHAIN core
+tools/test_transport_wasm_release_output.sh	core runtime adapter	ci-invoked-tool	345	.gitignore	file	EXOCHAIN core
+tools/test_transport_wasm_release_output.sh	core runtime adapter	ci-invoked-tool	347	.gitignore	file	EXOCHAIN core
+tools/test_verify_crate_release_archive.py	core runtime adapter	ci-invoked-tool	24	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/test_verify_npm_registry_attestation.sh	core runtime adapter	ci-invoked-tool	29	tools/publish_release_npm_package.sh	file	core runtime adapter
+tools/test_verify_npm_registry_attestation.sh	core runtime adapter	ci-invoked-tool	41	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/test_verify_npm_registry_attestation.sh	core runtime adapter	ci-invoked-tool	137	.github/workflows/release.yml	file	core runtime adapter
+tools/test_verify_python_release_package.sh	core runtime adapter	ci-invoked-tool	85	.gitignore	file	EXOCHAIN core
+tools/test_verify_python_release_package.sh	core runtime adapter	ci-invoked-tool	86	README.md	file	EXOCHAIN core
+tools/test_verify_release_sbom.sh	core runtime adapter	ci-invoked-tool	33	Cargo.toml	file	EXOCHAIN core
+tools/test_verify_release_sbom.sh	core runtime adapter	ci-invoked-tool	33	Cargo.lock	file	third-party/vendor
+tools/test_verify_release_sbom.sh	core runtime adapter	ci-invoked-tool	96	Cargo.lock	file	third-party/vendor
+tools/test_verify_release_sbom.sh	core runtime adapter	ci-invoked-tool	178	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/test_verify_sdk_npm_release_package.sh	core runtime adapter	ci-invoked-tool	45	LICENSE	file	EXOCHAIN core
+tools/test_verify_sdk_npm_release_package.sh	core runtime adapter	ci-invoked-tool	45	README.md	file	EXOCHAIN core
+tools/test_verify_sdk_npm_release_package.sh	core runtime adapter	ci-invoked-tool	46	scripts	bare	adjacent surface
+tools/test_verify_sdk_npm_release_package.sh	core runtime adapter	ci-invoked-tool	49	LICENSE	file	EXOCHAIN core
+tools/test_verify_sdk_npm_release_package.sh	core runtime adapter	ci-invoked-tool	50	README.md	file	EXOCHAIN core
+tools/test_wasm_npm_package_boundary.sh	core runtime adapter	ci-invoked-tool	25	.github/workflows/ci.yml	file	core runtime adapter
+tools/test_wasm_npm_package_boundary.sh	core runtime adapter	ci-invoked-tool	26	.github/workflows/release.yml	file	core runtime adapter
+tools/test_wasm_npm_package_boundary.sh	core runtime adapter	ci-invoked-tool	27	packages/exochain-wasm/wasm/package.json	file	third-party/vendor
+tools/test_wasm_npm_package_boundary.sh	core runtime adapter	ci-invoked-tool	28	packages/exochain-wasm/wasm/LICENSE	file	core runtime adapter
+tools/test_wasm_npm_package_boundary.sh	core runtime adapter	ci-invoked-tool	29	tools/prepare_wasm_npm_package.mjs	file	core runtime adapter
+tools/test_wasm_npm_package_boundary.sh	core runtime adapter	ci-invoked-tool	30	tools/publish_release_npm_package.sh	file	core runtime adapter
+tools/test_wasm_npm_package_boundary.sh	core runtime adapter	ci-invoked-tool	31	tools/transport_wasm_release_output.py	file	core runtime adapter
+tools/test_wasm_npm_package_boundary.sh	core runtime adapter	ci-invoked-tool	38	crates/exochain-wasm	dir	core runtime adapter
+tools/test_wasm_npm_package_boundary.sh	core runtime adapter	ci-invoked-tool	40	tools/prepare_wasm_npm_package.mjs	file	core runtime adapter
+tools/test_wasm_npm_package_boundary.sh	core runtime adapter	ci-invoked-tool	40	packages/exochain-wasm/wasm	dir	core runtime adapter;third-party/vendor
+tools/test_wasm_npm_package_boundary.sh	core runtime adapter	ci-invoked-tool	74	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/test_wasm_npm_package_boundary.sh	core runtime adapter	ci-invoked-tool	246	tools/transport_release_file_set.py	file	core runtime adapter
+tools/test_wasm_npm_package_boundary.sh	core runtime adapter	ci-invoked-tool	274	packages/exochain-wasm/wasm/package.json	file	third-party/vendor
+tools/test_wasm_npm_package_boundary.sh	core runtime adapter	ci-invoked-tool	275	tools/verify_npm_release_package.mjs	file	core runtime adapter
+tools/test_wasm_npm_package_boundary.sh	core runtime adapter	ci-invoked-tool	276	tools/verify_npm_release_tarball.py	file	core runtime adapter
+tools/test_wasm_npm_package_boundary.sh	core runtime adapter	ci-invoked-tool	293	tools/publish_release_npm_package.sh	file	core runtime adapter
+tools/test_wasm_npm_package_boundary.sh	core runtime adapter	ci-invoked-tool	314	LICENSE	file	EXOCHAIN core
+tools/transport_release_file_set.py	core runtime adapter	ci-invoked-tool	18	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/transport_wasm_release_output.py	core runtime adapter	ci-invoked-tool	34	.gitignore	file	EXOCHAIN core
+tools/transport_wasm_release_output.py	core runtime adapter	ci-invoked-tool	42	.gitignore	file	EXOCHAIN core
+tools/verify_npm_release_package.mjs	core runtime adapter	ci-invoked-tool	260	LICENSE	file	EXOCHAIN core
+tools/verify_npm_release_package.mjs	core runtime adapter	ci-invoked-tool	271	LICENSE	file	EXOCHAIN core
+tools/verify_npm_release_package.mjs	core runtime adapter	ci-invoked-tool	271	README.md	file	EXOCHAIN core
+tools/verify_npm_release_package.mjs	core runtime adapter	ci-invoked-tool	271	AGENTS.md	file	EXOCHAIN core
+tools/verify_npm_release_package.mjs	core runtime adapter	ci-invoked-tool	285	LICENSE	file	EXOCHAIN core
+tools/verify_npm_release_package.mjs	core runtime adapter	ci-invoked-tool	285	README.md	file	EXOCHAIN core
+tools/verify_npm_release_package.mjs	core runtime adapter	ci-invoked-tool	335	scripts	bare	adjacent surface
+tools/verify_npm_release_package.mjs	core runtime adapter	ci-invoked-tool	336	scripts	bare	adjacent surface
+tools/verify_npm_release_package.mjs	core runtime adapter	ci-invoked-tool	337	scripts	bare	adjacent surface
+tools/verify_npm_release_package.mjs	core runtime adapter	ci-invoked-tool	339	scripts	bare	adjacent surface
+tools/verify_npm_release_package.mjs	core runtime adapter	ci-invoked-tool	341	scripts	bare	adjacent surface
+tools/verify_npm_release_package.mjs	core runtime adapter	ci-invoked-tool	365	.gitignore	file	EXOCHAIN core
+tools/verify_npm_release_tarball.py	core runtime adapter	ci-invoked-tool	122	gap	bare	adjacent surface
+tools/verify_python_release_package.py	core runtime adapter	ci-invoked-tool	55	.gitignore	file	EXOCHAIN core
+tools/verify_python_release_package.py	core runtime adapter	ci-invoked-tool	56	README.md	file	EXOCHAIN core
+tools/verify_release_sbom.py	core runtime adapter	ci-invoked-tool	27	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/verify_release_sbom.py	core runtime adapter	ci-invoked-tool	432	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/verify_release_sbom.py	core runtime adapter	ci-invoked-tool	524	tools	bare	EXOCHAIN core;adjacent surface;core runtime adapter;third-party/vendor
+tools/verify_release_sbom.py	core runtime adapter	ci-invoked-tool	571	Cargo.lock	file	third-party/vendor
+tools/verify_release_sbom.py	core runtime adapter	ci-invoked-tool	573	Cargo.lock	file	third-party/vendor
+tools/verify_release_sbom.py	core runtime adapter	ci-invoked-tool	577	Cargo.lock	file	third-party/vendor
+tools/verify_release_sbom.py	core runtime adapter	ci-invoked-tool	579	Cargo.lock	file	third-party/vendor
+tools/verify_release_sbom.py	core runtime adapter	ci-invoked-tool	581	Cargo.lock	file	third-party/vendor
+tools/verify_release_sbom.py	core runtime adapter	ci-invoked-tool	582	Cargo.lock	file	third-party/vendor
+tools/verify_release_sbom.py	core runtime adapter	ci-invoked-tool	585	Cargo.lock	file	third-party/vendor
+tools/verify_release_sbom.py	core runtime adapter	ci-invoked-tool	587	Cargo.lock	file	third-party/vendor
+tools/verify_release_sbom.py	core runtime adapter	ci-invoked-tool	588	Cargo.lock	file	third-party/vendor
+tools/verify_release_sbom.py	core runtime adapter	ci-invoked-tool	591	Cargo.lock	file	third-party/vendor
+tools/verify_release_sbom.py	core runtime adapter	ci-invoked-tool	594	Cargo.lock	file	third-party/vendor
+tools/verify_release_sbom.py	core runtime adapter	ci-invoked-tool	709	Cargo.lock	file	third-party/vendor
+tools/verify_release_sbom.py	core runtime adapter	ci-invoked-tool	719	Cargo.lock	file	third-party/vendor
+tools/verify_release_side_effect.sh	core runtime adapter	ci-invoked-tool	76	tools/verify_release_source.sh	file	core runtime adapter
+tools/verify_release_side_effect.sh	core runtime adapter	ci-invoked-tool	78	tools/verify_release_tag.sh	file	core runtime adapter
+tools/verify_release_source.sh	core runtime adapter	ci-invoked-tool	257	.gitignore	file	EXOCHAIN core
+tools/write_ci_candidate.py	EXOCHAIN core	ci-invoked-tool	33	.github/workflows	dir	EXOCHAIN core;adjacent surface;core runtime adapter
+tools/write_ci_candidate.py	EXOCHAIN core	ci-invoked-tool	67	Cargo.toml	file	EXOCHAIN core

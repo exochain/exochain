@@ -1,0 +1,46 @@
+source	source_class	line	literal	how	target	match	target_classes	in_test
+crates/exo-api/tests/openapi_sync.rs	core runtime adapter	43	../../../docs/dagdb/api/openapi.json	rel-file	docs/dagdb/api/openapi.json	file	core runtime adapter	yes
+crates/exo-api/tests/openapi_sync.rs	core runtime adapter	45	../../exo-dag-db-api/fixtures/json/all_dto_fixtures.json	rel-file	crates/exo-dag-db-api/fixtures/json/all_dto_fixtures.json	file	core runtime adapter	yes
+crates/exo-avc/tests/livesafe_public_output_ceremony_tests.rs	EXOCHAIN core	498	../../../docs/avc/livesafe-public-output-ceremony.md	rel-file	docs/avc/livesafe-public-output-ceremony.md	file	EXOCHAIN core	yes
+crates/exo-dag-db-domain/tests/continuation_packet_contract.rs	core runtime adapter	9	../../../docs/dagdb/catalog-governed-memory/self-development/continuation-packets.dag_db-project_memory_v3.json	rel-file	docs/dagdb/catalog-governed-memory/self-development/continuation-packets.dag_db-project_memory_v3.json	file	core runtime adapter	yes
+crates/exo-dag-db-exchange/tests/m46_unified_memory_contract.rs	core runtime adapter	35	../../../docs/dagdb/catalog-governed-memory/self-development/unified-memory-contract.md	rel-file	docs/dagdb/catalog-governed-memory/self-development/unified-memory-contract.md	file	core runtime adapter	yes
+crates/exo-gateway/src/bin/dagdb_writeback_sign.rs	core runtime adapter	305	../../../exo-dag-db-api/fixtures/json/all_dto_fixtures.json	rel-file	crates/exo-dag-db-api/fixtures/json/all_dto_fixtures.json	file	core runtime adapter	yes
+crates/exo-gateway/src/dagdb.rs	core runtime adapter	9368	../../docs/dagdb/full-migration/quality-matrix.md	rel-crate	docs/dagdb/full-migration/quality-matrix.md	file	core runtime adapter	yes
+crates/exo-gateway/src/dagdb.rs	core runtime adapter	9413	command-base/worker/package.json	root	command-base/worker/package.json	file	adjacent surface	yes
+crates/exo-gateway/src/dagdb.rs	core runtime adapter	9431	command-base/worker/index.js	root	command-base/worker/index.js	file	adjacent surface	yes
+crates/exo-gateway/src/dagdb.rs	core runtime adapter	9448	command-base/worker/worker-db.js	root	command-base/worker/worker-db.js	file	adjacent surface	yes
+crates/exo-gateway/src/dagdb.rs	core runtime adapter	9455	command-base/app/package.json	root	command-base/app/package.json	file	adjacent surface	yes
+crates/exo-gateway/src/dagdb.rs	core runtime adapter	9465	site/src/lib/contact-submissions.ts	root	site/src/lib/contact-submissions.ts	file	adjacent surface	yes
+crates/exo-gateway/src/dagdb.rs	core runtime adapter	9498	web/src/lib/dagdbDurableState.test.ts	root	web/src/lib/dagdbDurableState.test.ts	file	adjacent surface	yes
+crates/exo-gateway/src/dagdb.rs	core runtime adapter	9517	command-base/app/package.json	root	command-base/app/package.json	file	adjacent surface	yes
+crates/exo-gateway/src/dagdb.rs	core runtime adapter	9521	command-base/worker/package.json	root	command-base/worker/package.json	file	adjacent surface	yes
+crates/exo-gateway/src/dagdb.rs	core runtime adapter	9525	web/package.json	root	web/package.json	file	adjacent surface	yes
+crates/exo-gateway/src/dagdb.rs	core runtime adapter	9528	cybermedica/package.json	root	cybermedica/package.json	file	adjacent surface	yes
+crates/exo-gateway/src/dagdb.rs	core runtime adapter	9544	demo/package.json	root	demo/package.json	file	adjacent surface	yes
+crates/exo-gateway/src/dagdb.rs	core runtime adapter	9557	command-base/app/package.json	root	command-base/app/package.json	file	adjacent surface	yes
+crates/exo-gateway/src/dagdb.rs	core runtime adapter	9569	command-base/worker/package.json	root	command-base/worker/package.json	file	adjacent surface	yes
+crates/exo-gateway/src/dagdb.rs	core runtime adapter	9580	web/package.json	root	web/package.json	file	adjacent surface	yes
+crates/exo-gateway/src/dagdb.rs	core runtime adapter	9592	docs/dagdb/full-migration/live-proof.md	root	docs/dagdb/full-migration/live-proof.md	file	core runtime adapter	yes
+crates/exo-gateway/src/dagdb.rs	core runtime adapter	11667	../../exo-dag-db-api/fixtures/json/all_dto_fixtures.json	rel-file	crates/exo-dag-db-api/fixtures/json/all_dto_fixtures.json	file	core runtime adapter	yes
+crates/exo-gateway/src/db.rs	core runtime adapter	2667	../../exo-dag-db-postgres/migrations/20260623000005_create_gateway_legacy_table_contracts.sql	rel-file	crates/exo-dag-db-postgres/migrations/20260623000005_create_gateway_legacy_table_contracts.sql	file	core runtime adapter	yes
+crates/exo-gateway/src/server.rs	core runtime adapter	5143	crates/exochain-sdk	root	crates/exochain-sdk	dir	core runtime adapter	yes
+crates/exo-gateway/src/server.rs	core runtime adapter	5144	packages/exochain-sdk	root	packages/exochain-sdk	dir	core runtime adapter;third-party/vendor	yes
+crates/exo-gateway/src/server.rs	core runtime adapter	5145	packages/exochain-py	root	packages/exochain-py	dir	core runtime adapter	yes
+crates/exo-gateway/src/server.rs	core runtime adapter	5199	../../exo-node/src/dashboard.rs	rel-file	crates/exo-node/src/dashboard.rs	file	core runtime adapter	yes
+crates/exo-gateway/src/server.rs	core runtime adapter	5211	../../exo-node/src/public_status.css	rel-file	crates/exo-node/src/public_status.css	file	core runtime adapter	yes
+crates/exo-gateway/src/server.rs	core runtime adapter	5212	../../exo-node/src/public_status.js	rel-file	crates/exo-node/src/public_status.js	file	core runtime adapter	yes
+crates/exo-gateway/tests/dagdb_cross_tenant.rs	core runtime adapter	611	../../exo-dag-db-api/fixtures/json/all_dto_fixtures.json	rel-file	crates/exo-dag-db-api/fixtures/json/all_dto_fixtures.json	file	core runtime adapter	yes
+crates/exo-gateway/tests/dagdb_route_integration_contract.rs	core runtime adapter	78	../../exo-dag-db-postgres/migrations/20260620000001_add_dagdb_operational_receipt_event_types.sql	rel-file	crates/exo-dag-db-postgres/migrations/20260620000001_add_dagdb_operational_receipt_event_types.sql	file	core runtime adapter	yes
+crates/exo-gateway/tests/dagdb_route_integration_contract.rs	core runtime adapter	4302	../../exo-dag-db-api/fixtures/json/all_dto_fixtures.json	rel-file	crates/exo-dag-db-api/fixtures/json/all_dto_fixtures.json	file	core runtime adapter	yes
+crates/exo-gateway/tests/spline_amber_hygiene.rs	core runtime adapter	44	crates/exo-api/src	root	crates/exo-api/src	dir	core runtime adapter	yes
+crates/exo-gateway/tests/spline_amber_hygiene.rs	core runtime adapter	46	crates/exo-messaging/src	root	crates/exo-messaging/src	dir	EXOCHAIN core	yes
+crates/exo-node/src/avc.rs	core runtime adapter	14540	artifacts/trust/avc-exo-ceremony-2026/root-trust-bundle.canonical.json	root	artifacts/trust/avc-exo-ceremony-2026/root-trust-bundle.canonical.json	file	core runtime adapter	yes
+crates/exo-node/src/mcp/tools/dagdb.rs	core runtime adapter	2607	docs/dagdb/crate-restructure	root	docs/dagdb/crate-restructure	dir	core runtime adapter	yes
+crates/exo-node/src/mcp/tools/proofs.rs	core runtime adapter	37	Initiatives/fix-mcp-cgr-proof-verification-stub.md	root	Initiatives/fix-mcp-cgr-proof-verification-stub.md	file	EXOCHAIN core	no
+crates/exo-node/src/public_status.rs	core runtime adapter	270	../../governance/releases/published-release-snapshot.json	rel-crate	governance/releases/published-release-snapshot.json	file	EXOCHAIN core	yes
+crates/exo-node/tests/crosschecked_anchor_authority_admin.rs	core runtime adapter	1518	../../../tools/cross-impl-test/fixtures/crosschecked_anchor_authority_governance_v1.json	rel-file	tools/cross-impl-test/fixtures/crosschecked_anchor_authority_governance_v1.json	file	EXOCHAIN core	yes
+crates/exochain-sdk/src/dagdb.rs	core runtime adapter	1671	../../exo-dag-db-api/fixtures/json/all_dto_fixtures.json	rel-file	crates/exo-dag-db-api/fixtures/json/all_dto_fixtures.json	file	core runtime adapter	yes
+crates/exochain-sdk/src/dagdb.rs	core runtime adapter	1705	../../exo-dag-db-api/fixtures/json/all_dto_fixtures.json	rel-file	crates/exo-dag-db-api/fixtures/json/all_dto_fixtures.json	file	core runtime adapter	yes
+crates/exochain-sdk/src/dagdb.rs	core runtime adapter	1724	../../exo-dag-db-api/fixtures/json/all_dto_fixtures.json	rel-file	crates/exo-dag-db-api/fixtures/json/all_dto_fixtures.json	file	core runtime adapter	yes
+crates/exochain-sdk/src/dagdb.rs	core runtime adapter	2204	../../exo-dag-db-api/fixtures/json/all_dto_fixtures.json	rel-file	crates/exo-dag-db-api/fixtures/json/all_dto_fixtures.json	file	core runtime adapter	yes
+crates/exochain-sdk/src/identity.rs	core runtime adapter	459	../../../tests/fixtures/did-derivation.json	rel-file	tests/fixtures/did-derivation.json	file	EXOCHAIN core	yes

@@ -1,0 +1,163 @@
+ci_line	tree	exit_code	stub_calls	command
+140	full	1	0	bash tools/test_verify_python_release_package.sh
+140	core	1	0	bash tools/test_verify_python_release_package.sh
+142	full	1	0	bash tools/test_recover_release_python_027.sh
+142	core	1	0	bash tools/test_recover_release_python_027.sh
+191	full	0	0	bash tools/test_coverage_policy.sh
+191	core	0	0	bash tools/test_coverage_policy.sh
+226	full	97	1	bash tools/test_coverage_policy.sh --check-engine
+226	core	97	1	bash tools/test_coverage_policy.sh --check-engine
+301	full	1	1	bash tools/test_audit_ignore_policy.sh
+301	core	1	1	bash tools/test_audit_ignore_policy.sh
+329	full	0	0	bash tools/test_security_critical_dependencies_pinned.sh
+329	core	1	0	bash tools/test_security_critical_dependencies_pinned.sh
+405	full	1	0	bash tools/test_proprietary_license_boundaries.sh
+405	core	1	0	bash tools/test_proprietary_license_boundaries.sh
+407	full	0	0	bash tools/test_demo_adjacent_boundaries.sh
+407	core	1	0	bash tools/test_demo_adjacent_boundaries.sh
+409	full	0	0	bash tools/test_livesafe_demo_security.sh
+409	core	1	0	bash tools/test_livesafe_demo_security.sh
+411	full	0	0	bash tools/test_commandbase_release_hardening.sh
+411	core	1	0	bash tools/test_commandbase_release_hardening.sh
+416	full	0	0	bash tools/test_gap_stub_ci_guard.sh
+416	core	0	0	bash tools/test_gap_stub_ci_guard.sh
+418	full	1	0	bash tools/test_github_actions_pinned.sh
+418	core	1	0	bash tools/test_github_actions_pinned.sh
+420	full	0	0	bash tools/test_python_sdk_ci_boundary.sh
+420	core	0	0	bash tools/test_python_sdk_ci_boundary.sh
+422	full	0	0	bash tools/test_github_issue_workflow_boundaries.sh
+422	core	1	0	bash tools/test_github_issue_workflow_boundaries.sh
+424	full	1	0	bash tools/test_ci_supply_chain_hardening.sh
+424	core	1	0	bash tools/test_ci_supply_chain_hardening.sh
+426	full	0	0	bash tools/test_beta_codeowners.sh
+426	core	0	0	bash tools/test_beta_codeowners.sh
+428	full	0	0	bash tools/test_cross_platform_target_cache_boundary.sh
+428	core	0	0	bash tools/test_cross_platform_target_cache_boundary.sh
+430	full	97	1	bash tools/test_npm_core_package_hygiene.sh
+430	core	97	1	bash tools/test_npm_core_package_hygiene.sh
+432	full	127	0	bash tools/test_release_workflow_ref_binding.sh
+432	core	127	0	bash tools/test_release_workflow_ref_binding.sh
+434	full	0	0	bash tools/test_release_version_input_boundary.sh
+434	core	0	0	bash tools/test_release_version_input_boundary.sh
+444	full	1	0	python3 -B tools/test_release_recovery_027.py
+444	core	1	0	python3 -B tools/test_release_recovery_027.py
+445	full	1	0	python3 -B tools/test_release_recovery_workflow.py
+445	core	1	0	python3 -B tools/test_release_recovery_workflow.py
+446	full	1	0	python3 -B tools/test_release_recovery_python_stage.py
+446	core	1	0	python3 -B tools/test_release_recovery_python_stage.py
+447	full	1	0	python3 -B tools/test_recover_github_release_027.py
+447	core	1	0	python3 -B tools/test_recover_github_release_027.py
+448	full	1	0	python3 -B tools/test_import_release_recovery_027.py
+448	core	1	0	python3 -B tools/test_import_release_recovery_027.py
+449	full	1	0	bash tools/test_release_recovery_npm.sh
+449	core	1	0	bash tools/test_release_recovery_npm.sh
+451	full	1	0	bash tools/test_release_signed_tag_trust_boundary.sh
+451	core	1	0	bash tools/test_release_signed_tag_trust_boundary.sh
+453	full	0	0	bash tools/test_release_reusable_ci_boundary.sh
+453	core	0	0	bash tools/test_release_reusable_ci_boundary.sh
+455	full	1	0	python3 -B tools/test_continuous_release.py
+455	core	1	0	python3 -B tools/test_continuous_release.py
+457	full	1	0	bash tools/test_release_sbom_boundary.sh
+457	core	1	0	bash tools/test_release_sbom_boundary.sh
+460	full	0	0	python3 -B tools/test_retire_crates_023.py
+460	core	0	0	python3 -B tools/test_retire_crates_023.py
+461	full	1	0	python3 -B tools/test_retirement_workflow.py
+461	core	1	0	python3 -B tools/test_retirement_workflow.py
+463	full	0	0	bash tools/test_release_version_alignment.sh
+463	core	0	0	bash tools/test_release_version_alignment.sh
+465	full	1	0	bash tools/test_release_dry_run_boundaries.sh
+465	core	1	0	bash tools/test_release_dry_run_boundaries.sh
+467	full	1	0	bash tools/test_release_publish_boundaries.sh
+467	core	1	0	bash tools/test_release_publish_boundaries.sh
+469	full	1	0	bash tools/test_cratesio_release_packaging.sh
+469	core	1	0	bash tools/test_cratesio_release_packaging.sh
+471	full	1	0	bash tools/test_wasm_npm_package_boundary.sh
+471	core	1	0	bash tools/test_wasm_npm_package_boundary.sh
+473	full	127	0	bash tools/test_capture_release_helper.sh
+473	core	127	0	bash tools/test_capture_release_helper.sh
+475	full	1	0	bash tools/test_publish_release_crates_registry_validation.sh
+475	core	1	0	bash tools/test_publish_release_crates_registry_validation.sh
+477	full	1	0	python3 tools/test_publish_sealed_crate.py
+477	core	1	0	python3 tools/test_publish_sealed_crate.py
+479	full	1	0	bash tools/test_publish_release_npm_registry_validation.sh
+479	core	1	0	bash tools/test_publish_release_npm_registry_validation.sh
+481	full	1	0	bash tools/test_verify_npm_registry_attestation.sh
+481	core	1	0	bash tools/test_verify_npm_registry_attestation.sh
+483	full	1	0	bash tools/test_verify_sdk_npm_release_package.sh
+483	core	1	0	bash tools/test_verify_sdk_npm_release_package.sh
+485	full	127	0	bash tools/test_release_sdk_python_lifecycle_boundary.sh
+485	core	127	0	bash tools/test_release_sdk_python_lifecycle_boundary.sh
+487	full	1	0	bash tools/test_stage_llm_release_package.sh
+487	core	1	0	bash tools/test_stage_llm_release_package.sh
+489	full	1	0	bash tools/test_release_llm_lifecycle_boundary.sh
+489	core	1	0	bash tools/test_release_llm_lifecycle_boundary.sh
+491	full	1	0	bash tools/test_transport_release_build_output.sh
+491	core	1	0	bash tools/test_transport_release_build_output.sh
+493	full	1	0	bash tools/test_transport_wasm_release_output.sh
+493	core	1	0	bash tools/test_transport_wasm_release_output.sh
+495	full	1	0	bash tools/test_transport_release_file_set.sh
+495	core	1	0	bash tools/test_transport_release_file_set.sh
+497	full	127	0	bash tools/test_verify_npm_release_tarball.sh
+497	core	127	0	bash tools/test_verify_npm_release_tarball.sh
+499	full	1	0	bash tools/test_release_npm_config_boundary.sh
+499	core	1	0	bash tools/test_release_npm_config_boundary.sh
+501	full	1	0	bash tools/test_npm_registry_visibility.sh
+501	core	1	0	bash tools/test_npm_registry_visibility.sh
+503	full	1	1	bash tools/test_repo_truth.sh
+503	core	1	1	bash tools/test_repo_truth.sh
+505	full	0	0	bash tools/test_sybil_cli_secret_boundaries.sh
+505	core	1	0	bash tools/test_sybil_cli_secret_boundaries.sh
+507	full	0	0	bash tools/test_audit_policy_docs.sh
+507	core	0	0	bash tools/test_audit_policy_docs.sh
+509	full	0	0	bash tools/test_consensus_liveness_docs.sh
+509	core	0	0	bash tools/test_consensus_liveness_docs.sh
+511	full	0	0	bash tools/test_cr001_status.sh
+511	core	0	0	bash tools/test_cr001_status.sh
+513	full	0	0	bash tools/test_cr001_completeness.sh
+513	core	0	0	bash tools/test_cr001_completeness.sh
+515	full	0	0	bash tools/test_gap_registry_truth.sh
+515	core	0	0	bash tools/test_gap_registry_truth.sh
+517	full	0	0	bash tools/check_systemic_integrity_claims.sh
+517	core	1	0	bash tools/check_systemic_integrity_claims.sh
+519	full	0	0	bash tools/test_tenant_dependency_direction.sh
+519	core	0	0	bash tools/test_tenant_dependency_direction.sh
+521	full	0	0	bash tools/test_gap_syntaxis_yaml_parse.sh
+521	core	0	0	bash tools/test_gap_syntaxis_yaml_parse.sh
+523	full	0	0	bash tools/test_no_orphan_rust_modules.sh
+523	core	0	0	bash tools/test_no_orphan_rust_modules.sh
+525	full	0	0	bash tools/test_railway_entrypoint_args.sh
+525	core	0	0	bash tools/test_railway_entrypoint_args.sh
+527	full	0	0	bash tools/test_livesafe_railway_deploy_ref_guard.sh
+527	core	1	0	bash tools/test_livesafe_railway_deploy_ref_guard.sh
+529	full	0	0	bash tools/test_deployment_readiness_probes.sh
+529	core	0	0	bash tools/test_deployment_readiness_probes.sh
+531	full	1	0	bash tools/test_public_route_verifier_portability.sh
+531	core	1	0	bash tools/test_public_route_verifier_portability.sh
+533	full	0	0	bash tools/test_docker_production_db_feature.sh
+533	core	0	0	bash tools/test_docker_production_db_feature.sh
+535	full	0	0	bash tools/test_gateway_db_ci.sh
+535	core	0	0	bash tools/test_gateway_db_ci.sh
+537	full	0	0	bash tools/test_agent_prompt_boundaries.sh
+537	core	1	0	bash tools/test_agent_prompt_boundaries.sh
+539	full	0	0	bash tools/test_agent_workflow_bounds.sh
+539	core	1	0	bash tools/test_agent_workflow_bounds.sh
+541	full	0	0	bash tools/test_archon_avc_quality_matrix.sh
+541	core	1	0	bash tools/test_archon_avc_quality_matrix.sh
+543	full	0	0	bash tools/test_syntaxis_workflow_input_boundary.sh
+543	core	0	0	bash tools/test_syntaxis_workflow_input_boundary.sh
+545	full	97	1	bash tools/test_core_fuzz_targets.sh
+545	core	97	1	bash tools/test_core_fuzz_targets.sh
+590	full	1	0	bash tools/test_verify_release_sbom.sh
+590	core	1	0	bash tools/test_verify_release_sbom.sh
+661	full	0	0	bash tools/test_gateway_db_ci.sh
+661	core	0	0	bash tools/test_gateway_db_ci.sh
+809	full	1	1	bash tools/test_repo_truth.sh
+809	core	1	1	bash tools/test_repo_truth.sh
+837	full	97	1	bash tools/test_coverage_policy.sh --check-engine
+837	core	97	1	bash tools/test_coverage_policy.sh --check-engine
+871	full	97	1	bash tools/test_coverage_policy.sh --check-engine
+871	core	97	1	bash tools/test_coverage_policy.sh --check-engine
+905	full	97	1	bash tools/test_coverage_policy.sh --check-engine
+905	core	97	1	bash tools/test_coverage_policy.sh --check-engine
+992	full	0	0	bash tools/test_demo_wasm_adapter_boundary.sh
+992	core	1	0	bash tools/test_demo_wasm_adapter_boundary.sh

@@ -1,0 +1,24 @@
+handling	group	paths	by_class
+omit-file	.archon/	13	adjacent surface 13
+omit-file	.claude/	1	adjacent surface 1
+omit-file	.cursor/	1	adjacent surface 1
+omit-file	.github/ISSUE_TEMPLATE/	3	adjacent surface 3
+omit-file	.github/workflows/	3	adjacent surface 3
+omit-file	.superpowers/	1	adjacent surface 1
+omit-file	docs/commandbase-foundation/	10	adjacent surface 10
+omit-file	docs/decision-forum/	5	adjacent surface 5
+omit-file	docs/heartfield/	4	adjacent surface 4
+omit-file	scripts/	1	adjacent surface 1
+omit-file	tools/sybil-cli/	16	adjacent surface 16
+omit-tree	command-base/	257	adjacent surface 256; third-party/vendor 1
+omit-tree	cybermedica/	386	adjacent surface 385; third-party/vendor 1
+omit-tree	demo/	217	adjacent surface 180; third-party/vendor 37
+omit-tree	exoforge/	15	adjacent surface 15
+omit-tree	gap/	59	adjacent surface 59
+omit-tree	livesafe/	505	adjacent surface 500; third-party/vendor 5
+omit-tree	site/	145	adjacent surface 144; third-party/vendor 1
+omit-tree	web/	84	adjacent surface 83; third-party/vendor 1
+pending	tools/syntaxis/	12	EXOCHAIN core 12
+undecided	packages/exochain-llm-proxy/dist/	64	third-party/vendor 64
+undecided	packages/exochain-sdk/dist-test/	56	third-party/vendor 56
+undecided	packages/exochain-sdk/dist/	76	third-party/vendor 76
