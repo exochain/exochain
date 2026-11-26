@@ -169,16 +169,16 @@ async fn build_preview(
             ));
             continue;
         }
-        if let Some(catalog_path) = &request.catalog_path {
-            if !catalog_path_matches(&memory_id, catalog_path, &graph_nodes) {
-                omitted_memory_refs.push(omitted_memory_ref(
-                    &memory_id,
-                    memory,
-                    &graph_nodes,
-                    "catalog_path_filter_mismatch",
-                ));
-                continue;
-            }
+        if let Some(catalog_path) = &request.catalog_path
+            && !catalog_path_matches(&memory_id, catalog_path, &graph_nodes)
+        {
+            omitted_memory_refs.push(omitted_memory_ref(
+                &memory_id,
+                memory,
+                &graph_nodes,
+                "catalog_path_filter_mismatch",
+            ));
+            continue;
         }
         if !memory_status_allowed(&memory.status) {
             omitted_memory_refs.push(omitted_memory_ref(

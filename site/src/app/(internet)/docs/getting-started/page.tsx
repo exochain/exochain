@@ -34,7 +34,7 @@ export default function Page() {
       </p>
       <h2>Prerequisites</h2>
       <ul>
-        <li>Rust 1.85+ to build the workspace. CI validates with Rust 1.98.1.</li>
+        <li>Rust 1.94+ to build the workspace. CI validates with Rust 1.98.1.</li>
         <li>
           A published SDK: <code>cargo add exochain-sdk</code>,{' '}
           <code>npm install @exochain/sdk</code>, or <code>pip install exochain</code>.

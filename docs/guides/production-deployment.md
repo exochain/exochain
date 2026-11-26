@@ -27,7 +27,7 @@ with a live PostgreSQL database and the `production-db` feature enabled.
 
 | Requirement | Minimum version | Notes |
 |-------------|----------------|-------|
-| Rust toolchain | 1.85 (MSRV) | Install via [rustup](https://rustup.rs/) |
+| Rust toolchain | 1.94.0 (MSRV) | Install via [rustup](https://rustup.rs/) |
 | Docker | 24+ | For Postgres and container builds |
 | Docker Compose | v2 plugin | `docker compose` (not `docker-compose`) |
 | PostgreSQL | 14+ | Hosted or self-managed; 16-alpine recommended |

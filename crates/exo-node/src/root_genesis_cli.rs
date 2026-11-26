@@ -161,7 +161,7 @@ impl<'de> Visitor<'de> for ZeroizingHexVisitor {
     {
         if value.is_empty()
             || value.len() > 32 * 1024 * 1024
-            || value.len() % 2 != 0
+            || !value.len().is_multiple_of(2)
             || self.exact_len.is_some_and(|length| value.len() != length)
             || !value
                 .bytes()
@@ -1050,7 +1050,7 @@ fn decode_hex(value: &str) -> anyhow::Result<Vec<u8>> {
 }
 
 fn decode_secret_hex_zeroizing(value: &str) -> anyhow::Result<Zeroizing<Vec<u8>>> {
-    if value.len() % 2 != 0 {
+    if !value.len().is_multiple_of(2) {
         anyhow::bail!("secret hex must have even length");
     }
     let mut bytes = Zeroizing::new(Vec::new());

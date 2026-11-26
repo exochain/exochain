@@ -490,17 +490,17 @@ async fn fetch_rfc3161_timestamp_response(
         if status.is_success() {
             return read_timestamp_response(response).await;
         }
-        if rfc3161_fetch_status_is_retryable(status) {
-            if let Some(delay) = rfc3161_fetch_retry_delay(attempt_index) {
-                tracing::warn!(
-                    attempt = attempt,
-                    max_attempts = max_attempts,
-                    status = %status,
-                    "retrying RFC 3161 timestamp authority fetch after transient status"
-                );
-                wait_before_rfc3161_fetch_retry(delay).await;
-                continue;
-            }
+        if rfc3161_fetch_status_is_retryable(status)
+            && let Some(delay) = rfc3161_fetch_retry_delay(attempt_index)
+        {
+            tracing::warn!(
+                attempt = attempt,
+                max_attempts = max_attempts,
+                status = %status,
+                "retrying RFC 3161 timestamp authority fetch after transient status"
+            );
+            wait_before_rfc3161_fetch_retry(delay).await;
+            continue;
         }
         return Err(AvcExternalTimestampFailure::Rejected {
             status: status.to_string(),
@@ -1972,7 +1972,8 @@ async fn load_postgres_durable_registry_in_transaction(
     let statement = format!(
         "SELECT state_cbor FROM {AVC_REGISTRY_POSTGRES_TABLE} WHERE registry_key = $1 FOR UPDATE"
     );
-    let Some(row) = sqlx::query(&statement)
+    // Interpolates only the compile-time constant AVC_REGISTRY_POSTGRES_TABLE.
+    let Some(row) = sqlx::query(sqlx::AssertSqlSafe(&statement[..]))
         .bind(AVC_REGISTRY_POSTGRES_KEY)
         .fetch_optional(&mut **transaction)
         .await
@@ -2001,7 +2002,8 @@ async fn persist_postgres_durable_registry_state_in_transaction(
          ON CONFLICT (registry_key)
          DO UPDATE SET state_cbor = EXCLUDED.state_cbor"
     );
-    sqlx::query(&statement)
+    // Interpolates only the compile-time constant AVC_REGISTRY_POSTGRES_TABLE.
+    sqlx::query(sqlx::AssertSqlSafe(&statement[..]))
         .bind(AVC_REGISTRY_POSTGRES_KEY)
         .bind(bytes)
         .execute(&mut **transaction)
@@ -3230,10 +3232,8 @@ where
                 "AVC registry unavailable".into(),
             )
         })?;
-        if persist_after {
-            if let AvcRegistryDurability::Postgres(pool) = &state.durability {
-                return mutate_postgres_registry_blocking(pool, &mut guard, op, after_persist);
-            }
+        if persist_after && let AvcRegistryDurability::Postgres(pool) = &state.durability {
+            return mutate_postgres_registry_blocking(pool, &mut guard, op, after_persist);
         }
         let rollback = guard.clone();
         let result = match op(&mut guard) {
@@ -3723,28 +3723,27 @@ fn commit_registry_with_allow_anchors(
             Ok(())
         } else {
             let outcome = handle.block_on(async {
-                if session.postgres_pending {
-                    if let Err(error) =
+                if session.postgres_pending
+                    && let Err(error) =
                         stage_postgres_allow_anchors(state, guard, session, &mut transaction).await
-                    {
-                        if session.persist_removal {
-                            let durable = guard.durable_state();
-                            persist_postgres_durable_registry_state_in_transaction(
-                                &durable,
-                                &mut transaction,
-                            )
-                            .await
-                            .map_err(persistence_error)?;
-                            transaction.commit().await.map_err(|commit_error| {
-                                persistence_error(anyhow::anyhow!(
-                                    "failed to commit AVC Postgres registry state: {commit_error}"
-                                ))
-                            })?;
-                            return Err(error);
-                        }
-                        let _ = transaction.rollback().await;
+                {
+                    if session.persist_removal {
+                        let durable = guard.durable_state();
+                        persist_postgres_durable_registry_state_in_transaction(
+                            &durable,
+                            &mut transaction,
+                        )
+                        .await
+                        .map_err(persistence_error)?;
+                        transaction.commit().await.map_err(|commit_error| {
+                            persistence_error(anyhow::anyhow!(
+                                "failed to commit AVC Postgres registry state: {commit_error}"
+                            ))
+                        })?;
                         return Err(error);
                     }
+                    let _ = transaction.rollback().await;
+                    return Err(error);
                 }
                 if let Err(error) =
                     insert_postgres_staged_anchors(state, session, &mut transaction).await
@@ -5487,12 +5486,12 @@ fn register_delegated_child(
             "parent credential {parent_id} is revoked"
         )));
     }
-    if let Some(expires_at) = parent.expires_at {
-        if expires_at <= now {
-            return Err(delegation_rejected(format!(
-                "parent credential {parent_id} is expired"
-            )));
-        }
+    if let Some(expires_at) = parent.expires_at
+        && expires_at <= now
+    {
+        return Err(delegation_rejected(format!(
+            "parent credential {parent_id} is expired"
+        )));
     }
     if child.parent_avc_id != Some(parent_id) {
         return Err(delegation_rejected(
@@ -6189,7 +6188,7 @@ mod tests {
     async fn clear_postgres_avc_registry_state(pool: &PgPool) -> Result<(), sqlx::Error> {
         let statement =
             format!("DELETE FROM {AVC_REGISTRY_POSTGRES_TABLE} WHERE registry_key = $1");
-        sqlx::query(&statement)
+        sqlx::query(sqlx::AssertSqlSafe(&statement[..]))
             .bind(AVC_REGISTRY_POSTGRES_KEY)
             .execute(pool)
             .await?;

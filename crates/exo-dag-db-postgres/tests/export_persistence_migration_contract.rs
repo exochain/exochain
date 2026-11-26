@@ -279,11 +279,13 @@ impl TestDb {
             .connect(&database_url)
             .await
             .expect("connect admin Postgres pool");
-        sqlx::query(&format!(r#"DROP SCHEMA IF EXISTS "{schema}" CASCADE"#))
-            .execute(&admin_pool)
-            .await
-            .expect("drop isolated schema");
-        sqlx::query(&format!(r#"CREATE SCHEMA "{schema}""#))
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            r#"DROP SCHEMA IF EXISTS "{schema}" CASCADE"#
+        )))
+        .execute(&admin_pool)
+        .await
+        .expect("drop isolated schema");
+        sqlx::query(sqlx::AssertSqlSafe(format!(r#"CREATE SCHEMA "{schema}""#)))
             .execute(&admin_pool)
             .await
             .expect("create isolated schema");
@@ -295,10 +297,10 @@ impl TestDb {
     }
 
     async fn cleanup(self) {
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             r#"DROP SCHEMA IF EXISTS "{}" CASCADE"#,
             self.schema
-        ))
+        )))
         .execute(&self.admin_pool)
         .await
         .expect("drop isolated schema after test");

@@ -156,12 +156,10 @@ impl Delegation {
             delegation_id,
             expires_at,
         } = &self.signature.signer_type
+            && (*delegation_id == Hash256::ZERO
+                || *expires_at <= self.signature.timestamp.physical_ms)
         {
-            if *delegation_id == Hash256::ZERO
-                || *expires_at <= self.signature.timestamp.physical_ms
-            {
-                return false;
-            }
+            return false;
         }
 
         let Ok(payload) = self.signing_payload() else {

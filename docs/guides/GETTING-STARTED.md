@@ -95,7 +95,7 @@ That's it — you have a constitutional node running with 40 MCP tools, 6 resour
 
 | Tool | Minimum | Purpose |
 |---|---|---|
-| **Rust** | 1.85+ (edition 2024) | Core workspace |
+| **Rust** | 1.94+ (edition 2024) | Core workspace |
 | **cargo-tarpaulin** | latest | Coverage (CI requires scoped >=90%) |
 | **cargo-deny** | latest | License + advisory + source governance |
 | **cargo-audit** | latest | Known-vulnerability scanning |
@@ -107,7 +107,7 @@ Install:
 ```bash
 # Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-rustc --version  # must be >= 1.85.0
+rustc --version  # must be >= 1.94.0
 
 # Quality gate tools
 cargo install cargo-tarpaulin

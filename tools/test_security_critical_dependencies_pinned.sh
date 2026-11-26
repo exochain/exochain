@@ -373,4 +373,5 @@ require_default_features_disabled() {
 
 require_default_features_disabled "ml-dsa"
 
+bash "$(dirname "$0")/test_audit_ignore_policy.sh" --expiry-only
 echo "workspace dependency exact pin test passed"

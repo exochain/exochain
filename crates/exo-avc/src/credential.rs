@@ -431,12 +431,12 @@ impl AvcDraft {
         self.constraints.validate()?;
         self.constraints.normalize();
 
-        if let Some(expires) = self.expires_at {
-            if expires <= self.created_at {
-                return Err(AvcError::InvalidTimestamp {
-                    reason: "expires_at must be strictly after created_at".into(),
-                });
-            }
+        if let Some(expires) = self.expires_at
+            && expires <= self.created_at
+        {
+            return Err(AvcError::InvalidTimestamp {
+                reason: "expires_at must be strictly after created_at".into(),
+            });
         }
 
         self.consent_refs.sort();

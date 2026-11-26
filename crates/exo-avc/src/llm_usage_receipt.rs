@@ -264,19 +264,19 @@ fn validate_usage_metrics(usage: &ProviderUsageMetrics) -> Result<(), AvcError> 
                 .into(),
         });
     }
-    if let Some(cached) = usage.cached_input_tokens {
-        if cached > usage.input_tokens {
-            return Err(AvcError::InvalidInput {
-                reason: "llm_usage.usage.cached_input_tokens must not exceed input_tokens".into(),
-            });
-        }
+    if let Some(cached) = usage.cached_input_tokens
+        && cached > usage.input_tokens
+    {
+        return Err(AvcError::InvalidInput {
+            reason: "llm_usage.usage.cached_input_tokens must not exceed input_tokens".into(),
+        });
     }
-    if let Some(reasoning) = usage.reasoning_tokens {
-        if reasoning > usage.output_tokens {
-            return Err(AvcError::InvalidInput {
-                reason: "llm_usage.usage.reasoning_tokens must not exceed output_tokens".into(),
-            });
-        }
+    if let Some(reasoning) = usage.reasoning_tokens
+        && reasoning > usage.output_tokens
+    {
+        return Err(AvcError::InvalidInput {
+            reason: "llm_usage.usage.reasoning_tokens must not exceed output_tokens".into(),
+        });
     }
     match (usage.cost_minor_units, usage.cost_currency.as_ref()) {
         (Some(_), Some(currency)) => require_non_empty("llm_usage.usage.cost_currency", currency),

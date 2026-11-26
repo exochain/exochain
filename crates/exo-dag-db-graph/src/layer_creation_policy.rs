@@ -949,15 +949,14 @@ fn aggregate_line_is_content(line: &str) -> bool {
         return true;
     }
     // `key: value` definition row: an alphanumeric key, a colon, then a value.
-    if let Some((key, value)) = trimmed.split_once(':') {
-        if !key.trim().is_empty()
-            && key
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == ' ' || c == '_' || c == '-' || c == '.')
-            && !value.trim().is_empty()
-        {
-            return true;
-        }
+    if let Some((key, value)) = trimmed.split_once(':')
+        && !key.trim().is_empty()
+        && key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == ' ' || c == '_' || c == '-' || c == '.')
+        && !value.trim().is_empty()
+    {
+        return true;
     }
     // A definition/heading-style sentence ending in terminal punctuation.
     matches!(trimmed.chars().last(), Some('.') | Some('!') | Some('?'))

@@ -61,10 +61,10 @@ pub const SCALE_TIERS: [usize; 2] = [PRODUCTION_TIER, BEYOND_PRODUCTION_TIER];
 /// the contract tests instead of hanging or panicking. The resolved URL is
 /// never printed.
 pub fn resolve_database_url() -> Option<String> {
-    if let Ok(url) = std::env::var(DATABASE_URL_ENV) {
-        if !url.trim().is_empty() {
-            return Some(url);
-        }
+    if let Ok(url) = std::env::var(DATABASE_URL_ENV)
+        && !url.trim().is_empty()
+    {
+        return Some(url);
     }
     // Mirror tools/start_dagdb_local.sh defaults (host-published dev Postgres).
     let port = std::env::var("DAGDB_POSTGRES_PORT").unwrap_or_else(|_| "5433".to_owned());
@@ -107,11 +107,13 @@ impl BenchStore {
             .connect(&database_url)
             .await
             .ok()?;
-        sqlx::query(&format!(r#"DROP SCHEMA IF EXISTS "{schema}" CASCADE"#))
-            .execute(&admin_pool)
-            .await
-            .ok()?;
-        sqlx::query(&format!(r#"CREATE SCHEMA "{schema}""#))
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            r#"DROP SCHEMA IF EXISTS "{schema}" CASCADE"#
+        )))
+        .execute(&admin_pool)
+        .await
+        .ok()?;
+        sqlx::query(sqlx::AssertSqlSafe(format!(r#"CREATE SCHEMA "{schema}""#)))
             .execute(&admin_pool)
             .await
             .ok()?;
@@ -138,10 +140,10 @@ impl BenchStore {
     /// leave the shared store exactly as they found it.
     pub async fn cleanup(self) {
         self.pool.close().await;
-        let _ = sqlx::query(&format!(
+        let _ = sqlx::query(sqlx::AssertSqlSafe(format!(
             r#"DROP SCHEMA IF EXISTS "{}" CASCADE"#,
             self.schema
-        ))
+        )))
         .execute(&self.admin_pool)
         .await;
         self.admin_pool.close().await;

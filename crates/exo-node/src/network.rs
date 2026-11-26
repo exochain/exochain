@@ -861,13 +861,11 @@ mod tests {
         for _ in 0..100 {
             if let Ok(Some(SwarmEvent::NewListenAddr { address, .. })) =
                 tokio::time::timeout(Duration::from_millis(50), swarm.next()).await
-            {
-                if address
+                && address
                     .iter()
                     .any(|protocol| matches!(protocol, Protocol::Tcp(_)))
-                {
-                    return address;
-                }
+            {
+                return address;
             }
         }
 
@@ -1019,13 +1017,13 @@ mod tests {
 
         let advanced = tokio::time::timeout(Duration::from_secs(15), async {
             while let Some(event) = event_rx2.recv().await {
-                if let NetworkEvent::MessageReceived { message, .. } = event {
-                    if let WireMessage::HlcSync(hlc) = message {
-                        node_b_clock
-                            .update(&hlc.timestamp)
-                            .expect("HLC update should accept a fresh remote timestamp");
-                        return true;
-                    }
+                if let NetworkEvent::MessageReceived { message, .. } = event
+                    && let WireMessage::HlcSync(hlc) = message
+                {
+                    node_b_clock
+                        .update(&hlc.timestamp)
+                        .expect("HLC update should accept a fresh remote timestamp");
+                    return true;
                 }
             }
             false

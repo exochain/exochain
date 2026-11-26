@@ -229,10 +229,10 @@ impl<'a> DerReader<'a> {
 }
 
 fn der_len(len: usize) -> Vec<u8> {
-    if let Ok(short) = u8::try_from(len) {
-        if short < 128 {
-            return vec![short];
-        }
+    if let Ok(short) = u8::try_from(len)
+        && short < 128
+    {
+        return vec![short];
     }
     let bytes = len.to_be_bytes();
     let first_non_zero = bytes

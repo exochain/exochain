@@ -566,12 +566,12 @@ fn reduce_inner(
 
     let result = reduce_node(combinator, input, depth, budgets, steps.as_deref_mut());
 
-    if let Some(idx) = step_idx {
-        if let Some(log) = steps {
-            match &result {
-                Ok(output) => finish_trace_step_ok(log, idx, output)?,
-                Err(err) => finish_trace_step_err(log, idx, err),
-            }
+    if let Some(idx) = step_idx
+        && let Some(log) = steps
+    {
+        match &result {
+            Ok(output) => finish_trace_step_ok(log, idx, output)?,
+            Err(err) => finish_trace_step_err(log, idx, err),
         }
     }
 

@@ -666,16 +666,15 @@ impl InMemoryAvcRegistry {
         let mut commitments = BTreeMap::new();
         let mut extended = BTreeMap::new();
         for (receipt_id, receipt) in &self.receipts {
-            if let Some(action_commitment_hash) = receipt.action_commitment_hash {
-                if let Some(previous_receipt_id) =
+            if let Some(action_commitment_hash) = receipt.action_commitment_hash
+                && let Some(previous_receipt_id) =
                     commitments.insert(action_commitment_hash, *receipt_id)
-                {
-                    return Err(AvcError::Registry {
-                        reason: format!(
-                            "duplicate durable AVC receipt action commitment {action_commitment_hash} claimed by receipts {previous_receipt_id} and {receipt_id}"
-                        ),
-                    });
-                }
+            {
+                return Err(AvcError::Registry {
+                    reason: format!(
+                        "duplicate durable AVC receipt action commitment {action_commitment_hash} claimed by receipts {previous_receipt_id} and {receipt_id}"
+                    ),
+                });
             }
             if receipt.has_extended_evidence() {
                 extended.insert(*receipt_id, receipt);
@@ -695,15 +694,15 @@ impl InMemoryAvcRegistry {
 
         let mut child_by_previous: BTreeMap<Option<Hash256>, Hash256> = BTreeMap::new();
         for (receipt_id, receipt) in &extended {
-            if let Some(previous) = receipt.previous_receipt_hash {
-                if !extended.contains_key(&previous) {
-                    return Err(AvcError::Registry {
-                        reason: format!(
-                            "durable receipt {} references missing previous extended receipt {previous}",
-                            receipt.receipt_id
-                        ),
-                    });
-                }
+            if let Some(previous) = receipt.previous_receipt_hash
+                && !extended.contains_key(&previous)
+            {
+                return Err(AvcError::Registry {
+                    reason: format!(
+                        "durable receipt {} references missing previous extended receipt {previous}",
+                        receipt.receipt_id
+                    ),
+                });
             }
             if let Some(existing_child) =
                 child_by_previous.insert(receipt.previous_receipt_hash, *receipt_id)

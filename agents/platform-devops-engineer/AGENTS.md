@@ -65,7 +65,7 @@ cargo doc --workspace --no-deps
 ### PR 4 — Supply Chain
 - Resolve any open `cargo-audit` advisory exclusions in `deny.toml`
 - Add `cargo-machete` (unused dep detection) gate to CI
-- Audit workspace deps for latest MSRV-1.85-compatible versions
+- Audit workspace deps for latest MSRV-1.94-compatible versions
 - Ensure SBOM (CycloneDX JSON via `cargo-cyclonedx`) is attached to CI artifacts
 
 ### PR 5 — First Release

@@ -365,12 +365,12 @@ fn validate_heartbeat_input(input: &HeartbeatRecordInput) -> Result<()> {
             reason: "heartbeat started timestamp must be caller-supplied HLC".into(),
         });
     }
-    if let Some(finished) = input.finished {
-        if finished < input.started {
-            return Err(CatapultError::InvalidHeartbeat {
-                reason: "heartbeat finished timestamp must not precede started timestamp".into(),
-            });
-        }
+    if let Some(finished) = input.finished
+        && finished < input.started
+    {
+        return Err(CatapultError::InvalidHeartbeat {
+            reason: "heartbeat finished timestamp must not precede started timestamp".into(),
+        });
     }
     Ok(())
 }

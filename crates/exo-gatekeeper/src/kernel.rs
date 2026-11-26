@@ -151,12 +151,12 @@ impl Kernel {
                 None => Verdict::Permitted,
             },
             Err(violations) => {
-                if let Some(reason) = &context.active_challenge_reason {
-                    if violations.iter().all(is_challenge_pause_eligible) {
-                        return Verdict::Escalated {
-                            reason: reason.clone(),
-                        };
-                    }
+                if let Some(reason) = &context.active_challenge_reason
+                    && violations.iter().all(is_challenge_pause_eligible)
+                {
+                    return Verdict::Escalated {
+                        reason: reason.clone(),
+                    };
                 }
                 verdict_for_violations(violations)
             }

@@ -2274,7 +2274,7 @@ pub(crate) mod tests {
 
     async fn count_rows_by_did(
         pool: &PgPool,
-        statement: &str,
+        statement: &'static str,
         did: &str,
     ) -> Result<i64, sqlx::Error> {
         sqlx::query_scalar(statement)
@@ -2941,13 +2941,16 @@ pub(crate) mod tests {
 
         async fn prepare(&self, pool: &PgPool) -> Result<(), sqlx::Error> {
             delete_did_capacity_fixture(pool, &self.schema, &self.foreign_did).await?;
-            sqlx::raw_sql(&format!("CREATE SCHEMA {}", self.schema))
-                .execute(pool)
-                .await?;
-            sqlx::raw_sql(&format!(
+            sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+                "CREATE SCHEMA {}",
+                self.schema
+            )))
+            .execute(pool)
+            .await?;
+            sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
                 "CREATE TABLE {}.did_documents (LIKE public.did_documents INCLUDING ALL)",
                 self.schema
-            ))
+            )))
             .execute(pool)
             .await?;
             sqlx::query(
@@ -2971,9 +2974,11 @@ pub(crate) mod tests {
             .bind(foreign_did)
             .execute(pool)
             .await?;
-        sqlx::raw_sql(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
-            .execute(pool)
-            .await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "DROP SCHEMA IF EXISTS {schema} CASCADE"
+        )))
+        .execute(pool)
+        .await?;
         Ok(())
     }
 

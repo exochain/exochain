@@ -137,14 +137,13 @@ impl PolicyEngine {
                     && c.role == req.required_role
                     && c.clearance_level >= req.min_clearance_level
                     && bailment::is_active(&c.bailment, now)
+                    && let Some(exp) = c.bailment.expires
                 {
-                    if let Some(exp) = c.bailment.expires {
-                        earliest_expiry = Some(match earliest_expiry {
-                            Some(cur) if exp < cur => exp,
-                            Some(cur) => cur,
-                            None => exp,
-                        });
-                    }
+                    earliest_expiry = Some(match earliest_expiry {
+                        Some(cur) if exp < cur => exp,
+                        Some(cur) => cur,
+                        None => exp,
+                    });
                 }
             }
         }

@@ -1779,7 +1779,7 @@ fn sha256_bytes_hex(bytes: &[u8]) -> String {
     }
     data.extend_from_slice(&bit_len.to_be_bytes());
 
-    for chunk in data.chunks_exact(64) {
+    for chunk in data.as_chunks::<64>().0 {
         let mut words = [0u32; 64];
         for (index, word) in words.iter_mut().enumerate().take(16) {
             let offset = index * 4;

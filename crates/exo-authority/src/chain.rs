@@ -306,18 +306,18 @@ where
         }
 
         // Check expiry
-        if let Some(exp) = &link.expires {
-            if exp.is_expired(now) {
-                return Err(AuthorityError::ExpiredLink { index: i });
-            }
+        if let Some(exp) = &link.expires
+            && exp.is_expired(now)
+        {
+            return Err(AuthorityError::ExpiredLink { index: i });
         }
 
         // Check scope narrows (each link's scope must be subset of previous)
         let current_scope = PermissionSet::from_permissions(&link.scope);
-        if let Some(ref prev) = prev_scope {
-            if !PermissionSet::is_subset(&current_scope, prev) {
-                return Err(AuthorityError::ScopeWidening { index: i });
-            }
+        if let Some(ref prev) = prev_scope
+            && !PermissionSet::is_subset(&current_scope, prev)
+        {
+            return Err(AuthorityError::ScopeWidening { index: i });
         }
         prev_scope = Some(current_scope);
     }
