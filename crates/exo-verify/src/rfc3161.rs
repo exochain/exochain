@@ -852,21 +852,6 @@ fn timestamp_ms_within_certificate_validity(
 
 fn validate_tsa_signer_certificate(cert: &Certificate, issued_at: Timestamp) -> anyhow::Result<()> {
     timestamp_ms_within_certificate_validity(cert, issued_at, "signer")?;
-    let eku = cert
-        .tbs_certificate()
-        .get_extension::<ExtendedKeyUsage>()
-        .map_err(|error| anyhow::anyhow!("TSA signer EKU extension parse failed: {error}"))?
-        .ok_or_else(|| {
-            anyhow::anyhow!("TSA signer certificate has no Extended Key Usage extension")
-        })?;
-    if !eku
-        .1
-        .0
-        .iter()
-        .any(|oid| oid.to_string() == ID_KP_TIME_STAMPING_OID)
-    {
-        anyhow::bail!("TSA signer certificate EKU does not assert id-kp-timeStamping");
-    }
     if let Some((_critical, basic_constraints)) = cert
         .tbs_certificate()
         .get_extension::<BasicConstraints>()
@@ -877,13 +862,28 @@ fn validate_tsa_signer_certificate(cert: &Certificate, issued_at: Timestamp) -> 
     {
         anyhow::bail!("TSA signer certificate must not assert CA:TRUE");
     }
-    if let Some((_critical, key_usage)) = cert
+    let eku = cert
+        .tbs_certificate()
+        .get_extension::<ExtendedKeyUsage>()
+        .map_err(|error| anyhow::anyhow!("TSA signer EKU extension parse failed: {error}"))?
+        .ok_or_else(|| {
+            anyhow::anyhow!("TSA signer certificate has no Extended Key Usage extension")
+        })?;
+    // RFC 3161 section 2.3: the EKU extension MUST be critical and the
+    // certificate MUST contain only id-kp-timeStamping.
+    let (eku_critical, eku) = eku;
+    if !eku_critical {
+        anyhow::bail!("TSA signer certificate EKU extension must be critical");
+    }
+    if eku.0.len() != 1 || eku.0[0].to_string() != ID_KP_TIME_STAMPING_OID {
+        anyhow::bail!("TSA signer certificate EKU must assert only id-kp-timeStamping");
+    }
+    let (_critical, key_usage) = cert
         .tbs_certificate()
         .get_extension::<KeyUsage>()
         .map_err(|error| anyhow::anyhow!("TSA signer keyUsage extension parse failed: {error}"))?
-        && !key_usage.digital_signature()
-        && !key_usage.non_repudiation()
-    {
+        .ok_or_else(|| anyhow::anyhow!("TSA signer certificate has no keyUsage extension"))?;
+    if !key_usage.digital_signature() && !key_usage.non_repudiation() {
         anyhow::bail!("TSA signer keyUsage does not permit timestamp signing");
     }
     Ok(())
@@ -903,6 +903,9 @@ fn validate_tsa_issuing_ca_certificate(
         .ok_or_else(|| {
             anyhow::anyhow!("TSA issuing CA certificate has no basicConstraints extension")
         })?;
+    if !basic_constraints.0 {
+        anyhow::bail!("TSA issuing CA basicConstraints extension must be critical");
+    }
     if !basic_constraints.1.ca {
         anyhow::bail!("TSA issuing CA certificate does not assert CA:TRUE");
     }
@@ -1190,8 +1193,6 @@ pub fn verify_timestamp_response_with_trust_anchors(
     )
 }
 
-/// Parse and signature-check a timestamp response WITHOUT a trust anchor.
-/// Test support only: the result proves nothing about who signed it.
 /// Verify a stored RFC 3161 `TimeStampToken` (CMS `ContentInfo` DER, as
 /// kept in a receipt's `token_der_base64`) against pinned trust anchors.
 ///
@@ -1227,6 +1228,11 @@ pub fn deterministic_nonce_hex(policy_oid: &str, canonical_bytes: &[u8]) -> Stri
     hex::encode(minimal_unsigned_integer_bytes(&nonce))
 }
 
+/// Parse and signature-check a timestamp response WITHOUT a trust anchor.
+/// Test support only: the result proves nothing about who signed it.
+///
+/// # Errors
+/// Returns an error naming the first failed check.
 #[cfg(any(test, feature = "test-support"))]
 pub fn inspect_timestamp_response_without_spki_pin(
     response_der: &[u8],
@@ -1761,6 +1767,57 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(ca_as_signer.contains("must not assert CA:TRUE"));
+    }
+
+    fn policy_fixture(der: &[u8]) -> Certificate {
+        Certificate::from_der(der).unwrap()
+    }
+
+    #[test]
+    fn signer_certificate_requires_critical_sole_timestamping_eku_and_key_usage() {
+        let issued_at = Timestamp::new(1_794_000_000_000, 0);
+        let check = |der: &[u8]| validate_tsa_signer_certificate(&policy_fixture(der), issued_at);
+        check(include_bytes!("fixtures/tsa-cert-policy/leaf_good.der")).unwrap();
+
+        let non_critical = check(include_bytes!(
+            "fixtures/tsa-cert-policy/leaf_eku_noncritical.der"
+        ))
+        .unwrap_err()
+        .to_string();
+        assert!(non_critical.contains("must be critical"), "{non_critical}");
+
+        let multi = check(include_bytes!(
+            "fixtures/tsa-cert-policy/leaf_eku_multi.der"
+        ))
+        .unwrap_err()
+        .to_string();
+        assert!(multi.contains("only id-kp-timeStamping"), "{multi}");
+
+        let no_key_usage = check(include_bytes!(
+            "fixtures/tsa-cert-policy/leaf_no_key_usage.der"
+        ))
+        .unwrap_err()
+        .to_string();
+        assert!(no_key_usage.contains("no keyUsage"), "{no_key_usage}");
+    }
+
+    #[test]
+    fn issuing_ca_certificate_requires_critical_basic_constraints() {
+        let issued_at = Timestamp::new(1_794_000_000_000, 0);
+        validate_tsa_issuing_ca_certificate(
+            &policy_fixture(include_bytes!("fixtures/tsa-cert-policy/ca_critical.der")),
+            issued_at,
+        )
+        .unwrap();
+        let non_critical = validate_tsa_issuing_ca_certificate(
+            &policy_fixture(include_bytes!(
+                "fixtures/tsa-cert-policy/ca_noncritical.der"
+            )),
+            issued_at,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(non_critical.contains("must be critical"), "{non_critical}");
     }
 
     #[test]

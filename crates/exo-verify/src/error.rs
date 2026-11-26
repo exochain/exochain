@@ -29,6 +29,12 @@ pub enum VerifyError {
     #[error("malformed verification bundle: {reason}")]
     MalformedBundle { reason: String },
 
+    /// The bundle uses a format version this verifier no longer accepts.
+    /// Version 1 bundles lack the chain-binding proof paths; re-fetch the
+    /// proof and build a version 2 bundle.
+    #[error("unsupported receipt bundle version {format}; re-fetch the proof as a v2 bundle")]
+    UnsupportedBundleVersion { format: String },
+
     /// The receipt predates issue #897 and lacks the material needed for
     /// offline level-3 verification. Legacy receipts never pass.
     #[error("legacy receipt cannot be verified offline: {missing}")]
@@ -58,6 +64,12 @@ pub enum VerifyError {
     #[error("inclusion proof does not verify at position {position} of {tree_size}")]
     InclusionProofInvalid { position: u64, tree_size: u64 },
 
+    /// Property 2: the position is not bound to the receipt chain: the leaf
+    /// before the receipt is not its `previous_receipt_hash`, or the signed
+    /// chain head is not the last leaf.
+    #[error("inclusion proof is not bound to the receipt chain: {reason}")]
+    ChainBindingInvalid { reason: String },
+
     /// Property 2: the tree head signature does not verify.
     #[error("receipt tree head signature is invalid")]
     TreeHeadSignatureInvalid,
@@ -66,6 +78,22 @@ pub enum VerifyError {
     /// the receipt.
     #[error("receipt tree head validator does not match the receipt validator")]
     TreeHeadValidatorMismatch,
+
+    /// Property 2: the tree head is for a different chain than the caller
+    /// expects.
+    #[error("receipt tree head is for a different chain than expected")]
+    ChainIdMismatch,
+
+    /// Property 2: the proof is not against the caller's latest trusted tree
+    /// head (for example, the bundle predates a rollback). Re-fetch the
+    /// proof against the latest head.
+    #[error(
+        "inclusion proof tree head (size {proof_tree_size}) differs from the latest trusted head (size {latest_tree_size}); sizes can match when the root, chain ID or signature differ"
+    )]
+    StaleTreeHead {
+        proof_tree_size: u64,
+        latest_tree_size: u64,
+    },
 
     /// Property 3: the signer DID is not in the key bundle.
     #[error("signer {did} is not in the key bundle")]
@@ -82,6 +110,10 @@ pub enum VerifyError {
     /// Property 3: the key was not valid at the time it signed.
     #[error("signer {did} key is not valid at the signing time")]
     SignerKeyNotValidAtTime { did: String },
+
+    /// Property 3/4: the agent's signed time is later than the RFC 3161 time.
+    #[error("subject signed time is after the RFC 3161 trusted time")]
+    SubjectTimeAfterTrustedTime,
 
     /// Property 4: the receipt carries no RFC 3161 timestamp.
     #[error("receipt carries no RFC 3161 timestamp")]

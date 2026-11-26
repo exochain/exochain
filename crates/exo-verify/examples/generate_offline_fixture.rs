@@ -53,7 +53,7 @@ use exo_avc::{
 use exo_core::{Did, Hash256, Signature, Timestamp, crypto::KeyPair};
 use exo_dag::mmr;
 use exo_verify::{
-    KEY_BUNDLE_FORMAT_V1, KeyBundle, KeyBundleEntry, KeyRole, RECEIPT_BUNDLE_FORMAT_V1,
+    KEY_BUNDLE_FORMAT_V1, KeyBundle, KeyBundleEntry, KeyRole, LeafPath, RECEIPT_BUNDLE_FORMAT_V2,
     ReceiptBundle, ReceiptInclusionProof, ReceiptTreeHead, TrustInputs, TsaTrust,
     rfc3161::{
         Rfc3161TrustAnchorKind, Rfc3161TrustAnchors, build_timestamp_request,
@@ -340,6 +340,14 @@ fn chained_receipt(
     )?)
 }
 
+fn leaf_path(tree: &mmr::MerkleMountainRange, position: usize) -> Result<LeafPath> {
+    let proof = mmr::prove(tree, position)?;
+    Ok(LeafPath {
+        siblings: proof.siblings,
+        peak_index: u64::try_from(proof.peak_index)?,
+    })
+}
+
 fn main() -> Result<()> {
     let out_dir = PathBuf::from(
         std::env::args()
@@ -504,11 +512,12 @@ fn main() -> Result<()> {
         tree_size: 5,
         root: mmr::root(&tree),
         chain_head: fifth.receipt_id,
+        chain_id: first.receipt_id,
         signature: Signature::empty(),
     };
     tree_head.signature = parties.validator.sign(&tree_head.signing_payload()?);
     let bundle = ReceiptBundle {
-        format: RECEIPT_BUNDLE_FORMAT_V1.into(),
+        format: RECEIPT_BUNDLE_FORMAT_V2.into(),
         receipt,
         inclusion_proof: ReceiptInclusionProof {
             receipt_id: chain[2],
@@ -517,6 +526,9 @@ fn main() -> Result<()> {
             peak_index: u64::try_from(dag_proof.peak_index)?,
             peaks: dag_proof.peaks,
             tree_head,
+            previous_leaf_path: Some(leaf_path(&tree, 1)?),
+            chain_head_path: Some(leaf_path(&tree, 4)?),
+            genesis_path: Some(leaf_path(&tree, 0)?),
         },
     };
     let entry = |label: &str, key: &KeyPair, role: KeyRole| KeyBundleEntry {
@@ -538,10 +550,13 @@ fn main() -> Result<()> {
         tsa: TsaTrust {
             signer_spki_der_hex: Vec::new(),
             issuing_ca_spki_der_hex: vec![ca_spki],
+            allowed_policy_oids: vec![TEST_TSA_POLICY_OID.into()],
         },
+        latest_tree_head: None,
+        expected_chain_id: Some(first.receipt_id),
     };
     let verified = verify_receipt_bundle(&bundle, &trust)?;
-    assert!(verified.human_approval_present);
+    assert!(verified.human_approval_present_unverified);
     assert_ne!(verified.subject_signed_at, verified.trusted_time);
 
     fs::create_dir_all(out_dir.join("tsa"))?;
