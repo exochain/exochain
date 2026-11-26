@@ -1,0 +1,913 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://exochain.io/schemas/proposal/integration/exochain-integration.schema.json",
+  "title": "EXOCHAIN integration manifest (draft)",
+  "description": "PROPOSAL. Draft. Not reviewed by any panel. Not adopted. Nothing is published at the $id. A manifest that validates against this schema gives an answer, in a fixed form, to each item AGENTS.md's intake gate and 'Adding Adjacent Surfaces' section ask for. An answer may record that something is missing or not allowed, for example a null threat_model or a held credential with issued_to_self false; such a manifest is a draft inventory and has not completed the intake record. Validation says the manifest is complete in shape. It does not say any statement in it is true, it is not the intake review, and it grants no authority and no trust claim. Until the standard is adopted no level may be claimed publicly, so a real manifest keeps trust_claims.allowed false and achieved_level null; this draft keeps the level rules so they can be reviewed. See ../INTEGRATION-STANDARD-DESIGN.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "manifest_version",
+    "integration",
+    "core",
+    "interfaces",
+    "core_access",
+    "actions",
+    "trust_boundary",
+    "threat_model",
+    "deployment_boundary",
+    "credentials_model",
+    "trust_claims",
+    "tests",
+    "secrets",
+    "disablement"
+  ],
+  "properties": {
+    "manifest_version": {
+      "const": 1
+    },
+    "integration": {
+      "description": "Intake: owner and accountable maintainer; deployment status.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "revision",
+        "owner",
+        "accountable_maintainer",
+        "deployment_status"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/text"
+        },
+        "revision": {
+          "description": "The integration's own commit or release identifier that this manifest describes.",
+          "$ref": "#/$defs/text"
+        },
+        "owner": {
+          "description": "An organisation or team. Not an email address.",
+          "$ref": "#/$defs/party"
+        },
+        "accountable_maintainer": {
+          "description": "A role or team, for example a team handle. Not an email address and not a named person's contact details.",
+          "$ref": "#/$defs/party"
+        },
+        "deployment_status": {
+          "enum": [
+            "prototype",
+            "internal",
+            "customer-zero",
+            "production"
+          ]
+        }
+      }
+    },
+    "core": {
+      "description": "The core the integration is built and tested against: a release, a commit, or both. A commit alone means the integration depends on the core's tree, not on a published release.",
+      "type": "object",
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "release"
+          ]
+        },
+        {
+          "required": [
+            "revision"
+          ]
+        }
+      ],
+      "properties": {
+        "release": {
+          "description": "A published core release.",
+          "$ref": "#/$defs/version"
+        },
+        "revision": {
+          "description": "A commit of the core repository.",
+          "$ref": "#/$defs/git_revision"
+        }
+      }
+    },
+    "interfaces": {
+      "description": "Adding Adjacent Surfaces: which core APIs it calls. One entry per published interface used. This schema is for surfaces that call the core, so at least one entry is required.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/http_interface"
+          },
+          {
+            "$ref": "#/$defs/mcp_interface"
+          },
+          {
+            "$ref": "#/$defs/package_interface"
+          }
+        ]
+      }
+    },
+    "core_access": {
+      "description": "Intake: whether the surface can read or write each category. Every category is stated, including those answered false.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "core_state",
+        "signatures",
+        "credentials",
+        "governance_outcomes",
+        "consent_records",
+        "provenance_records"
+      ],
+      "properties": {
+        "core_state": {
+          "$ref": "#/$defs/access"
+        },
+        "signatures": {
+          "$ref": "#/$defs/access"
+        },
+        "credentials": {
+          "$ref": "#/$defs/access"
+        },
+        "governance_outcomes": {
+          "$ref": "#/$defs/access"
+        },
+        "consent_records": {
+          "$ref": "#/$defs/access"
+        },
+        "provenance_records": {
+          "$ref": "#/$defs/access"
+        }
+      }
+    },
+    "actions": {
+      "description": "Every action for which the integration calls the core, not only those it wants to make a claim about. May be empty for an integration that only verifies.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "entry_point",
+          "core_decision",
+          "gating",
+          "effect"
+        ],
+        "properties": {
+          "name": {
+            "$ref": "#/$defs/text"
+          },
+          "entry_point": {
+            "description": "Where the action starts in the integration.",
+            "$ref": "#/$defs/text"
+          },
+          "core_decision": {
+            "description": "The core route or tool this action calls. It should be one listed under interfaces; the schema does not check that.",
+            "$ref": "#/$defs/text"
+          },
+          "gating": {
+            "description": "gated: the effect happens only after the core allows it. not_gated: the core is asked, but the effect happens whatever it answers. no_decision: the call asks the core to decide nothing, for example a health probe. A no_decision action is outside every level and every trust claim; its effect is not protected by the core.",
+            "enum": [
+              "gated",
+              "not_gated",
+              "no_decision"
+            ]
+          },
+          "effect": {
+            "description": "What the action does, and how that depends on the core's answer.",
+            "$ref": "#/$defs/text"
+          }
+        }
+      }
+    },
+    "trust_boundary": {
+      "description": "Intake: exact trust boundary. What the integration decides and what the core decides.",
+      "$ref": "#/$defs/text"
+    },
+    "threat_model": {
+      "description": "Adding Adjacent Surfaces: threat model for secrets, identity, consent, authority, provenance and external writes. A path or reference to the document. Null records that none exists yet: the intake record is then incomplete, and no level above 0 can be recorded.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/text"
+        }
+      ]
+    },
+    "deployment_boundary": {
+      "description": "Adding Adjacent Surfaces: deployment boundary. Where it runs and what it can reach.",
+      "$ref": "#/$defs/text"
+    },
+    "credentials_model": {
+      "description": "Adding Adjacent Surfaces: credentials model. Which credentials it holds, who issued each, and their scope.",
+      "$ref": "#/$defs/text"
+    },
+    "trust_claims": {
+      "description": "Intake: whether the surface is allowed to make constitutional trust claims. Also the conformance level sought and reached.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "allowed",
+        "target_level",
+        "achieved_level",
+        "result_file"
+      ],
+      "properties": {
+        "allowed": {
+          "description": "Records a permission given by whoever admits the surface. An integrator cannot grant it to itself by writing true here.",
+          "type": "boolean"
+        },
+        "target_level": {
+          "description": "The level sought. Null when none is sought.",
+          "enum": [
+            null,
+            0,
+            1,
+            2,
+            3
+          ]
+        },
+        "achieved_level": {
+          "description": "The level reached, as recorded in the result file. Null when none has been established. Until a conformance kit checks it, this is the integrator's own statement.",
+          "enum": [
+            null,
+            0,
+            1,
+            2,
+            3
+          ]
+        },
+        "result_file": {
+          "description": "Path to the conformance result file. Required from level 1. May be null at level 0, where the only requirement is that this manifest validates.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/text"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "$comment": "A trust claim needs level 2 or 3.",
+          "if": {
+            "properties": {
+              "allowed": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "achieved_level": {
+                "enum": [
+                  2,
+                  3
+                ]
+              }
+            }
+          }
+        },
+        {
+          "$comment": "A level above 0 needs a result file.",
+          "if": {
+            "properties": {
+              "achieved_level": {
+                "enum": [
+                  1,
+                  2,
+                  3
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "result_file": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "$comment": "The achieved level cannot exceed the target level. A choice made in this draft; see the README.",
+          "if": {
+            "properties": {
+              "target_level": {
+                "const": null
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "achieved_level": {
+                "const": null
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "target_level": {
+                "const": 0
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "achieved_level": {
+                "enum": [
+                  null,
+                  0
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "target_level": {
+                "const": 1
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "achieved_level": {
+                "enum": [
+                  null,
+                  0,
+                  1
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "target_level": {
+                "const": 2
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "achieved_level": {
+                "enum": [
+                  null,
+                  0,
+                  1,
+                  2
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "tests": {
+      "description": "Intake: surface-specific test command and CI gate.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "ci_gate"
+      ],
+      "properties": {
+        "command": {
+          "$ref": "#/$defs/text"
+        },
+        "ci_gate": {
+          "$ref": "#/$defs/text"
+        }
+      }
+    },
+    "secrets": {
+      "description": "Intake: secrets inventory and runtime configuration source. Names only. A secret value must never appear in a manifest; the schema cannot detect one.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "inventory",
+        "source",
+        "holds"
+      ],
+      "properties": {
+        "inventory": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/secret_name"
+          }
+        },
+        "source": {
+          "$ref": "#/$defs/text"
+        },
+        "holds": {
+          "description": "Each secret credential or private key the integration holds, described in words. Never a value. Public keys and trust anchors used only to verify what the core produced are not secrets and are not listed here.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "description",
+              "issued_to_self"
+            ],
+            "properties": {
+              "description": {
+                "$ref": "#/$defs/text"
+              },
+              "issued_to_self": {
+                "description": "True only if the secret was issued to this integration as its own principal. False for anything shared or belonging to the core or a tenant: a node admin token, a tenant secret, a core or tenant signing key, a core bootstrap key or an emergency override credential.",
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "$comment": "If any secret is named in the inventory, at least one held secret is described.",
+          "if": {
+            "required": [
+              "inventory"
+            ],
+            "properties": {
+              "inventory": {
+                "minItems": 1
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "holds": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "disablement": {
+      "description": "Intake: rollback or disablement path if the surface leaks, misroutes or misstates core trust decisions.",
+      "$ref": "#/$defs/text"
+    }
+  },
+  "allOf": [
+    {
+      "$comment": "Levels 2 and 3 are claimed per action and only where the core's own process decides. No action is not_gated, at least one gated action calls something other than a GET or HEAD route, a no_decision action may only name a GET or HEAD route, and there is an http or mcp interface.",
+      "if": {
+        "properties": {
+          "trust_claims": {
+            "properties": {
+              "achieved_level": {
+                "enum": [
+                  2,
+                  3
+                ]
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "actions": {
+            "contains": {
+              "type": "object",
+              "required": [
+                "gating",
+                "core_decision"
+              ],
+              "properties": {
+                "gating": {
+                  "const": "gated"
+                },
+                "core_decision": {
+                  "not": {
+                    "pattern": "^(GET|HEAD) "
+                  }
+                }
+              }
+            },
+            "not": {
+              "contains": {
+                "type": "object",
+                "required": [
+                  "gating"
+                ],
+                "properties": {
+                  "gating": {
+                    "const": "not_gated"
+                  }
+                }
+              }
+            },
+            "items": {
+              "if": {
+                "required": [
+                  "gating"
+                ],
+                "properties": {
+                  "gating": {
+                    "const": "no_decision"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "core_decision": {
+                    "pattern": "^(GET|HEAD) /"
+                  }
+                }
+              }
+            }
+          },
+          "interfaces": {
+            "contains": {
+              "type": "object",
+              "required": [
+                "profile"
+              ],
+              "properties": {
+                "profile": {
+                  "enum": [
+                    "http",
+                    "mcp"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "$comment": "Level 3 needs a receipt that passes the offline verifier, so it needs a verify interface.",
+      "if": {
+        "properties": {
+          "trust_claims": {
+            "properties": {
+              "achieved_level": {
+                "enum": [
+                  3
+                ]
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "interfaces": {
+            "contains": {
+              "type": "object",
+              "required": [
+                "profile"
+              ],
+              "properties": {
+                "profile": {
+                  "const": "verify"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "$comment": "The conformance levels are not defined for the embedded profile. A manifest that uses it seeks and records no level and makes no trust claim.",
+      "if": {
+        "properties": {
+          "interfaces": {
+            "contains": {
+              "type": "object",
+              "required": [
+                "profile"
+              ],
+              "properties": {
+                "profile": {
+                  "const": "embedded"
+                }
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "trust_claims": {
+            "properties": {
+              "allowed": {
+                "const": false
+              },
+              "target_level": {
+                "const": null
+              },
+              "achieved_level": {
+                "const": null
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "$comment": "From level 1: a published core release, no package taken from the core's tree, a threat model, and nothing held that was not issued to the integration itself.",
+      "if": {
+        "properties": {
+          "trust_claims": {
+            "properties": {
+              "achieved_level": {
+                "enum": [
+                  1,
+                  2,
+                  3
+                ]
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "core": {
+            "required": [
+              "release"
+            ]
+          },
+          "interfaces": {
+            "not": {
+              "contains": {
+                "type": "object",
+                "required": [
+                  "source"
+                ],
+                "properties": {
+                  "source": {
+                    "enum": [
+                      "git",
+                      "path",
+                      "vendored"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "threat_model": {
+            "type": "string"
+          },
+          "secrets": {
+            "properties": {
+              "holds": {
+                "items": {
+                  "properties": {
+                    "issued_to_self": {
+                      "const": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "$comment": "A library package is used to talk to a core that decides, so an http or mcp interface is listed beside it.",
+      "if": {
+        "properties": {
+          "interfaces": {
+            "contains": {
+              "type": "object",
+              "required": [
+                "profile"
+              ],
+              "properties": {
+                "profile": {
+                  "const": "library"
+                }
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "interfaces": {
+            "contains": {
+              "type": "object",
+              "required": [
+                "profile"
+              ],
+              "properties": {
+                "profile": {
+                  "enum": [
+                    "http",
+                    "mcp"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "text": {
+      "description": "One line of text with at least one non-space character and no control character or line separator (so no tab or line break).",
+      "type": "string",
+      "pattern": "\\S",
+      "not": {
+        "pattern": "[\\u0000-\\u001F\\u007F-\\u009F\\u2028\\u2029]"
+      }
+    },
+    "party": {
+      "description": "Text that contains nothing shaped like an email address.",
+      "$ref": "#/$defs/text",
+      "not": {
+        "pattern": "[^@\\s]+@[^@\\s]+\\.[^@\\s]+"
+      }
+    },
+    "secret_name": {
+      "description": "The name of a secret, such as an environment variable name. Not its value. The pattern rejects spaces and '='; it cannot tell a token from a name.",
+      "$ref": "#/$defs/text",
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:/-]+$"
+    },
+    "version": {
+      "description": "A Semantic Versioning 2.0.0 version.",
+      "$ref": "#/$defs/text",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"
+    },
+    "access": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "read",
+        "write"
+      ],
+      "properties": {
+        "read": {
+          "type": "boolean"
+        },
+        "write": {
+          "type": "boolean"
+        },
+        "note": {
+          "$ref": "#/$defs/text"
+        }
+      }
+    },
+    "http_interface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profile",
+        "contract",
+        "routes"
+      ],
+      "properties": {
+        "profile": {
+          "const": "http"
+        },
+        "contract": {
+          "description": "Identifier of the published contract the routes belong to, including its version. The core publishes no list of such identifiers yet; until it does, use a value that begins PLACEHOLDER.",
+          "$ref": "#/$defs/text"
+        },
+        "routes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "description": "Method in capitals, one space, path.",
+            "$ref": "#/$defs/text",
+            "pattern": "^[A-Z]+ /[!-~]*$"
+          }
+        },
+        "host": {
+          "description": "Which core process serves the routes. Optional.",
+          "enum": [
+            "gateway",
+            "node"
+          ]
+        }
+      }
+    },
+    "mcp_interface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profile",
+        "protocol_version",
+        "tools"
+      ],
+      "properties": {
+        "profile": {
+          "const": "mcp"
+        },
+        "protocol_version": {
+          "$ref": "#/$defs/text"
+        },
+        "tools": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/text"
+          }
+        }
+      }
+    },
+    "git_revision": {
+      "description": "A full git commit id in lower-case hex: 40 digits (SHA-1) or 64 digits (SHA-256). An abbreviated id is not accepted, because it can stop naming one commit as the repository grows.",
+      "$ref": "#/$defs/text",
+      "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "package_interface": {
+      "description": "A core package used by the integration. verify: only to check something the core produced. library: linked to build, sign or parse what is exchanged with a core that decides; no governed decision is made in the integration's process. embedded: governed logic from the package runs in the integration's own process.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profile",
+        "package",
+        "source"
+      ],
+      "properties": {
+        "profile": {
+          "enum": [
+            "verify",
+            "library",
+            "embedded"
+          ]
+        },
+        "package": {
+          "$ref": "#/$defs/text"
+        },
+        "source": {
+          "description": "registry: a published package. git: a commit of the core repository. path: a path into a checkout of the core. vendored: a copy kept in the integration's own tree.",
+          "enum": [
+            "registry",
+            "git",
+            "path",
+            "vendored"
+          ]
+        },
+        "version": {
+          "$ref": "#/$defs/version"
+        },
+        "revision": {
+          "$ref": "#/$defs/git_revision"
+        },
+        "note": {
+          "$ref": "#/$defs/text"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "source": {
+                "const": "registry"
+              }
+            },
+            "required": [
+              "source"
+            ]
+          },
+          "then": {
+            "required": [
+              "version"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "source": {
+                "const": "git"
+              }
+            },
+            "required": [
+              "source"
+            ]
+          },
+          "then": {
+            "required": [
+              "revision"
+            ]
+          }
+        }
+      ]
+    }
+  }
+}
