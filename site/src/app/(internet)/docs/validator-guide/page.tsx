@@ -14,7 +14,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import Link from 'next/link';
 import { DocPage } from '@/components/content/DocPage';
+import { loadPublicStatus } from '@/lib/public-status';
 import { publicMetadata } from '@/lib/public-site';
 
 export const metadata = publicMetadata({
@@ -24,6 +26,7 @@ export const metadata = publicMetadata({
 });
 
 export default function Page() {
+  const publicStatus = loadPublicStatus();
   return (
     <DocPage title="Validator Guide" unstable>
       <h2>Role</h2>
@@ -37,8 +40,9 @@ export default function Page() {
       <p>
         Validators are expected to run on attested hardware with secure
         boot, key management in an HSM or equivalent, and synchronized time
-        sources. Specific minimums are listed in the validator onboarding
-        flow at <code>/app/validators</code>.
+        sources. Confirm the requirements for the target deployment. The
+        console at <code>/app/validators</code> is a mock; it does not enroll
+        validators or establish deployment acceptance.
       </p>
       <h2>Attestation</h2>
       <p>
@@ -55,9 +59,16 @@ export default function Page() {
       <h2>Slashing</h2>
       <p>
         Slashing rules are governed by the constitutional kernel and are
-        published as part of governance documents. This beta site does not
+        published as part of governance documents. This site does not
         publish an active public slashing rule set; consult the latest
         governance amendment before treating any rule here as in force.
+      </p>
+      <h2>Release and deployment scope</h2>
+      <p>{publicStatus.maturity_summary}</p>
+      <p>
+        Publication of v{publicStatus.publication.version} does not by itself
+        accept a validator deployment. See <Link href="/status">public status</Link>{' '}
+        for the publication record and current capability boundaries.
       </p>
     </DocPage>
   );
